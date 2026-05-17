@@ -129,7 +129,8 @@ class TestOrdinaryKrigingFunction:
 
     def test_bad_value_shape_raises(self, simple_obs, simple_grid):
         coord, value = simple_obs
-        bad_value = value.reshape(-1, 1)   # 2D instead of 1D
+        # A value array with wrong number of elements (not nobs) should raise
+        bad_value = value[:-1]   # one element short
         with pytest.raises(Exception):
             ordinary_kriging(coord, bad_value, simple_grid, _VGM_SIMPLE, nmax=5)
 
