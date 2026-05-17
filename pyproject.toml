@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "pykriging"
+version = "0.1.0"
+description = "Python wrapper for a Fortran kriging and sequential Gaussian simulation engine"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+keywords = ["kriging", "geostatistics", "simulation", "SGSIM", "spatial"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pandas>=1.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/pykriging"
+Repository = "https://github.com/your-username/pykriging"
+Issues = "https://github.com/your-username/pykriging/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pykriging = ["*.so", "*.dll", "*.dylib"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
