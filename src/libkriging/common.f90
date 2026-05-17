@@ -1,8 +1,8 @@
 module common
   use, INTRINSIC    :: ieee_arithmetic
   ! use, intrinsic    :: iso_fortran_env
-  logical           :: verbose=.false.
-  integer           :: ndim = 0
+  logical           :: verbose_c = .false.
+  integer           :: ndim_c = 0
   real, parameter   :: pi = 4.0*atan(1.0)
   real, parameter   :: verysmall = tiny(1.0e0) * 1000
   real, parameter   :: verylarge = huge(1.0e0) * 1e-3

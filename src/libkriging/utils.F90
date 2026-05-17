@@ -17,20 +17,24 @@ subroutine set_seq(array, number_of_values, random)
   else
     n = size(array)
   end if
-  array=[(i,i=1,n)]
-  if(present(random) .and. random) then
-    m=n
-    n=1
-    do k=1,2
-        do l=1,m
-            call random_number(u)
-            j = n + FLOOR((m+1-n)*u)
-            ! switch values
-            temp=array(j)
-            array(j)=array(l)
-            array(l)=temp
-        enddo
-    enddo
+  do i = 1, n
+    array(i) = i
+  end do
+  if(present(random)) then
+    if (random) then
+      m=n
+      n=1
+      do k=1,2
+          do l=1,m
+              call random_number(u)
+              j = n + FLOOR((m+1-n)*u)
+              ! switch values
+              temp=array(j)
+              array(j)=array(l)
+              array(l)=temp
+          enddo
+      enddo
+    end if
   end if
 end subroutine
 

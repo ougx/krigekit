@@ -33,6 +33,17 @@
 !     common.f90 utils.F90 rotation.f90 variogram.f90 \
 !     kriging.F90 kriging_capi.f90 \
 !     -o kriging.dll -link /dll /implib:kriging.lib
+! A Fortran procedure interface is interoperable with a C function prototype
+!  under the condition that any dummy argument with the VALUE attribute is
+!  interoperable with the corresponding formal parameter of the prototype,
+!  while any dummy argument without the VALUE attribute corresponds to a formal
+!  parameter of the prototype that is of a pointer type. Fortran Programming Language
+! This is the key sentence. In C, all scalar arguments are passed by value by default.
+!  So when Python (or any C caller) calls a Fortran bind(C) subroutine and passes an
+!  integer scalar, it pushes the integer value directly onto the call stack or into
+!  a register. Without VALUE, Fortran expects a pointer to the integer. It dereferences
+!  what it received — which is the integer value itself treated as an address —
+!  and reads garbage memory or crashes.
 !==============================================================================
 module kriging_capi
   use iso_c_binding
@@ -84,6 +95,7 @@ contains
   !   use_old_weight     : 0/1 read weights from weight_file
   !   store_weight       : 0/1 write weights to weight_file
   !   cross_validation   : 0/1 leave-one-out cross-validation mode
+  !   write_mat          : 0/1 write the matrix for debugging
   !   verbose            : 0/1 print progress messages
   !   weight_file        : null-terminated path (empty string when not used)
   !   bounds             : [lower, upper] clipping bounds for the estimate
@@ -92,24 +104,24 @@ contains
   subroutine krige_initialize(handle, &
       ndim, nvar, ndrift, unbias, nsim, &
       anisotropic_search, weight_correction, use_old_weight, &
-      store_weight, cross_validation, verbose, &
+      store_weight, cross_validation, writemat, verbose, &
       weight_file, bounds, sk_mean) &
       bind(C, name='krige_initialize')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ndim, nvar, ndrift, unbias, nsim
-    integer(c_int),      intent(in) :: anisotropic_search, weight_correction
-    integer(c_int),      intent(in) :: use_old_weight, store_weight
-    integer(c_int),      intent(in) :: cross_validation, verbose
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ndim, nvar, ndrift, unbias, nsim
+    integer(c_int),      intent(in), value :: anisotropic_search, weight_correction
+    integer(c_int),      intent(in), value :: use_old_weight, store_weight
+    integer(c_int),      intent(in), value :: cross_validation, writemat, verbose
     character(kind=c_char), intent(in) :: weight_file(*)
     real(c_double),      intent(in) :: bounds(2)
-    real(c_double),      intent(in) :: sk_mean
+    real(c_double),      intent(in), value :: sk_mean
 
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
 
     call obj%initialize( &
-      ndim_              = int(ndim), &
+      ndim               = int(ndim), &
       nvar               = int(nvar), &
       ndrift             = int(ndrift), &
       unbias             = int(unbias), &
@@ -119,7 +131,8 @@ contains
       use_old_weight     = l(use_old_weight), &
       store_weight       = l(store_weight), &
       cross_validation   = l(cross_validation), &
-      verbose_           = l(verbose), &
+      writemat           = l(writemat), &
+      verbose            = l(verbose), &
       weight_file        = c2fstr(weight_file), &
       bounds             = real(bounds), &
       sk_mean            = real(sk_mean))
@@ -146,13 +159,13 @@ contains
       coord, value, variance, nmax, maxdist) &
       bind(C, name='krige_set_obs')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ivar, nobs, ndim_c
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, nobs, ndim_c
     real(c_double),      intent(in) :: coord(ndim_c, nobs)
     real(c_double),      intent(in) :: value(nobs)
     real(c_double),      intent(in) :: variance(nobs)
-    integer(c_int),      intent(in) :: nmax
-    real(c_double),      intent(in) :: maxdist
+    integer(c_int),      intent(in), value :: nmax
+    real(c_double),      intent(in), value :: maxdist
 
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -179,8 +192,8 @@ contains
   subroutine krige_set_obs_drift(handle, ivar, ndrift_c, nobs, drift) &
       bind(C, name='krige_set_obs_drift')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ivar, ndrift_c, nobs
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, ndrift_c, nobs
     real(c_double),      intent(in) :: drift(ndrift_c, nobs)
 
     type(t_kriging), pointer :: obj
@@ -204,8 +217,8 @@ contains
   subroutine krige_set_vgm(handle, ivar, jvar, spec) &
       bind(C, name='krige_set_vgm')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ivar, jvar
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, jvar
     character(kind=c_char), intent(in) :: spec(*)
 
     type(t_kriging), pointer :: obj
@@ -234,8 +247,8 @@ contains
       rangescale, localnugget) &
       bind(C, name='krige_set_grid')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ngrid, ndim_c
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ngrid, ndim_c
     real(c_double),      intent(in) :: coord(ndim_c, ngrid)
     real(c_double),      intent(in) :: rangescale(ngrid)
     real(c_double),      intent(in) :: localnugget(ngrid)
@@ -273,11 +286,11 @@ contains
       rangescale, localnugget) &
       bind(C, name='krige_set_grid_block')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: block_type
-    integer(c_int),      intent(in) :: ngrid, ndim_c
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: block_type
+    integer(c_int),      intent(in), value :: ngrid, ndim_c
     real(c_double),      intent(in) :: coord(ndim_c, ngrid)
-    integer(c_int),      intent(in) :: nblock
+    integer(c_int),      intent(in), value :: nblock
     integer(c_int),      intent(in) :: nblockpnt(nblock)
     real(c_double),      intent(in) :: pointweight(*)   ! length = sum(nblockpnt)
     real(c_double),      intent(in) :: rangescale(nblock)
@@ -303,7 +316,7 @@ contains
   ! Call instead of krige_set_grid when cross_validation=1.
   !=============================================================================
   subroutine krige_set_grid_cv(handle) bind(C, name='krige_set_grid_cv')
-    integer(c_intptr_t), intent(in) :: handle
+    integer(c_intptr_t), intent(in), value :: handle
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
     call obj%set_grid()
@@ -324,8 +337,8 @@ contains
   subroutine krige_set_grid_drift(handle, ndrift_c, nblocks, drift) &
       bind(C, name='krige_set_grid_drift')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ndrift_c, nblocks
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ndrift_c, nblocks
     real(c_double),      intent(in) :: drift(ndrift_c, nblocks)
 
     type(t_kriging), pointer :: obj
@@ -354,10 +367,10 @@ contains
   subroutine krige_set_sim(handle, nblocks, randpath, nsim_c, sample) &
       bind(C, name='krige_set_sim')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: nblocks
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nblocks
     integer(c_int),      intent(in) :: randpath(nblocks)
-    integer(c_int),      intent(in) :: nsim_c
+    integer(c_int),      intent(in), value :: nsim_c
     real(c_double),      intent(in) :: sample(nsim_c, nblocks)
 
     type(t_kriging), pointer :: obj
@@ -382,9 +395,9 @@ contains
   subroutine krige_set_search(handle, ivar, anis1, anis2, azimuth, dip, plunge) &
       bind(C, name='krige_set_search')
 
-    integer(c_intptr_t), intent(in) :: handle
-    integer(c_int),      intent(in) :: ivar
-    real(c_double),      intent(in) :: anis1, anis2, azimuth, dip, plunge
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar
+    real(c_double),      intent(in), value :: anis1, anis2, azimuth, dip, plunge
 
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -393,13 +406,25 @@ contains
   end subroutine krige_set_search
 
   !=============================================================================
+  ! krige_prepare
+  !
+  ! Prepare the kriging or SGSIM block loop.
+  !=============================================================================
+  subroutine krige_prepare(handle) bind(C, name='krige_prepare')
+    integer(c_intptr_t), intent(in), value :: handle
+    type(t_kriging), pointer :: obj
+    call get_obj(handle, obj)
+    call obj%prepare()
+  end subroutine krige_prepare
+
+  !=============================================================================
   ! krige_solve
   !
-  ! Runs the kriging or SGSIM block loop (calls prepare() internally).
+  ! Runs the kriging or SGSIM block loop.
   ! After this returns, results are available via the getters below.
   !=============================================================================
   subroutine krige_solve(handle) bind(C, name='krige_solve')
-    integer(c_intptr_t), intent(in) :: handle
+    integer(c_intptr_t), intent(in), value :: handle
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
     call obj%solve()
@@ -411,7 +436,7 @@ contains
 
   !-- Number of blocks = size of the estimate and variance arrays.
   subroutine krige_get_nblocks(handle, n) bind(C, name='krige_get_nblocks')
-    integer(c_intptr_t), intent(in)  :: handle
+    integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(out) :: n
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -420,7 +445,7 @@ contains
 
   !-- Number of simulations (returns 1 for plain kriging).
   subroutine krige_get_nsim(handle, n) bind(C, name='krige_get_nsim')
-    integer(c_intptr_t), intent(in)  :: handle
+    integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(out) :: n
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -430,8 +455,8 @@ contains
   !-- Copy estimate(1:nsim_c, 1:nblocks) into the caller-allocated out array.
   subroutine krige_get_estimate(handle, nsim_c, nblocks, out) &
       bind(C, name='krige_get_estimate')
-    integer(c_intptr_t), intent(in)  :: handle
-    integer(c_int),      intent(in)  :: nsim_c, nblocks
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value  :: nsim_c, nblocks
     real(c_double),      intent(out) :: out(nsim_c, nblocks)
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -441,8 +466,8 @@ contains
   !-- Copy variance(1:nblocks) into the caller-allocated out array.
   subroutine krige_get_variance(handle, nblocks, out) &
       bind(C, name='krige_get_variance')
-    integer(c_intptr_t), intent(in)  :: handle
-    integer(c_int),      intent(in)  :: nblocks
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value  :: nblocks
     real(c_double),      intent(out) :: out(nblocks)
     type(t_kriging), pointer :: obj
     call get_obj(handle, obj)
@@ -455,7 +480,7 @@ contains
 
   !-- Recover a typed Fortran pointer from the opaque handle.
   subroutine get_obj(handle, obj)
-    integer(c_intptr_t), intent(in) :: handle
+    integer(c_intptr_t), intent(in), value :: handle
     type(t_kriging),     pointer    :: obj
     type(c_ptr) :: cptr
     cptr = transfer(handle, cptr)
@@ -477,7 +502,7 @@ contains
   !-- Convert integer(c_int) flag (0/1) to Fortran logical.
   !   Only 1 maps to .true.; 0 (and any other value) maps to .false.
   elemental function l(v) result(r)
-    integer(c_int), intent(in) :: v
+    integer(c_int), intent(in), value :: v
     logical :: r
     r = (v == 1_c_int)
   end function l

@@ -175,19 +175,19 @@ end subroutine
 
 
 !-----------------------------------------------------------------------
-!> Distance between two points in rotated space
+!> Squared Distance between two points in rotated space
 !-----------------------------------------------------------------------
 function rotated_dist (rotmat, ndim, coord1, coord2) result(res)
 implicit none
 real                    :: rotmat(3,3)
 integer                 :: ndim
 real                    :: coord1(ndim), coord2(ndim), res
-res = sqrt(sum(rotate(rotmat, ndim, 1, coord1, coord2) ** 2))
+res = sum(rotate(rotmat, ndim, 1, coord1, coord2) ** 2)
 end function
 
 
 !-----------------------------------------------------------------------
-!> Distances from a reference point to multiple points in rotated space
+!> Squared Distances from a reference point to multiple points in rotated space
 !-----------------------------------------------------------------------
 function rotated_dists(rotmat, ndim, coord0, coords) result(res)
 implicit none
@@ -213,7 +213,7 @@ end do
 call mat_mul(rotmat, ndim, diffs, tmp)
 
 ! Euclidean distances in rotated space
-res = sqrt(sum(tmp**2, dim=1))
+res = sum(tmp**2, dim=1)
 end function rotated_dists
 
 

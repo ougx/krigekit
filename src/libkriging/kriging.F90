@@ -10,6 +10,7 @@
   use gaussian_quadrature
   implicit none
 
+  character(len=2048)     :: errmsg
   ! base type for data
   type t_data
     integer               :: n=0           ! number of data nodes
@@ -51,6 +52,8 @@
     logical               :: use_old_weight = .false.
     logical               :: store_weight = .false.
     logical               :: cross_validation = .false.
+    logical               :: write_mat = .false.
+    logical               :: verbose = .false.
     character(len=1024)   :: weight_file = ""
     integer               :: ifile  = 0           ! file unit for weight file
     integer               :: ndim   = 2
@@ -105,21 +108,24 @@
   contains
     procedure             :: initialize => initialize_kriging_ctx
     procedure             :: assign_weight  ! assign the weight from x to each variable
+    procedure             :: write_matrix   ! writing matrix for debug
   end type t_kriging_ctx
 
   contains
 
-  subroutine initialize(self, ndim_, nvar, ndrift, unbias, nsim, anisotropic_search,  &
+  subroutine initialize(self, ndim, nvar, ndrift, unbias, nsim, anisotropic_search,  &
                         weight_correction, use_old_weight, store_weight, cross_validation, &
-                        verbose_, weight_file, bounds, sk_mean)
+                        write_mat, verbose, weight_file, bounds, sk_mean)
     class(t_kriging)      :: self
-    integer, intent(in), optional   :: ndim_           ! number of dimensions; must be defined
+    integer, intent(in), optional   :: ndim           ! number of dimensions; must be defined
     integer, intent(in), optional   :: nvar, ndrift, unbias, nsim
     real,    intent(in), optional   :: bounds(2)
     real,    intent(in), optional   :: sk_mean
-    logical, intent(in), optional   :: anisotropic_search, weight_correction, use_old_weight, store_weight, verbose_, cross_validation
+    logical, intent(in), optional   :: anisotropic_search, weight_correction, use_old_weight, &
+                                       write_mat, store_weight, verbose, cross_validation
     character(len=*), intent(in), optional :: weight_file
-    if (present(ndim_)) then; ndim = ndim_; else; ndim = 0; end if
+    errmsg = "t_kriging%initialize: "
+    if (present(ndim))               self%ndim               = ndim
     if (present(nvar))               self%nvar               = nvar
     if (present(ndrift))             self%ndrift             = ndrift
     if (present(unbias))             self%unbias             = unbias
@@ -127,12 +133,13 @@
     if (present(anisotropic_search)) self%anisotropic_search = anisotropic_search
     if (present(weight_correction))  self%weight_correction  = weight_correction
     if (present(use_old_weight))     self%use_old_weight     = use_old_weight
+    if (present(write_mat))          self%write_mat          = write_mat
     if (present(store_weight))       self%store_weight       = store_weight
     if (present(weight_file))        self%weight_file        = weight_file
     if (present(bounds))             self%bounds             = bounds
     if (present(sk_mean))            self%sk_mean            = sk_mean
     if (present(cross_validation))   self%cross_validation   = cross_validation
-    if (present(verbose_))           verbose                 = verbose_
+    if (present(verbose))            self%verbose            = verbose
     allocate(self%obs(nvar))
     allocate(self%grid)
     allocate(self%block)
@@ -140,10 +147,10 @@
     allocate(self%vgm(self%ivar0:nvar, self%ivar0:nvar))
     ! call init_nan()
     ! sanity check
-    if (self%use_old_weight .and. self%weight_file=="") stop "ERROR: use_old_weight requires weight_file to be specified"
-    if (self%store_weight .and. self%weight_file=="") stop "ERROR: store_weight requires weight_file to be specified"
-    if (self%store_weight .and. self%use_old_weight) stop "ERROR: store_weight and use_old_weight are mutually exclusive"
-    if (self%cross_validation .and. self%nsim>0) stop "ERROR: nsim>0 and cross_validation are mutually exclusive"
+    if (self%use_old_weight .and. self%weight_file=="") error stop trim(errmsg)//"use_old_weight requires weight_file to be specified"
+    if (self%store_weight .and. self%weight_file=="") error stop trim(errmsg)//"store_weight requires weight_file to be specified"
+    if (self%store_weight .and. self%use_old_weight) error stop trim(errmsg)//"store_weight and use_old_weight are mutually exclusive"
+    if (self%cross_validation .and. self%nsim>0) error stop trim(errmsg)//"nsim>0 and cross_validation are mutually exclusive"
   end subroutine initialize
 
   ! set grid and block:
@@ -165,115 +172,118 @@
     ! local
     integer               :: ngrid, nn, nb
     integer               :: iblock, igrid, idim
+    errmsg = "t_kriging%set_grid: "
+    if (self%obs(1)%n==0) error stop trim(errmsg)//'Observation needs to be set first.'
+    associate(ndim=>self%ndim, ndrift=>self%ndrift)
+      if (present(block_type)) self%block%block_type = block_type
 
-    if (self%obs(1)%n==0) error stop 'Observation needs to be set first.'
-    if (present(block_type)) self%block%block_type = block_type
-
-    if (self%cross_validation) then
-      ngrid = self%obs(1)%n
-      self%block%n = ngrid
-      allocate(self%block%coord, source=self%obs(1)%coord)
-      allocate(self%grid%coord , source=self%obs(1)%coord)
-      allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=1
-      allocate(self%block%iblockpnt, source=[(igrid, igrid=1,ngrid)])
-      allocate(self%grid%weight(ngrid)); self%grid%weight=1.0
-      self%obs(1)%nmax = self%obs(1)%nmax + 1 ! search will include itself but will be excluded from the search results
-      if (self%ndrift>0) allocate(self%block%drift, source=self%obs(1)%drift)
-    else
-      if (.not. present(coord)) error stop 'coord needs to be provided.'
-      if (ndim == 0) then
-        ndim = size(coord, 1)
-      else
-        if (ndim /= size(coord, 1)) error stop 'ndim /= size(coord, 1) for grid'   ! TODO: check coord has the same ndim
-      end if
-      ngrid = size(coord, 2)
-
-      ! set up the block
-      if (self%block%block_type == 0) then
+      if (self%cross_validation) then
+        ngrid = self%obs(1)%n
         self%block%n = ngrid
-        allocate(self%block%coord, source=coord)
-        allocate(self%grid%coord, source=coord)
+        allocate(self%block%coord, source=self%obs(1)%coord)
+        allocate(self%grid%coord , source=self%obs(1)%coord)
         allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=1
         allocate(self%block%iblockpnt, source=[(igrid, igrid=1,ngrid)])
         allocate(self%grid%weight(ngrid)); self%grid%weight=1.0
-      else if (self%block%block_type == -4) then
-        if (.not. present(blocksize)) error stop 'blocksize needs to be provided when block_type=-4.'
-        nb = (4**ndim)
-        self%block%n = ngrid
-        allocate(self%block%coord, source=coord)
-        allocate(self%grid%coord(ndim, ngrid*nb))
-        allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=4**ndim
-        allocate(self%block%iblockpnt, source=[((igrid-1)*(4**ndim)+1, igrid=1,ngrid)])
-        allocate(self%grid%weight((4**ndim)*ngrid))
-        igrid = 0
-        do iblock=1,self%block%n
-          self%grid%weight(igrid+1:igrid+nb) = 1.0/4**ndim    ! TODO: set up gaussian quadrature weights
-          igrid = igrid + nb
-        end do  ! iblock
+        self%obs(1)%nmax = self%obs(1)%nmax + 1 ! search will include itself but will be excluded from the search results
+        if (ndrift>0) allocate(self%block%drift, source=self%obs(1)%drift)
       else
-        self%grid%n = ngrid
-        self%block%n = size(nblockpnt)
-        allocate(self%grid%coord, source=coord)
-        allocate(self%block%nblockpnt, source=nblockpnt)  ! TODO: check if nblockpnt is correct
-        allocate(self%block%iblockpnt(self%block%n))
-        igrid = 0
-        do iblock=1,self%block%n
-          self%block%iblockpnt(iblock) = igrid + 1
-          igrid = igrid + nblockpnt(iblock)
-        end do  ! iblock
-        if (present(pointweight)) then
-          allocate(self%grid%weight, source=pointweight) ! TODO: check if pointweight is correct
+        if (.not. present(coord)) error stop trim(errmsg)//'coord needs to be provided.'
+        if (ndim == 0) then
+          ndim = size(coord, 1)
         else
-          allocate(self%grid%weight(self%grid%n))
+          if (ndim /= size(coord, 1)) error stop trim(errmsg)//'ndim /= size(coord, 1) for self%grid'   ! TODO: check coord has the same ndim
+        end if
+        ngrid = size(coord, 2)
+
+        ! set up the self%block
+        if (self%block%block_type == 0) then
+          self%block%n = ngrid
+          allocate(self%block%coord, source=coord)
+          allocate(self%grid%coord, source=coord)
+          allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=1
+          allocate(self%block%iblockpnt, source=[(igrid, igrid=1,ngrid)])
+          allocate(self%grid%weight(ngrid)); self%grid%weight=1.0
+          ! print*, "debug: self%block%n", self%block%n
+        else if (self%block%block_type == -4) then
+          if (.not. present(blocksize)) error stop trim(errmsg)//'blocksize needs to be provided when block_type=-4.'
+          nb = (4**ndim)
+          self%block%n = ngrid
+          allocate(self%block%coord, source=coord)
+          allocate(self%grid%coord(ndim, ngrid*nb))
+          allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=4**ndim
+          allocate(self%block%iblockpnt, source=[((igrid-1)*(4**ndim)+1, igrid=1,ngrid)])
+          allocate(self%grid%weight((4**ndim)*ngrid))
           igrid = 0
           do iblock=1,self%block%n
-            nb = nblockpnt(iblock)
-            self%grid%weight(igrid+1:igrid+nb) = 1.0/nb
+            self%grid%weight(igrid+1:igrid+nb) = 1.0/4**ndim    ! TODO: set up gaussian quadrature weights
             igrid = igrid + nb
           end do  ! iblock
+        else
+          self%grid%n = ngrid
+          self%block%n = size(nblockpnt)
+          allocate(self%grid%coord, source=coord)
+          allocate(self%block%nblockpnt, source=nblockpnt)  ! TODO: check if nblockpnt is correct
+          allocate(self%block%iblockpnt(self%block%n))
+          igrid = 0
+          do iblock=1,self%block%n
+            self%block%iblockpnt(iblock) = igrid + 1
+            igrid = igrid + nblockpnt(iblock)
+          end do  ! iblock
+          if (present(pointweight)) then
+            allocate(self%grid%weight, source=pointweight) ! TODO: check if pointweight is correct
+          else
+            allocate(self%grid%weight(self%grid%n))
+            igrid = 0
+            do iblock=1,self%block%n
+              nb = nblockpnt(iblock)
+              self%grid%weight(igrid+1:igrid+nb) = 1.0/nb
+              igrid = igrid + nb
+            end do  ! iblock
+          end if
+          ! calculate the self%block coordinates
+          allocate(self%block%coord(ndim, self%block%n))
+          igrid = 0
+          do iblock=1,self%block%n
+            nn = nblockpnt(iblock)
+            do idim=1,ndim
+              self%block%coord(idim, iblock) = sum(self%grid%coord(idim,igrid+1:igrid+nn)*self%grid%weight(igrid+1:igrid+nn))
+            end do
+            igrid = igrid + nn
+          end do  ! iblock
         end if
-        ! calculate the block coordinates
-        allocate(self%block%coord(ndim, self%block%n))
-        igrid = 0
-        do iblock=1,self%block%n
-          nn = nblockpnt(iblock)
-          do idim=1,ndim
-            self%block%coord(idim, iblock) = sum(self%grid%coord(idim,igrid+1:igrid+nn)*self%grid%weight(igrid+1:igrid+nn))
-          end do
-          igrid = igrid + nn
-        end do  ! iblock
       end if
-    end if
-    allocate(self%block%order(self%block%n))
-    allocate(self%block%localnugget(self%block%n))
-    allocate(self%block%rangescale(self%block%n))
-    allocate(self%block%estimate(max(self%nsim,1),self%block%n))
-    allocate(self%block%variance(self%block%n))
-
-    call set_seq(self%block%order, self%block%n)
-    self%block%variance = 0.0
-    self%block%estimate = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
-    if (present(rangescale) .and. .not. self%cross_validation) then
-      self%block%rangescale=rangescale
-    else
-      self%block%rangescale=1.0
-    end if
-    if (present(localnugget) .and. .not. self%cross_validation) then
-      self%block%localnugget=localnugget
-    else
-      self%block%localnugget=0.0
-    end if
+      allocate(self%block%order(self%block%n))
+      allocate(self%block%localnugget(self%block%n))
+      allocate(self%block%rangescale(self%block%n))
+      allocate(self%block%estimate(max(self%nsim,1),self%block%n))
+      allocate(self%block%variance(self%block%n))
+      call set_seq(self%block%order, self%block%n)
+      self%block%variance = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
+      self%block%estimate = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
+      if (present(rangescale) .and. .not. self%cross_validation) then
+        self%block%rangescale=rangescale
+      else
+        self%block%rangescale=1.0
+      end if
+      if (present(localnugget) .and. .not. self%cross_validation) then
+        self%block%localnugget=localnugget
+      else
+        self%block%localnugget=0.0
+      end if
+    end associate
   end subroutine set_grid
 
 
   subroutine set_grid_drift(self, drift)
     class(t_kriging)      :: self
     real   , intent(in)   :: drift(:,:)        ! drifts
-    if (.not. allocated(self%block)) error stop 'Call initialize() before set_grid_drift.'
-    if (self%block%n==0) error stop 'Grid needs to be set before adding drift.'
-    if (self%ndrift==0) error stop 'grid/block drift is specified but ndrift==0'
-    if (size(drift, 1) /= self%ndrift) error stop 'size(drift, 1) /= ndrift'
-    if (size(drift, 2) /= self%block%n) error stop 'size(drift, 2) /= block%n; one drift value per block, not per grid node'
+    errmsg = "t_kriging%set_grid_drift: "
+    if (.not. allocated(self%block)) error stop trim(errmsg)//'Call initialize() before set_grid_drift.'
+    if (self%block%n==0) error stop trim(errmsg)//'Grid needs to be set before adding drift.'
+    if (self%ndrift==0) error stop trim(errmsg)//'grid/block drift is specified but ndrift==0'
+    if (size(drift, 1) /= self%ndrift) error stop trim(errmsg)//'size(drift, 1) /= ndrift'
+    if (size(drift, 2) /= self%block%n) error stop trim(errmsg)//'size(drift, 2) /= block%n; one drift value per block, not per grid node'
     allocate(self%block%drift, source=drift)
   end subroutine set_grid_drift
 
@@ -297,15 +307,15 @@
     integer, intent(in), optional :: nmax
     real, intent(in)              :: coord(:,:), value(:)
     real, intent(in), optional    :: variance(:), maxdist
+    errmsg = "t_kriging%set_obs: "
 
     ! local
-
-    if (ndim == 0) then
-      ndim = size(coord, 1)
-    else
-      if (ndim /= size(coord, 1)) error stop 'ndim /= size(coord, 1) for grid'   ! TODO: check coord has the same ndim
-    end if
-    associate(obs=>self%obs(ivar))
+    associate(ndim=>self%ndim, obs=>self%obs(ivar))
+      if (ndim == 0) then
+        ndim = size(coord, 1)
+      else
+        if (ndim /= size(coord, 1)) error stop trim(errmsg)//'ndim /= size(coord, 1) for grid'   ! TODO: check coord has the same ndim
+      end if
       obs%n = size(coord, 2)
       if (present(nmax)) then
         obs%nmax = nmax
@@ -330,13 +340,12 @@
     class(t_kriging)      :: self
     integer, intent(in)   :: ivar              ! index of the variable
     real   , intent(in)   :: drift(:,:)        ! drifts
-    if (.not. allocated(self%obs)) error stop 'Call initialize() before set_obs_drift.'
-    if (self%obs(ivar)%n==0) error stop 'Observation needs to be set before adding drift.'
-    if (self%ndrift==0) then
-      error stop 'Observation drift is specified but ndrift==0'
-    end if
-    if (size(drift, 1) /= self%ndrift) error stop 'size(drift, 1) /= ndrift'
-    if (size(drift, 2) /= self%obs(ivar)%n) error stop 'size(drift, 2) /= nobs'
+    errmsg = "t_kriging%set_obs_drift: "
+    if (.not. allocated(self%obs)) error stop trim(errmsg)//'Call initialize() before set_obs_drift.'
+    if (self%obs(ivar)%n==0) error stop trim(errmsg)//'Observation needs to be set before adding drift.'
+    if (self%ndrift==0) error stop trim(errmsg)//'Observation drift is specified but ndrift==0'
+    if (size(drift, 1) /= self%ndrift) error stop trim(errmsg)//'size(drift, 1) /= ndrift'
+    if (size(drift, 2) /= self%obs(ivar)%n) error stop trim(errmsg)//'size(drift, 2) /= nobs'
     allocate(self%obs(ivar)%drift, source=drift)
   end subroutine set_obs_drift
 
@@ -350,12 +359,13 @@
     ! local
     real   , allocatable          :: temp(:,:)
     integer                       :: iblock, ifile, isim
+    errmsg = "t_kriging%set_sim: "
 
     ! check if Grid is set
-    if (self%block%n==0) error stop 'Grid needs to be set first.'
-    if (any(self%obs%n==0)) error stop 'Observations need to be set first.'
+    if (self%block%n==0) error stop trim(errmsg)//'Grid needs to be set first.'
+    if (any(self%obs%n==0)) error stop trim(errmsg)//'Observations need to be set first.'
     if (self%nsim>0) then
-      associate(obs=>self%obs(1))
+      associate(ndim=>self%ndim, obs=>self%obs(1))
         if (present(randpath)) then
           self%block%order = randpath
         else
@@ -408,7 +418,11 @@
     ! local
     real   , allocatable          :: rcoord(:,:)  ! rotated coordinates
 
-    associate(obs=>self%obs(ivar), need_search=>self%obs(ivar)%need_search, anisotropic_search=>self%obs(ivar)%anisotropic_search)
+    associate(ndim=>self%ndim, &
+      obs=>self%obs(ivar), &
+      need_search=>self%obs(ivar)%need_search, &
+      anisotropic_search=>self%obs(ivar)%anisotropic_search)
+
       anisotropic_search = (abs(anis1-1.0)>EPSLON .or. abs(anis2-1.0)>EPSLON) .and. self%anisotropic_search
 
       if (ivar==1 .and. self%nsim>0) then
@@ -450,6 +464,8 @@
       allocate(self%inear (mmax,0:krige%nvar))
       allocate(self%weight(mmax,0:krige%nvar))
       allocate(self%x     (1, matsize))
+      self%weight = 0.0
+      self%x = 0.0
       ! initialize values
       self%nnear(0) = 0 ! neighbor blocks
       call set_seq(self%inear(1:krige%obs(1)%nmax, 0), krige%obs(1)%nmax)
@@ -464,17 +480,18 @@
   subroutine prepare(self)
     class(t_kriging)      :: self
     integer               :: ivar, jvar
+    errmsg = "t_kriging%prepare: "
 
     ! check if everything is set
     if (self%ndrift>0) then
-      if (.not. allocated(self%block%drift)) error stop 'Grid drift is not set while ndrift > 0.'
+      if (.not. allocated(self%block%drift)) error stop trim(errmsg)//'Grid drift is not set while ndrift > 0.'
       do ivar=1, self%nvar
-        if (.not. allocated(self%obs(ivar)%drift)) error stop 'Observation drift is not set while ndrift > 0.'
+        if (.not. allocated(self%obs(ivar)%drift)) error stop trim(errmsg)//'Observation drift is not set while ndrift > 0.'
       end do
     end if
     do ivar=self%ivar0, self%nvar
       do jvar=self%ivar0, self%nvar
-        if (self%vgm(jvar, ivar)%nstruct==0) error stop 'Variogram is not set.'
+        if (self%vgm(jvar, ivar)%nstruct==0) error stop trim(errmsg)//'Variogram is not set.'
       end do
     end do
 
@@ -511,9 +528,10 @@
     integer               :: ib
     real, allocatable     :: temp(:,:)
 
+    errmsg = "t_kriging%solve: "
     ! allocation
-    associate(nb=>self%block%n)
-      call self%prepare()
+    call self%prepare() ! needs to be called externally before solve
+    associate(nb=>self%block%n, verbose=>self%verbose)
 
       ! start the block loop
       if (verbose) print*, "Starting Kriging loop"
@@ -532,12 +550,14 @@
           call self%assemble_linear_system(ctx)
           ! solve linear system
           if (ctx%npp>1) call self%solve_linear_system(ctx) ! use one observation when self%npp=1
+          call ctx%assign_weight(self)
         end if
         if (self%store_weight) then
           call self%write_weight(ctx)
         else
           call self%estimate_block(ctx)
         end if
+        if (self%write_mat) call ctx%write_matrix(self)
       end do
       !$OMP END DO
       !$OMP END PARALLEL
@@ -559,17 +579,18 @@
 
     ! local
     integer                       :: i
-    real                          :: newloc(ndim,1)    ! rotated coordinates of the new location to be estimated
+    real                          :: newloc(self%ndim,1)    ! rotated coordinates of the new location to be estimated
     logical, allocatable          :: mask(:) !, mask1(:)
     logical, allocatable          :: is_obs(:)
-    type(kdtree2_result), allocatable :: results(:) ! nearest neighbor search results
+    type(kdtree2_result)          :: results(self%obs(ivar)%nmax) ! nearest neighbor search results
 
     associate(&
       iblock =>ctx%iblock, &
+      ndim   =>self%ndim, &
       nsim   =>self%nsim, &
       nobs   =>self%obs(ivar)%n, &
       nmax   =>self%obs(ivar)%nmax, &
-      obsloc =>self%obs(ivar)%tree%the_data, &
+      obsloc =>self%obs(ivar)%coord, &
       xloc   =>self%block%coord(:, ctx%iblock:ctx%iblock), &
       inear  =>ctx%inear(:,ivar), & ! obs
       nnear  =>ctx%nnear(ivar), &   ! obs
@@ -600,7 +621,7 @@
           nnear  = nobs
           nnearb = iblock
           ! inear no need to touch until search is needed
-          dist(1:nnear) = [(sum((newloc(:,1)-obsloc(:,i))**2), i=1, nnear)]
+          dist(1:nnear) = rotated_dists(rotmat, ndim, newloc(:,1), obsloc(:,1:nnear))
         end if
       else
         if (nmax<nobs) then
@@ -610,9 +631,9 @@
           dist(1:nnear) = results%dis
         else
           ! no search
-          nnear = nobs                                                         ! reset for corss validation
-          if (self%cross_validation) call set_seq(inear(1:nnear), nnear)       ! reset for corss validation
-          dist(1:nnear) = [(sum((newloc(:,1)-obsloc(:,i))**2), i=1, nnear)]
+          nnear = nobs
+          call set_seq(inear(1:nnear), nnear)
+          dist(1:nnear) = rotated_dists(rotmat, ndim, newloc(:,1), obsloc(:,1:nnear))
         end if
         if (self%cross_validation) then
           ! exclude self from neighbors for cross validation
@@ -625,7 +646,7 @@
           end do
         end if
       end if
-
+      print*, "inear", inear(1:nnear)
       ! finally check maximum distance
       mask = dist(1:nnear)<=maxdist
       if (any(.not. mask)) then
@@ -648,6 +669,7 @@
     real                          :: lag(3)=0.0, tmp
 
     associate( &
+      ndim=>self%ndim, &
       obs=>self%obs(ivar), &
       nnear=>ctx%nnear(ivar), &
       inear=>ctx%inear(1:ctx%nnear(ivar), ivar), &
@@ -691,9 +713,10 @@
     class(t_kriging)      :: self
     class(t_kriging_ctx)  :: ctx
     ! local
-    integer               :: nvar, ivar, jvar
+    integer               :: ivar, jvar
     integer               :: irow1, irow2, icol1, icol2
-
+    character(len=80)     :: idxstr
+    errmsg = "t_kriging%assemble_linear_system: "
     ! search for neighbor
     associate(nvar=>self%nvar, dist=>ctx%sqdist, npp=>ctx%npp)
       npp = 0
@@ -705,21 +728,24 @@
           npp = 1    ! signal exact match
           ctx%x=0.0
           ctx%x(:,1)=1.0
-          ctx%nnear(ivar) = 1
+          ctx%weight=0.0
+          ctx%weight(1,1) = 1.0
           ctx%inear(1,ivar) = ctx%inear(minloc(dist(1:ctx%nnear(ivar)), dim=1),ivar)
+          ctx%nnear(ivar) = 1
           ctx%nnear(0) = 0
           self%block%variance(ctx%iblock) = self%obs(1)%variance(ctx%inear(1,ivar)) + self%block%localnugget(ctx%iblock)
           do jvar = 2, nvar
             ctx%nnear(jvar) = 0
           end do
+          if (self%verbose) print*, "Exact match detected at block ", ctx%iblock
           return
         end if
       end do
 
       ! check if enough neighbors
       if (ctx%nnear(0) + ctx%nnear(1) == 0) then
-        write(*,*) 'not enough neighbors for kriging at block ', ctx%iblock
-        error stop
+        write(idxstr,'(i0)') ctx%iblock
+        error stop trim(errmsg)//'not enough neighbors for kriging at block '//trim(idxstr)
       end if
 
       ! set up matrix
@@ -758,7 +784,7 @@
         end if
         ! assign values to lower triangle from upper triangle (assuming symmetric matrix)
         do irow1 = 1, npp
-          do icol1 = irow1+1, npp
+          do icol1 = irow1+1, matsize
             matA(irow1, icol1) = matA(icol1, irow1)
           end do
         end do
@@ -779,16 +805,19 @@
     integer               :: info
     integer               :: i, j, k1
     real                  :: lag(3)
-
+    character(len=16)     :: idxstr
+    errmsg = "t_kriging%solve_linear_system: "
+    lag = 0.0
     associate( &
-    iblock=>ctx%iblock, &
-    matA=>ctx%matA, &
-    rhsB=>ctx%rhsB, &
-    matsize=>ctx%matsize, &
-    npp=>ctx%npp, &
-    x=>ctx%x, &
-    unbias=>self%unbias, &
-    ndrift=>self%ndrift)
+      ndim=>self%ndim, &
+      iblock=>ctx%iblock, &
+      matA=>ctx%matA, &
+      rhsB=>ctx%rhsB, &
+      matsize=>ctx%matsize, &
+      npp=>ctx%npp, &
+      x=>ctx%x, &
+      unbias=>self%unbias, &
+      ndrift=>self%ndrift)
 
       call kriging_solve( &
         npp, unbias+ndrift, &
@@ -804,8 +833,9 @@
       end if
 
       if (info /= 0) then
-        write(*,*) 'Singluar matrix at block ', iblock
-        error stop
+        write(idxstr,'(i0)') iblock
+        call ctx%write_matrix(self)
+        error stop trim(errmsg)//'Singluar matrix at block '//trim(idxstr)
       end if
 
       if (self%weight_correction) then
@@ -834,19 +864,19 @@
         end if
         var = max(var - dot_product(x(1,1:matsize), rhsB(1,1:matsize)), 0.0)
       end associate
-      call ctx%assign_weight()
     end associate
   end subroutine solve_linear_system
 
 
-  subroutine assign_weight(self)
+  subroutine assign_weight(self, krige)
     class(t_kriging_ctx)  :: self
+    class(t_kriging)      :: krige
 
     ! local
     integer               :: ivar, k1
     ! assign the weights to respective variables
     k1 = 0
-    do ivar = lbound(self%nnear, 1), ubound(self%nnear, 1)
+    do ivar = krige%ivar0, krige%nvar
       if (self%nnear(ivar)==0) cycle
       self%weight(1:self%nnear(ivar), ivar) = self%x(1, k1+1:k1+self%nnear(ivar))
       k1 = k1 + self%nnear(ivar)
@@ -865,7 +895,6 @@
 
     nx = max(1, self%nsim)
     associate(&
-      sam=>self%block%sample  (:, ctx%iblock), &
       var=>self%block%variance(   ctx%iblock), &
       val=>self%block%estimate(:, ctx%iblock), &
       nnear=>ctx%nnear, &
@@ -902,12 +931,79 @@
       end do
       if (self%unbias==0 .and. self%sk_mean/=0.0) val = val + (1.0 - sum(total_weight)) * self%sk_mean
       if (self%nsim>0) then
-        val = val + sqrt(var) * sam
+        val = val + sqrt(var) * self%block%sample  (:, ctx%iblock)
       end if
-      val = merge(val, self%bounds(1), val<self%bounds(1))
-      val = merge(val, self%bounds(2), val>self%bounds(2))
+      where(val<self%bounds(1)) val = self%bounds(1)
+      where(val>self%bounds(2)) val = self%bounds(2)
     end associate
   end subroutine estimate_block
+
+
+  ! initialize the kriging context for thread private variables
+  subroutine write_matrix(self, krige)
+    class(t_kriging_ctx)     :: self
+    class(t_kriging)         :: krige
+
+    integer                  :: ivar, mmax, ifile, ii, k1
+    integer, allocatable     :: idx(:)
+    real   , allocatable     :: v(:)           ! store observation values
+    real   , allocatable     :: w(:)           ! store weights
+    real   , allocatable     :: xyz(:,:)       ! store weights
+    character(len=20) :: sig
+    character(len=6 ) :: cname(3)=['x_orig', 'y_orig', 'z_orig']
+
+    mmax = maxval(krige%obs%nmax)
+    associate(&
+      ndim      => krige%ndim, &
+      ib        => self%iblock, &
+      nnear     => self%nnear, &
+      inear     => self%inear, &
+      weight    => self%x, &
+      matA      => self%matA, &
+      rhsB      => self%rhsB, &
+      npp       => self%npp, &
+      irandpath => krige%block%order, &
+      matsize   => self%matsize)
+
+      write(sig, "(I0)") irandpath(ib)
+
+      open(newunit=ifile, file='data_'//trim(sig)//'.csv', status='replace')
+      write(ifile, '(99(A,:,","))') 'source','index', cname(1:ndim), 'value', 'weight'
+      k1 = 0
+      do ivar = krige%ivar0, krige%nvar
+        if (nnear(ivar)==0) cycle
+        w =  weight(1,k1+1:k1+nnear(ivar))
+        k1 = k1 + nnear(ivar)
+        if (ivar==0) then
+          sig  = "grid"
+          idx = krige%block%order(inear(1:nnear(0), 0))
+          xyz = krige%block%coord(1:ndim, inear(1:nnear(0), 0))
+          v = krige%block%estimate(1, inear(1:nnear(0),0))
+        else
+          write(sig, "('OBS',I0)") ivar
+          idx = inear(1:nnear(ivar), ivar)
+          xyz = krige%obs(ivar)%coord(1:ndim, inear(1:nnear(ivar), ivar))
+          v = krige%obs(ivar)%value(inear(1:nnear(ivar), ivar))
+        end if
+        do ii=1, nnear(ivar)
+          write(ifile, "(A,',',I0,*(:,',',ES15.8))") trim(sig),idx(ii),xyz(:,ii),v(ii),w(ii)
+        end do
+      end do
+      close(ifile)
+      if (npp<=1) return
+      open(newunit=ifile, file='matA_'//trim(sig)//'.dat', status='replace')
+      do ii =1, matsize
+        write(ifile, "(*(ES15.7))") matA(:matsize, ii)
+      end do
+      close(ifile)
+      open(newunit=ifile, file='rhsB_'//trim(sig)//'.dat', status='replace')
+      do ii =1, matsize
+        write(ifile, "(*(ES15.7))") rhsB(:,ii)
+      end do
+      close(ifile)
+    end associate
+  end subroutine write_matrix
+
 
   subroutine write_weight(self, ctx)
     class(t_kriging)      :: self

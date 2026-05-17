@@ -28,7 +28,7 @@
 !==============================================================================
 module variogram
 
-  use common,          only: pi, ndim, DEG2RAD, EPSLON
+  use common,          only: pi, DEG2RAD, EPSLON
 
   implicit none
   private
