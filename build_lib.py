@@ -36,7 +36,7 @@ SOURCES = [
     "kdtree2_maxidx.f90",
     "gaussian_quadrature.f90",
     "solver.f90",
-    "ppsgs.f90",
+    "sposv.f",
     "kriging.F90",
     "kriging_capi.f90",
 ]
@@ -136,7 +136,7 @@ def main():
     print(f"Mode:     {args.opt}")
 
     root       = Path(__file__).parent
-    fortran_dir = root / "fortran"
+    fortran_dir = root / "src" / "libkriging"
     out_dir     = root / "src" / "pykriging"
 
     if not fortran_dir.exists():

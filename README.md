@@ -213,22 +213,11 @@ with mp.Pool(4) as pool:
 
 ```
 pykriging/
-├── src/pykriging/       Python package (wrapper + compiled library)
-│   ├── __init__.py
-│   └── _kriging.py      ctypes wrapper around kriging_capi
-├── fortran/             Fortran sources
-│   ├── common.f90
-│   ├── utils.F90
-│   ├── rotation.f90
-│   ├── variogram.f90
-│   ├── kriging.F90      Core kriging engine
-│   └── kriging_capi.f90 ISO C Binding wrapper
+├── src/                 Source codes
+│   ├── libkriging       Core kriging engine/library
+│   ├── ppsgs            Pilot point based SGSIM tool
+│   └── pykriging        Python wrapper
 ├── tests/               pytest test suite
-│   ├── conftest.py      Shared fixtures and data helpers
-│   ├── test_ordinary_kriging.py
-│   ├── test_cokriging.py
-│   ├── test_sgsim.py
-│   └── test_api.py
 ├── test_data/           CSV files used by the test suite
 ├── docs/                Extended documentation (optional)
 ├── build_lib.py         Compile script (gfortran / ifx / ifort)
