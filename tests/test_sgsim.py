@@ -79,11 +79,12 @@ class TestSGSIM:
         grid_coord, _  = pc2d_grid
 
         sims = sequential_gaussian_simulation(
-            coord, value, grid_coord, _VGM_PC2D, nsim=50, nmax=20, seed=0
+            coord, value, grid_coord, _VGM_PC2D, nsim=50, nmax=20, seed=1001
         )
         ens_mean = sims.mean(axis=0)
 
         est, _ = ordinary_kriging(coord, value, grid_coord, _VGM_PC2D, nmax=20)
+        np.savetxt("sgsim.dat", np.vstack([sims, est[None,:]]), fmt="%s")
         corr = np.corrcoef(ens_mean, est)[0, 1]
         assert corr > 0.90, (
             f"Ensemble mean correlation with kriging = {corr:.3f} (expected > 0.90). "

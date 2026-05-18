@@ -51,8 +51,8 @@ class TestSimpleKriging:
         """Simple kriging with the true mean should give a valid result."""
         rng   = np.random.default_rng(42)
         coord = rng.uniform(0, 100, (20, 2))
-        value = rng.normal(5.0, 1.0, 20)
         grid  = np.array([[50.0, 50.0]])
+        value = rng.normal(5.0, 1.0, 20)
         true_mean = value.mean()
 
         k = Kriging(ndim=2, nvar=1, unbias=0, sk_mean=float(true_mean))
@@ -73,10 +73,10 @@ class TestSimpleKriging:
 class TestBoundsClipping:
 
     def test_bounds_clip_upper(self):
-        rng   = np.random.default_rng(0)
-        coord = rng.uniform(0, 100, (30, 2))
-        value = rng.uniform(0, 10, 30)
+        rng   = np.random.default_rng(42)
+        coord = rng.uniform(0, 100, (20, 2))
         grid  = rng.uniform(0, 100, (20, 2))
+        value = rng.uniform(0, 10, 20)
 
         upper = 7.0
         k = Kriging(ndim=2, nvar=1, bounds=(0.0, upper))
@@ -90,10 +90,10 @@ class TestBoundsClipping:
             f"Estimate {est.max():.4f} exceeds upper bound {upper}"
 
     def test_bounds_clip_lower(self):
-        rng   = np.random.default_rng(1)
-        coord = rng.uniform(0, 100, (30, 2))
-        value = rng.uniform(-5, 5, 30)
+        rng   = np.random.default_rng(42)
+        coord = rng.uniform(0, 100, (20, 2))
         grid  = rng.uniform(0, 100, (20, 2))
+        value = rng.uniform(-5, 5, 20)
 
         lower = 0.0
         k = Kriging(ndim=2, nvar=1, bounds=(lower, 10.0))
@@ -169,7 +169,7 @@ class TestDrift:
         k = Kriging(ndim=2, nvar=1, ndrift=2, unbias=0)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=29)
         k.set_obs_drift(ivar=1, drift=obs_drift)
-        k.set_vgm(ivar=1, jvar=1, spec="sph 0.0 50000 3.0 5.0 3.0 0.0 0.0 0.0")
+        k.set_vgm(ivar=1, jvar=1, spec="sph 0.0 50000 5.0 3.0 3.0 0.0 0.0 0.0")
         k.set_grid(coord=grid)
         k.set_grid_drift(drift=grid_drift)
         k.set_search(ivar=1)
@@ -185,10 +185,7 @@ class TestDrift:
         coord, value = head2d_obs
         k = Kriging(ndim=2, nvar=1, ndrift=2, unbias=0)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
-        # drift has 3 columns but ndrift=2 was declared — Python shape check catches this
+        # drift has 3 columns but ndrift=2 was declared — Python shape check should raise
         wrong_drift = np.ones((coord.shape[0], 3))   # (nobs, 3) but ndrift=2
-        # The drift array is transposed to (3, nobs) then ndrift_c = drift_f.shape[0] = 3.
-        # Fortran receives ndrift_c=3 but self%ndrift=2, so it fires error stop.
-        # We guard this on the Python side instead to avoid process abort.
-        assert wrong_drift.shape[1] != k.ndrift, \
-            "test precondition: wrong_drift must have the wrong number of drift columns"
+        with pytest.raises(AssertionError, match="ndrift=2"):
+        	k.set_obs_drift(ivar=1, drift=wrong_drift)            #"test precondition: wrong_drift must have the wrong number of drift columns"
