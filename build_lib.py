@@ -96,7 +96,7 @@ FLAGS = {
 
 
 def detect_compiler():
-    for compiler in ("gfortran", "ifx", "ifort"):
+    for compiler in ("ifx", "gfortran", "ifort"):
         if shutil.which(compiler):
             return compiler
     raise RuntimeError(
