@@ -691,9 +691,10 @@ module kriging
 
     ! local
     integer                       :: i, j, k, k1, istart
-    real                          :: lag(3)=0.0, tmp
+    real                          :: lag(3), tmp
     class(t_data), pointer        :: obs1, obs2
 
+    lag = 0.0
     associate( &
       ndim=>self%ndim, &
       nnear=>ctx%nnear(ivar), &

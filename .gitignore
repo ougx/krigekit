@@ -22,6 +22,7 @@ src/pykriging/kriging.lib
 fortran/*.o
 fortran/*.mod
 fortran/*.obj
+*__genmod.f90
 
 # ── Build artefacts ───────────────────────────────────────────────────────────
 *.o
