@@ -66,7 +66,8 @@ def _cfun(name, argtypes, restype=None):
     fn.restype  = restype
     return fn
 
-_krige_create      = _cfun("krige_create",      [_ptr_int64 := ctypes.POINTER(ctypes.c_int64)])
+_ptr_int64 = ctypes.POINTER(ctypes.c_int64)
+_krige_create      = _cfun("krige_create",      [_ptr_int64])
 _krige_destroy     = _cfun("krige_destroy",     [_ptr_int64])
 _krige_initialize  = _cfun("krige_initialize",  [
     ctypes.c_int64,                              # handle
@@ -373,6 +374,10 @@ class Kriging:
         drift_f  = _drift_to_fortran(drift)   # (nobs, ndrift) -> (ndrift, nobs)
         ndrift_c = drift_f.shape[0]
         nobs     = drift_f.shape[1]
+        assert ndrift_c == self.ndrift, (
+            f"drift has {ndrift_c} column(s) but ndrift={self.ndrift} was declared. "
+            "drift must be shape (nobs, ndrift)."
+        )
         _krige_set_obs_drift(_h(self._handle),
             _c_int(ivar), _c_int(ndrift_c), _c_int(nobs),
             _dptr(drift_f),
@@ -733,6 +738,13 @@ def ordinary_kriging(
     ...     variogram_spec="sph 100 900 500 1000 500 0 0 0",
     ...     nmax=20)
     """
+    assert obs_coord.ndim == 2 and obs_coord.shape[0] >= obs_coord.shape[1], (
+        f"obs_coord should be (nobs, ndim) with nobs >= ndim, got shape {obs_coord.shape}. "
+        "Rows are points, columns are spatial dimensions."
+    )
+    assert obs_coord.shape[0] == obs_value.shape[0], (
+        f"obs_coord has {obs_coord.shape[0]} rows but obs_value has {obs_value.shape[0]} elements."
+    )
     ndim = obs_coord.shape[1]   # (nobs, ndim) -> ndim is axis 1
     k = Kriging(ndim=ndim, nvar=1)
     k.set_obs(ivar=1, coord=obs_coord, value=obs_value,

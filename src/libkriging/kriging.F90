@@ -3,7 +3,7 @@ module kriging
   use iso_fortran_env, only: input_unit, error_unit, output_unit
 
   use common
-  use utils, only: set_seq, r8vec_normal_01
+  use utils, only: set_seq, r8vec_normal_01, yesno
   use rotation
   use variogram
   use kdtree2_module
@@ -101,7 +101,7 @@ module kriging
     integer, allocatable :: nnear(:)       ! nnear(0:nvar): neighbours found per variable, index starting from 0 for neighbour blocks for SGSIM
     integer, allocatable :: inear(:,:)     ! inear(nmax, 0:nvar): neighbour indices, index starting from 0 for neighbour blocks for SGSIM
     real   , allocatable :: weight(:,:)    ! weight(nmax, 0:nvar): neighbour weights, index starting from 0 for neighbour blocks for SGSIM
-    real,    allocatable :: sqdist(:)      ! squared dist(nmax): used to determine if a point is within maxdist
+    real,    allocatable :: sqdist(:,:)    ! squared dist(nmax): used to determine if a point is within maxdist
     real   , allocatable :: x(:,:)         ! weights
     real   , allocatable :: matA(:,:)      ! matrix
     real   , allocatable :: rhsB(:,:)      ! right hand side
@@ -455,7 +455,7 @@ module kriging
     mmax = maxval(krige%obs%nmax)
     associate(npp => krige%nppmax, matsize => krige%matsize_max)
       if (.not. krige%use_old_weight) then
-        allocate(self%sqdist(mmax))
+        allocate(self%sqdist(mmax,0:krige%nvar))
         allocate(self%matA(matsize, matsize))
         allocate(self%rhsB(1, matsize))
         self%sqdist = 0.0
@@ -522,6 +522,7 @@ module kriging
 
   ! solve for all blocks
   subroutine solve(self)
+    use omp_lib  ! Required for omp_get_thread_num()
     class(t_kriging)      :: self
     ! local
     type(t_kriging_ctx), allocatable :: ctx   ! one per thread
@@ -580,9 +581,8 @@ module kriging
     integer, intent(in)           :: ivar
 
     ! local
-    integer                       :: i
+    integer                       :: i, k
     real                          :: newloc(self%ndim,1)    ! rotated coordinates of the new location to be estimated
-    logical, allocatable          :: mask(:) !, mask1(:)
     logical, allocatable          :: is_obs(:)
     type(kdtree2_result)          :: results(self%obs(ivar)%nmax) ! nearest neighbor search results
 
@@ -596,7 +596,7 @@ module kriging
       xloc   =>self%block%coord(:, ctx%iblock:ctx%iblock), &
       inear  =>ctx%inear(:,ivar), & ! obs
       nnear  =>ctx%nnear(ivar), &   ! obs
-      dist   =>ctx%sqdist, &
+      dist   =>ctx%sqdist(:,ivar), &
       maxdist=>self%obs(ivar)%maxdist, &
       rotmat =>self%obs(ivar)%rotmat)
       !
@@ -608,7 +608,7 @@ module kriging
       end if
 
       if (nsim>0 .and. ivar==1) then
-        associate(inearb =>ctx%inear(:,0), nnearb =>ctx%nnear(0))
+        associate(inearb =>ctx%inear(:,0), nnearb =>ctx%nnear(0), distb =>ctx%sqdist(:,0))
         if (nmax<nobs+iblock) then
           call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, results, nobs+iblock-1)
           allocate(is_obs, source=results%idx<=nobs)
@@ -617,6 +617,7 @@ module kriging
           inear (1:nnear)  = pack(results%idx, is_obs)
           inearb(1:nnearb) = pack(results%idx, .not. is_obs) - nobs
           dist(1:nnear)    = pack(results%dis, is_obs)    ! assume no co-located blocks, so estimated blocks will never exactly match the block to be estimated
+          distb(1:nnearb)  = pack(results%dis, .not. is_obs)    ! assume no co-located blocks, so estimated blocks will never exactly match the block to be estimated
         else
           ! no search
           nnear  = nobs
@@ -649,12 +650,15 @@ module kriging
         end if
       end if
       ! finally check maximum distance
-      mask = dist(1:nnear)<=maxdist
-      if (any(.not. mask)) then
-        nnear = count(mask)
-        inear(1:nnear) = pack(inear, mask)
-        dist (1:nnear) = pack(dist , mask)
-      end if
+      k = 0
+      do i = 1, nnear
+        if (dist(i)<=maxdist) then
+          k = k + 1
+          inear(k) = inear(i)
+          dist (k) = dist(i)
+        end if
+      end do
+      nnear = k
     end associate
   end subroutine search_neighbors
 
@@ -735,13 +739,13 @@ module kriging
       do ivar = 1, nvar
         call self%search_neighbors(ivar, ctx)
         npp = npp + ctx%nnear(ivar)
-        if (ivar==1 .and. minval(dist(1:ctx%nnear(ivar)))<=EPSLON) then
+        if (ivar==1 .and. minval(dist(1:ctx%nnear(ivar),ivar))<=EPSLON) then
           npp = 1    ! signal exact match
           ctx%x=0.0
           ctx%x(:,1)=1.0
           ctx%weight=0.0
           ctx%weight(1,1) = 1.0
-          ctx%inear(1,ivar) = ctx%inear(minloc(dist(1:ctx%nnear(ivar)), dim=1),ivar)
+          ctx%inear(1,ivar) = ctx%inear(minloc(dist(1:ctx%nnear(ivar),ivar), dim=1),ivar)
           ctx%nnear(ivar) = 1
           ctx%nnear(0) = 0
           self%block%variance(ctx%iblock) = self%obs(1)%variance(ctx%inear(1,ivar)) + self%block%localnugget(ctx%iblock)
@@ -856,7 +860,7 @@ module kriging
 
       ! calculate kriging variance
       associate(vgm=>self%vgm(1, 1), &
-        var=>self%block%variance(iblock), &       ! write to shared array for different threads
+        var=>self%block%variance(iblock), &
         weight=>self%grid%weight, &
         coord=>self%grid%coord, &
         nblockpnt=>self%block%nblockpnt(iblock))
@@ -950,6 +954,54 @@ module kriging
   end subroutine estimate_block
 
 
+  ! calculate weighted average
+  subroutine print_system(self)
+    implicit none
+    class(t_kriging)      :: self
+    integer               :: ivar, jvar
+    print "(A   )", ""
+    print "(A   )", "==================== Configuration ===================="
+    print "(A,A)",  ' Version                : ', version
+    print "(A,I0)", " Dimension              : ", self%ndim
+    print "(A,I0)", " Number of Observations : ", self%nvar
+    print "(A,I0)", " Number of Simulations  : ", self%nsim
+    print "(A,I0)", " Number of Drifts       : ", self%ndrift
+    print "(A,I0)", " Number of Blocks       : ", self%block%n
+    print "(A,A )", " Ordinary Kriging       : ", yesno(self%unbias==1)
+    print "(A,A )", " LOO-Cross Validation   : ", yesno(self%cross_validation)
+    print "(A,A )", " Weight Correction      : ", yesno(self%weight_correction)
+    print "(A,A )", " Use Old Weights        : ", yesno(self%use_old_weight)
+    print "(A,A )", " Write Matrix for Debug : ", yesno(self%write_mat)
+    print "(A,A )", " Write Weight File      : ", yesno(self%store_weight)
+    if (self%store_weight .or. self%use_old_weight) &
+    print "(A,A )", " Weight File            : ", trim(self%weight_file)
+    if (self%unbias==0) &
+    print "(A,G0)", " Simple Kriging Mean    : ", self%sk_mean
+    print "(A,G0)", " Lower Bound            : ", self%bounds(1)
+    print "(A,G0)", " Upper Bound            : ", self%bounds(2)
+
+    do ivar = 1, self%nvar
+      print "(A,I0,A)", " Observation ", ivar, ": "
+      print "(A,I0)"  , "   Number of data       : ", self%obs(ivar)%n
+      print "(A,I0)"  , "   Maximum neighbors    : ", self%obs(ivar)%nmax
+      print "(A,G0)"  , "   Maxdist              : ", sqrt(self%obs(ivar)%maxdist)
+      print "(A,G0)"  , "   Required Search      : ", yesno(self%obs(ivar)%need_search)
+      print "(A,G0)"  , "   Anisotropic Search   : ", yesno(self%obs(ivar)%anisotropic_search)
+    end do
+    print "(A)"   , " Variogram Models"
+    do ivar = 1, self%nvar
+      do jvar = 1, self%nvar
+        if (ivar == jvar) then
+          print "(A,I0,A,I0)", "   Model for Variable", ivar
+        else
+          print "(A,I0,A,I0)", "   Model between Variable", ivar, " and ", jvar
+        end if
+        print "(4x,A)", self%vgm(jvar, ivar)%tostr()
+      end do
+    end do
+    print "(A   )", "================== End Configuration =================="
+  end subroutine print_system
+
   ! initialize the kriging context for thread private variables
   subroutine write_matrix(self, krige)
     class(t_kriging_ctx)     :: self
@@ -960,7 +1012,7 @@ module kriging
     real   , allocatable     :: v(:)           ! store observation values
     real   , allocatable     :: w(:)           ! store weights
     real   , allocatable     :: xyz(:,:)       ! store weights
-    character(len=20) :: sig
+    character(len=20) :: sig, idxstr
     character(len=6 ) :: cname(3)=['x_orig', 'y_orig', 'z_orig']
 
     mmax = maxval(krige%obs%nmax)
@@ -969,6 +1021,7 @@ module kriging
       ib        => self%iblock, &
       nnear     => self%nnear, &
       inear     => self%inear, &
+      dist      => self%sqdist, &
       weight    => self%x, &
       matA      => self%matA, &
       rhsB      => self%rhsB, &
@@ -976,10 +1029,10 @@ module kriging
       irandpath => krige%block%order, &
       matsize   => self%matsize)
 
-      write(sig, "(I0)") irandpath(ib)
+      write(idxstr, "(I0)") irandpath(ib)
 
-      open(newunit=ifile, file='data_'//trim(sig)//'.csv', status='replace')
-      write(ifile, '(99(A,:,","))') 'source','index', cname(1:ndim), 'value', 'weight'
+      open(newunit=ifile, file='data_'//trim(idxstr)//'.csv', status='replace')
+      write(ifile, '(99(A,:,","))') 'source','index', cname(1:ndim), 'value', 'distance', 'weight'
       k1 = 0
       do ivar = krige%ivar0, krige%nvar
         if (nnear(ivar)==0) cycle
@@ -997,17 +1050,17 @@ module kriging
           v = krige%obs(ivar)%value(inear(1:nnear(ivar), ivar))
         end if
         do ii=1, nnear(ivar)
-          write(ifile, "(A,',',I0,*(:,',',ES15.8))") trim(sig),idx(ii),xyz(:,ii),v(ii),w(ii)
+          write(ifile, "(A,',',I0,*(:,',',ES15.8))") trim(sig),idx(ii),xyz(:,ii),v(ii),dist(ii, ivar),w(ii)
         end do
       end do
       close(ifile)
       if (npp<=1) return
-      open(newunit=ifile, file='matA_'//trim(sig)//'.dat', status='replace')
+      open(newunit=ifile, file='matA_'//trim(idxstr)//'.dat', status='replace')
       do ii =1, matsize
         write(ifile, "(*(ES15.7))") matA(:matsize, ii)
       end do
       close(ifile)
-      open(newunit=ifile, file='rhsB_'//trim(sig)//'.dat', status='replace')
+      open(newunit=ifile, file='rhsB_'//trim(idxstr)//'.dat', status='replace')
       do ii =1, matsize
         write(ifile, "(*(ES15.7))") rhsB(:,ii)
       end do

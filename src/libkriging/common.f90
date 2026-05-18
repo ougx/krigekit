@@ -1,6 +1,7 @@
 module common
   use, INTRINSIC    :: ieee_arithmetic
   ! use, intrinsic    :: iso_fortran_env
+  character(len=8)  :: version = '20260515'
   logical           :: verbose_c = .false.
   integer           :: ndim_c = 0
   real, parameter   :: pi = 4.0*atan(1.0)
