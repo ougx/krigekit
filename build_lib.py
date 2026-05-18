@@ -114,6 +114,42 @@ def output_name(compiler: str) -> str:
         return "libkriging.so"
 
 
+
+# All bind(C) entry points exposed by kriging_capi.f90.
+# This list is used to generate the .def file on Windows so that
+# ifx/ifort /dll actually exports these symbols (Linux -shared exports
+# everything by default; Windows DLLs require an explicit exports list).
+_CAPI_EXPORTS = [
+    "krige_create",
+    "krige_destroy",
+    "krige_initialize",
+    "krige_set_obs",
+    "krige_set_obs_drift",
+    "krige_set_vgm",
+    "krige_set_grid",
+    "krige_set_grid_block",
+    "krige_set_grid_cv",
+    "krige_set_grid_drift",
+    "krige_set_sim",
+    "krige_set_search",
+    "krige_prepare",
+    "krige_solve",
+    "krige_get_nblocks",
+    "krige_get_nsim",
+    "krige_get_estimate",
+    "krige_get_variance",
+]
+
+
+def _write_def_file(path: Path) -> None:
+    """Write a MSVC-style module definition file listing all C API exports."""
+    with open(path, "w") as f:
+        f.write("EXPORTS\n")
+        for sym in _CAPI_EXPORTS:
+            f.write(f"    {sym}\n")
+    print(f"Generated: {path}")
+
+
 def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_dir: Path):
     flag_set = FLAGS.get(compiler)
     if flag_set is None:
@@ -132,10 +168,18 @@ def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_di
     out_path = out_dir / out_name
     sources   = [str(fortran_dir / s) for s in SOURCES]
 
-    # Extra Windows linker flag for gfortran to produce an import library
+    # On Windows, Intel ifx/ifort with /dll does NOT automatically export all
+    # symbols the way Linux -shared does.  We must supply a .def file that
+    # explicitly lists every C-callable entry point; without it ctypes raises
+    # "function 'krige_create' not found".
     extra = []
-    # if sys.platform == "win32" and compiler == "gfortran":
-    #     extra = [f"-Wl,--out-implib,{out_dir / 'kriging.lib'}"]
+    if sys.platform == "win32" and compiler in ("ifx", "ifort"):
+        # /def: must be passed as a linker flag, not a compiler flag.
+        # ifx forwards everything after -link directly to the MSVC linker.
+        # Use a relative path (just the filename) so no spaces appear in the
+        # linker response file ifx doesn't quote paths when writing it.
+        _write_def_file(out_dir / "kriging.def")
+        extra = ["-link", "/def:kriging.def"]
 
     cmd = (
         [compiler]
@@ -144,14 +188,15 @@ def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_di
         + sources
         + ["-o", str(out_path)]
         + extra
-        + (flag_set["implib"] if sys.platform == "win32" and compiler != "gfortran" else [])
+        + flag_set["implib"]
     )
 
     print("Compiling with:")
     print(" ", " ".join(cmd))
     print()
 
-    result = subprocess.run(cmd, capture_output=False)
+    result = subprocess.run(cmd, capture_output=False,
+                            cwd=out_dir if sys.platform == "win32" else None)
     if result.returncode != 0:
         print(f"\nCompilation failed (exit code {result.returncode})")
         sys.exit(result.returncode)
