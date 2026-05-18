@@ -180,13 +180,16 @@ module kriging
       if (self%cross_validation) then
         ngrid = self%obs(1)%n
         self%block%n = ngrid
-        allocate(self%block%coord, source=self%obs(1)%coord)
-        allocate(self%grid%coord , source=self%obs(1)%coord)
+        allocate(self%block%coord(ndim, ngrid)); self%block%coord = self%obs(1)%coord
+        allocate(self%grid%coord (ndim, ngrid)); self%grid%coord  = self%obs(1)%coord
         allocate(self%block%nblockpnt(ngrid)); self%block%nblockpnt=1
         allocate(self%block%iblockpnt, source=[(igrid, igrid=1,ngrid)])
         allocate(self%grid%weight(ngrid)); self%grid%weight=1.0
         self%obs(1)%nmax = self%obs(1)%nmax + 1 ! search will include itself but will be excluded from the search results
-        if (ndrift>0) allocate(self%block%drift, source=self%obs(1)%drift)
+        if (ndrift>0) then
+          allocate(self%block%drift(ndrift, ngrid))
+          self%block%drift = self%obs(1)%drift
+        end if
       else
         if (.not. present(coord)) error stop trim(errmsg)//'coord needs to be provided.'
         if (ndim == 0) then

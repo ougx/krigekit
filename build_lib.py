@@ -12,6 +12,7 @@ Usage
     python build_lib.py --compiler ifx
     python build_lib.py --compiler ifort
     python build_lib.py --opt debug       # no optimisation, add -g
+    python build_lib.py --no-openmp       # Disable OpenMP parallelization
 
 The compiled library is placed in:
     src/pykriging/libkriging.so   (Linux / macOS)
@@ -45,26 +46,52 @@ SOURCES = [
 # ---------------------------------------------------------------------------
 # Compiler flag sets
 # ---------------------------------------------------------------------------
+# Intel compilers (ifx/ifort) use different flag syntax on Windows vs Linux/macOS:
+#   Windows : /O2  /fPIC  /real-size:64  /Qopenmp  /dll
+#   Linux   : -O2  -fPIC  -real-size:64  -qopenmp  -shared
+_ON_WINDOWS = sys.platform == "win32"
+
+def _intel_flags(opt_win, opt_linux, debug_win, debug_linux, shared_win, shared_linux):
+    """Return platform-correct Intel release/debug/shared/implib flag lists."""
+    if _ON_WINDOWS:
+        return {
+            "release": opt_win,
+            "debug":   debug_win,
+            "shared":  shared_win,
+            "implib":  [],
+        }
+    else:
+        return {
+            "release": opt_linux,
+            "debug":   debug_linux,
+            "shared":  shared_linux,
+            "implib":  [],
+        }
+
 FLAGS = {
     "gfortran": {
         "release": ["-O2", "-fPIC", "-fdefault-real-8", "-fopenmp", "-cpp", "-fbacktrace", "-ffree-line-length-none"],
-        "debug":   ["-O0", "-g", "-fPIC", "-fdefault-real-8", "-fopenmp",
-                    "-Wall", "-fcheck=all", "-fbacktrace", "-cpp", "-ffree-line-length-none"],
-        "shared":  ["-shared"],
-        "implib":  [],   # gfortran uses -Wl,--out-implib on Windows
+        "debug": ["-O0", "-g", "-fPIC", "-fdefault-real-8", "-fopenmp", "-Wall", "-fcheck=all", "-fbacktrace", "-cpp", "-ffree-line-length-none"],
+        "shared": ["-shared"],
+        "implib": [],
     },
-    "ifx": {
-        "release": ["-O2", "-fPIC", "-r8", "-qopenmp"],
-        "debug":   ["-O0", "-g", "-fPIC", "-r8", "-qopenmp", "-warn", "all"],
-        "shared":  ["-shared"],
-        "implib":  ["-link", "/dll", "/implib:kriging.lib"],
-    },
-    "ifort": {
-        "release": ["-O2", "-fPIC", "-r8", "-qopenmp"],
-        "debug":   ["-O0", "-g", "-fPIC", "-r8", "-qopenmp", "-warn", "all"],
-        "shared":  ["-shared"],
-        "implib":  ["-link", "/dll", "/implib:kriging.lib"],
-    },
+    "ifx": _intel_flags(
+        opt_win   = ["/O2", "/real-size:64", "/Qopenmp", "/libs:dll", "/heap-arrays:0", "/traceback", "/fpp"],
+        opt_linux = ["-O2", "-real-size:64", "-qopenmp", "-traceback", "-fpp"],
+        debug_win = ["/Od", "/debug:full", "/real-size:64", "/Qopenmp", "/libs:dll", "/heap-arrays:0", "/traceback", "/warn:all", "/fpp", "/check:all"],
+        debug_linux=["-O0", "-g", "-real-size:64", "-qopenmp", "-traceback", "-fpp", "-warn all", "-check all"],
+        shared_win = ["/dll"],
+        shared_linux = ["-shared", "-fPIC"]
+    ),
+    "ifort": _intel_flags(
+        # Classic ifort matches ifx flag syntax exactly on Windows/Linux
+        opt_win   = ["/O2", "/real-size:64", "/Qopenmp", "/libs:dll", "/heap-arrays:0", "/traceback", "/fpp"],
+        opt_linux = ["-O2", "-real-size:64", "-qopenmp", "-traceback", "-fpp"],
+        debug_win = ["/Od", "/debug:full", "/real-size:64", "/Qopenmp", "/libs:dll", "/heap-arrays:0", "/traceback", "/warn:all", "/fpp", "/check:all"],
+        debug_linux=["-O0", "-g", "-real-size:64", "-qopenmp", "-traceback", "-fpp", "-warn all", "-check all"],
+        shared_win = ["/dll"],
+        shared_linux = ["-shared", "-fPIC"]
+    ),
 }
 
 
@@ -87,10 +114,19 @@ def output_name(compiler: str) -> str:
         return "libkriging.so"
 
 
-def build(compiler: str, opt: str, fortran_dir: Path, out_dir: Path):
+def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_dir: Path):
     flag_set = FLAGS.get(compiler)
     if flag_set is None:
         raise ValueError(f"Unknown compiler {compiler!r}. Choose: gfortran, ifx, ifort")
+    if arg.no_openmp:
+        openmp_flags = {
+            "gfortran": ["fopenmp"],
+            "ifx": ["qopenmp", "Qopenmp"],
+            "ifort": ["qopenmp", "Qopenmp"],
+        }
+        for flag in flag_set[arg.opt]:
+            if flag[1:] in openmp_flags.get(compiler, []):
+                flag_set[arg.opt].remove(flag)
 
     out_name = output_name(compiler)
     out_path = out_dir / out_name
@@ -103,7 +139,7 @@ def build(compiler: str, opt: str, fortran_dir: Path, out_dir: Path):
 
     cmd = (
         [compiler]
-        + flag_set[opt]
+        + flag_set[arg.opt]
         + flag_set["shared"]
         + sources
         + ["-o", str(out_path)]
@@ -130,6 +166,8 @@ def main():
                         help="Fortran compiler: gfortran, ifx, ifort (default: auto-detect)")
     parser.add_argument("--opt", default="release", choices=["release", "debug"],
                         help="Optimisation level (default: release)")
+    parser.add_argument("--no-openmp", action="store_true",
+                        help="Disable OpenMP parallelization")
     args = parser.parse_args()
 
     compiler = args.compiler or detect_compiler()
@@ -144,7 +182,7 @@ def main():
         raise FileNotFoundError(f"Fortran source directory not found: {fortran_dir}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    build(compiler, args.opt, fortran_dir, out_dir)
+    build(compiler, args, fortran_dir, out_dir)
 
 
 if __name__ == "__main__":

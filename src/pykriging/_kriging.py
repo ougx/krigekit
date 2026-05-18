@@ -42,7 +42,7 @@ def _load_lib():
     for name in names:
         path = os.path.join(base, name)
         if os.path.exists(path):
-            return ctypes.CDLL(path)
+            return ctypes.CDLL(path, winmode=0)
     raise FileNotFoundError(
         f"Compiled Fortran library not found in {base!r}.\n"
         "Build it first — see README.md for instructions."
