@@ -17,7 +17,7 @@ The compiled library is placed in:
     bin/sparks (Linux / macOS)
     bin/sparks.exe (Windows)
 """
-
+import re
 import argparse
 import shutil
 import subprocess
@@ -102,6 +102,35 @@ def detect_compiler():
 def output_name(compiler: str) -> str:
     return "sparks"
 
+
+def get_compiler_version(compiler: str) -> str:
+    try:
+        result = subprocess.run(
+            [compiler, "--version"],
+            capture_output=True, text=True
+        )
+        first_line = (result.stdout or result.stderr).splitlines()[0].strip()
+        # Extract just the version number: first token matching x.y.z or x.y.z.w
+        match = re.search(r'\d+\.\d+[\.\d]*', first_line)
+        return match.group(0) if match else first_line[:40]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+def get_git_hash() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def get_define_flag(compiler: str, name: str, value: str) -> str:
+    prefix = "/" if (_ON_WINDOWS and compiler in ("ifx", "ifort")) else "-"
+    return f'{prefix}D{name}="{value}"'
+
 def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_dir: Path):
     flag_set = FLAGS.get(compiler)
     if flag_set is None:
@@ -121,8 +150,16 @@ def build(compiler: str, arg: argparse.ArgumentParser, fortran_dir: Path, out_di
     out_path = out_dir / out_name
     sources = [str(fortran_dir / s) for s in SOURCES]
 
+    git_hash     = get_git_hash()
+    compiler_ver = get_compiler_version(compiler)
+    defines = [
+        get_define_flag(compiler, "GIT_HASH",   git_hash),
+        get_define_flag(compiler, "FC_NAME",    compiler),
+        get_define_flag(compiler, "FC_VERSION", compiler_ver),
+    ]
+
     cmd = (
-        [compiler] + flag_set[arg.opt] + flag_set["shared"] + sources + ["-o", str(out_path)] + flag_set["implib"]
+        [compiler] + flag_set[arg.opt] + flag_set["shared"] + defines + sources + ["-o", str(out_path)] + flag_set["implib"]
     )
 
     print("Compiling with:")

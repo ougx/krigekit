@@ -14,7 +14,18 @@ program sparks
   implicit none
 
   character(8), parameter           :: sparks_version = '20260515'
-
+#ifndef GIT_HASH
+#  define GIT_HASH   "n/a"
+#endif
+#ifndef FC_NAME
+#  define FC_NAME    "unknown"
+#endif
+#ifndef FC_VERSION
+#  define FC_VERSION "unknown"
+#endif
+  character(*), parameter :: sparks_githash  = GIT_HASH
+  character(*), parameter :: sparks_compiler = FC_NAME
+  character(*), parameter :: sparks_fc_ver   = FC_VERSION
   ! ---------------------------------------------------------------------------
   ! t_kriging encapsulates: obs, grid, blocks, vgm, search, solve, estimate.
   ! The program's job is now:
@@ -619,7 +630,7 @@ contains
     print "(A)", ''
     print "(A)", '   Perform Kriging or Sequential Gaussian Simulation.'
     print "(A)", '   Developed by mou@sspa.com.'
-    print "(A)", '   Version: '//version//'.'
+    print "(A)", '   Version:  '//sparks_version//'  ('//trim(sparks_compiler)//' '//trim(sparks_fc_ver)//')  git: '//trim(sparks_githash)
     print "(A)", ' '
     print "(A)", '   Arguments:'
     do ii = 1, Mandatory
