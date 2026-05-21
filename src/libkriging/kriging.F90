@@ -892,7 +892,7 @@ contains
     end if
     do ivar = 1, self%nvar
       do jvar = 1, self%nvar
-        if (self%vgm(jvar, ivar)%nstruct == 0) &
+        if (.not. self%vgm(jvar, ivar)%is_valid()) &
           call kriging_error(subname, 'Variogram is not set.')
       end do
     end do

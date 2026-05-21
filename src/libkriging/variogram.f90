@@ -29,7 +29,7 @@
 module variogram
 
   use common,          only: pi, DEG2RAD, EPSLON
-
+  use kriging_err,     only: kriging_error
   implicit none
   private
 
@@ -540,11 +540,19 @@ contains
             ': aniso matrix not built (call aniso%build())'
           ok = .false.
         end if
-        if (c%aniso%a_major  <= 0.0 .or. &
-            c%aniso%a_minor1 <= 0.0 .or. &
-            c%aniso%a_minor2 <= 0.0) then
+        if (c%aniso%a_major  <= 0.0)  then
           write(*,'(A,I0,A)') &
-            'WARNING vgm_struct: structure ', iv, ': non-positive range'
+            'WARNING vgm_struct: structure ', iv, ': non-positive major range'
+          ok = .false.
+        end if
+        if (c%aniso%a_minor1 <= 0.0)  then
+          write(*,'(A,I0,A)') &
+            'WARNING vgm_struct: structure ', iv, ': non-positive minor range 1'
+          ok = .false.
+        end if
+        if (c%aniso%a_minor2 <= 0.0) then
+          write(*,'(A,I0,A)') &
+            'WARNING vgm_struct: structure ', iv, ': non-positive minor range 2'
           ok = .false.
         end if
         !-- Type-guard: warn if hole-effect used in 3D context
