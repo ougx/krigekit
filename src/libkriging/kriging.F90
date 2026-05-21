@@ -44,6 +44,7 @@ module kriging
   use iso_fortran_env, only: input_unit, error_unit, output_unit
 
   use common
+  use kriging_err
   use utils, only: set_seq, r8vec_normal_01, yesno, random_seed_initialize
   use progress_bar, only: progress
   use rotation
@@ -52,8 +53,8 @@ module kriging
   use gaussian_quadrature
   implicit none
 
-  !-- Module-level error message buffer; overwritten by every subroutine entry.
-  character(len=2048) :: errmsg
+  !-- subroutine name for error messages.
+  character(len=64)  :: subname
 
   !============================================================================
   ! t_data — base type for any spatially located dataset
@@ -278,7 +279,7 @@ contains
                                                 verbose, cross_validation, neglect_error
     character(len=*), intent(in), optional   :: weight_file
 
-    errmsg = "t_kriging%initialize: "
+    subname = "t_kriging%initialize: "
 
     !-- Transfer optional arguments to self
     if (present(ndim))               self%ndim               = ndim
@@ -315,13 +316,13 @@ contains
 
     !-- Sanity checks: mutually exclusive flag combinations
     if (self%use_old_weight .and. self%weight_file == "") &
-      error stop trim(errmsg)//"use_old_weight requires weight_file to be specified"
+      call kriging_error(subname, 'use_old_weight requires weight_file to be specified')
     if (self%store_weight .and. self%weight_file == "") &
-      error stop trim(errmsg)//"store_weight requires weight_file to be specified"
+      call kriging_error(subname, 'store_weight requires weight_file to be specified')
     if (self%store_weight .and. self%use_old_weight) &
-      error stop trim(errmsg)//"store_weight and use_old_weight are mutually exclusive"
+      call kriging_error(subname, 'store_weight and use_old_weight are mutually exclusive')
     if (self%cross_validation .and. self%nsim > 0) &
-      error stop trim(errmsg)//"nsim>0 and cross_validation are mutually exclusive"
+      call kriging_error(subname, 'nsim>0 and cross_validation are mutually exclusive')
   end subroutine initialize
 
 
@@ -367,10 +368,10 @@ contains
     real,    intent(in), optional          :: localnugget(:)  ! per-block extra nugget       [nblocks]
 
     integer :: ngrid, nn, nb, iblock, igrid, idim
-    errmsg = "t_kriging%set_grid: "
+    subname = "t_kriging%set_grid: "
 
     if (self%obs(1)%n == 0) &
-      error stop trim(errmsg)//'Observation needs to be set first.'
+      call kriging_error(subname, 'Observation needs to be set first.')
 
     associate(ndim => self%ndim, ndrift => self%ndrift)
       if (present(block_type)) self%block%block_type = block_type
@@ -398,12 +399,11 @@ contains
         ! Normal path: coord must be provided
         !----------------------------------------------------------------------
         if (.not. present(coord)) &
-          error stop trim(errmsg)//'coord needs to be provided.'
+          call kriging_error(subname, 'coord needs to be provided.')
 
         !-- validate ndim
         if (ndim /= size(coord, 1)) &
-            error stop trim(errmsg)//'ndim /= size(coord, 1) for self%set_grid'
-
+          call kriging_error(subname, 'ndim /= size(coord, 1) for self%grid')
         ngrid = size(coord, 2)
 
         !-- block_type = 0: point kriging; one grid node per block
@@ -418,7 +418,7 @@ contains
         !-- block_type = -4: GQ discretisation; blocksize required
         else if (self%block%block_type == -4) then
           if (.not. present(blocksize)) &
-            error stop trim(errmsg)//'blocksize needs to be provided when block_type=-4.'
+            call kriging_error(subname, 'blocksize needs to be provided when block_type=-4.')
           nb = 4**ndim        ! integration points per block (4-point Gauss per dimension)
           self%block%n = ngrid
           allocate(self%block%coord, source = coord)
@@ -435,8 +435,6 @@ contains
 
         !-- block_type > 0: user-supplied integration nodes
         else
-          if (sum(nblockpnt) /= ngrid) &
-            error stop trim(errmsg)//'sum(nblockpnt) /= ngrid'
           self%grid%n   = ngrid
           self%block%n  = size(nblockpnt)
           allocate(self%grid%coord,    source = coord)
@@ -520,17 +518,17 @@ contains
     class(t_kriging)   :: self
     real, intent(in)   :: drift(:,:)   ! drift values [ndrift, nblock]
 
-    errmsg = "t_kriging%set_grid_drift: "
+    subname = "t_kriging%set_grid_drift: "
     if (.not. associated(self%block)) &
-      error stop trim(errmsg)//'Call initialize() before set_grid_drift.'
+      call kriging_error(subname, 'Call initialize() before set_grid_drift.')
     if (self%block%n == 0) &
-      error stop trim(errmsg)//'Grid needs to be set before adding drift.'
+      call kriging_error(subname, 'Grid needs to be set before adding drift.')
     if (self%ndrift == 0) &
-      error stop trim(errmsg)//'grid/block drift is specified but ndrift==0'
+      call kriging_error(subname, 'grid/block drift is specified but ndrift==0')
     if (size(drift, 1) /= self%ndrift) &
-      error stop trim(errmsg)//'size(drift, 1) /= ndrift'
+      call kriging_error(subname, 'size(drift, 1) /= ndrift')
     if (size(drift, 2) /= self%block%n) &
-      error stop trim(errmsg)//'size(drift, 2) /= block%n; one drift value per block, not per grid node'
+      call kriging_error(subname, 'size(drift, 2) /= block%n; one drift value per block, not per grid node')
     allocate(self%block%drift, source = drift)
   end subroutine set_grid_drift
 
@@ -557,7 +555,7 @@ contains
     character(*), intent(in) :: spec
     integer,      intent(in) :: ivar, jvar
 
-    errmsg = "t_kriging%set_vgm: "
+    subname = "t_kriging%set_vgm: "
     if (jvar == ivar) then
       call self%vgm(jvar, ivar)%add(spec = spec)
     else if (jvar > ivar) then
@@ -565,7 +563,7 @@ contains
       call self%vgm(jvar, ivar)%add(spec = spec)
       call self%vgm(ivar, jvar)%add(spec = spec)
     else
-      error stop trim(errmsg)//'jvar must be >= ivar to set the upper triangle of the variogram matrix'
+      call kriging_error(subname, 'jvar must be >= ivar to set the upper triangle of the variogram matrix')
     end if
   end subroutine set_vgm
 
@@ -594,14 +592,14 @@ contains
     real,    intent(in)           :: coord(:,:), value(:)
     real,    intent(in), optional :: variance(:), maxdist
 
-    errmsg = "t_kriging%set_obs: "
+    subname = "t_kriging%set_obs: "
     associate(ndim => self%ndim, obs => self%obs(ivar))
       !-- Infer or validate ndim from coord
       if (ndim == 0) then
         ndim = size(coord, 1)
       else
         if (ndim /= size(coord, 1)) &
-          error stop trim(errmsg)//'ndim /= size(coord, 1) for grid'
+          call kriging_error(subname, 'ndim /= size(coord, 1) for grid')
       end if
       obs%n = size(coord, 2)
 
@@ -643,17 +641,17 @@ contains
     integer, intent(in) :: ivar
     real,    intent(in) :: drift(:,:)   ! [ndrift, nobs]
 
-    errmsg = "t_kriging%set_obs_drift: "
+    subname = "t_kriging%set_obs_drift: "
     if (.not. associated(self%obs)) &
-      error stop trim(errmsg)//'Call initialize() before set_obs_drift.'
+      call kriging_error(subname, 'Call initialize() before set_obs_drift.')
     if (self%obs(ivar)%n == 0) &
-      error stop trim(errmsg)//'Observation needs to be set before adding drift.'
+      call kriging_error(subname, 'Observation needs to be set before adding drift.')
     if (self%ndrift == 0) &
-      error stop trim(errmsg)//'Observation drift is specified but ndrift==0'
+      call kriging_error(subname, 'Observation drift is specified but ndrift==0')
     if (size(drift, 1) /= self%ndrift) &
-      error stop trim(errmsg)//'size(drift, 1) /= ndrift'
+      call kriging_error(subname, 'size(drift, 1) /= ndrift')
     if (size(drift, 2) /= self%obs(ivar)%n) &
-      error stop trim(errmsg)//'size(drift, 2) /= nobs'
+      call kriging_error(subname, 'size(drift, 2) /= nobs')
     allocate(self%obs(ivar)%drift, source = drift)
   end subroutine set_obs_drift
 
@@ -696,9 +694,9 @@ contains
     real,    allocatable :: temp(:,:), samp(:)
     integer              :: iblock, ifile, isim
 
-    errmsg = "t_kriging%set_sim: "
-    if (self%block%n == 0) error stop trim(errmsg)//'Grid needs to be set first.'
-    if (any(self%obs%n == 0)) error stop trim(errmsg)//'Observations need to be set first.'
+    subname = "t_kriging%set_sim: "
+    if (self%block%n == 0) call kriging_error(subname, 'Grid needs to be set first.')
+    if (any(self%obs%n == 0)) call kriging_error(subname, 'Observations need to be set first.')
 
     if (self%nsim > 0) then
       associate(ndim => self%ndim, obs => self%obs(1))
@@ -882,25 +880,25 @@ contains
     class(t_kriging) :: self
     integer          :: ivar, jvar
 
-    errmsg = "t_kriging%prepare: "
+    subname = "t_kriging%prepare: "
 
     !-- Validate that all required arrays have been provided
     if (self%ndrift > 0) then
       if (.not. allocated(self%block%drift)) &
-        error stop trim(errmsg)//'Grid drift is not set while ndrift > 0.'
+        call kriging_error(subname, 'Grid drift is not set while ndrift > 0.')
       do ivar = 1, self%nvar
         if (.not. allocated(self%obs(ivar)%drift)) &
-          error stop trim(errmsg)//'Observation drift is not set while ndrift > 0.'
+          call kriging_error(subname, 'Observation drift is not set while ndrift > 0.')
       end do
     end if
     do ivar = 1, self%nvar
       do jvar = 1, self%nvar
         if (self%vgm(jvar, ivar)%nstruct == 0) &
-          error stop trim(errmsg)//'Variogram is not set.'
+          call kriging_error(subname, 'Variogram is not set.')
       end do
     end do
     if (self%nsim > 0 .and. size(self%obs(1)%coord, 2) == self%obs(1)%n) &
-      error stop trim(errmsg)//'set_sim() needs to be called before solve().'
+      call kriging_error(subname, 'set_sim() needs to be called before solve().')
 
     associate(npp => self%nppmax, matsize => self%matsize_max, ifile => self%ifile)
 
@@ -969,7 +967,7 @@ contains
     integer                   :: ib
     real, allocatable          :: temp(:,:)
 
-    errmsg = "t_kriging%solve: "
+    subname = "t_kriging%solve: "
     call self%prepare()
 
     associate(nb => self%block%n, verbose => self%verbose)
@@ -1293,9 +1291,8 @@ contains
     class(t_kriging_ctx) :: ctx
 
     integer          :: ivar, jvar, irow1, irow2, icol1, icol2
-    character(len=80):: idxstr
 
-    errmsg = "t_kriging%assemble_linear_system: "
+    subname = "t_kriging%assemble_linear_system: "
     associate(nvar => self%nvar, dist => ctx%sqdist, npp => ctx%npp)
 
       !-- Find neighbours for each variable
@@ -1321,8 +1318,7 @@ contains
 
       !-- Degenerate: no neighbours found at all
       if (ctx%nnear(0) + ctx%nnear(1) == 0) then
-        write(idxstr, '(i0)') ctx%iblock
-        error stop trim(errmsg)//'not enough neighbors for kriging at block '//trim(idxstr)
+        call kriging_error(subname, 'not enough neighbors for kriging at block', iblock=ctx%iblock)
       end if
 
       !-- Assemble matrix blocks
@@ -1426,9 +1422,8 @@ contains
 
     integer            :: info, i, j, k1
     real               :: lag(3)
-    character(len=16)  :: idxstr
 
-    errmsg = "t_kriging%solve_linear_system: "
+    subname = "t_kriging%solve_linear_system: "
     lag = 0.0
 
     associate( &
@@ -1454,12 +1449,11 @@ contains
 
       !-- Both solvers failed
       if (info /= 0) then
-        write(idxstr, '(i0)') iblock
-        call ctx%write_matrix(self)
+          call ctx%write_matrix(self)
         if (self%neglect_error) then
           x = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
         else
-          error stop trim(errmsg)//'Singular matrix at block '//trim(idxstr)
+          call kriging_error(subname, 'Singular matrix', iblock=ctx%iblock)
         end if
       end if
 

@@ -39,6 +39,7 @@ SOURCES = [
     "gaussian_quadrature.f90",
     "lapack.f",
     "solver.f90",
+    "kriging_err.f90",
     "kriging.F90",
     "kriging_capi.f90",
 ]

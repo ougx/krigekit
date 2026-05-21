@@ -274,6 +274,8 @@ program sparks
   ! --- files
   if (len_trim(obsfile1) == 0) &
     call perr("  Error: primary observation file not specified (-of / obsfile1).")
+  if (blockfile == "" .and. facfile == "") &
+    call perr("  Error: either blockfile (-bf) or facfile (-ff) must be specified.")
   if (nobs2 > 0 .and. len_trim(obsfile2) == 0) &
     call perr("  Error: nobs2 > 0 but no secondary observation file specified (-o2).")
 
@@ -309,12 +311,11 @@ program sparks
   ! --- simulation
 ! SGS reminder: variogram sill should equal 1 for correct simulation variance.
 ! This is not enforced here because nested structures may sum to 1 individually.
-  if (nsim > 0 .and. verbose) &
-    print *, '  Note: SGS recomands standardised variogram (total sill = 1.0).'
-  if (loocv) then
-    if (nsim > 0) call perr("  Error: simulation cannot be used with leave-one-out cross-validation.")
-    nblock = nobs1
+  if (nsim > 0) then
+    if (verbose) print *, 'SGSIM activated. Note: SGSIM recomands standardised variogram (total sill = 1.0).'
+    if (loocv) call perr("  Error: simulation cannot be used with leave-one-out cross-validation.")
   end if
+  if (loocv) nblock = nobs1
 
   ! --- factor file
   ! facfile + no blockfile       → load previously stored weights from facfile; skip solve
