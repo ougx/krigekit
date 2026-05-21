@@ -84,3 +84,42 @@ def sgsim_path_sample():
     sample = pd.read_csv(data_path("sample4800.csv"))["sample"].values
     # sample is 1D (nsim=1); reshape to (1, nblocks)
     return path, sample.reshape(1, -1)
+
+@pytest.fixture(scope="session")
+def pc2d_loo():
+    """Reference leave-one-out CV estimates for the pc2d dataset (loo-cv column)."""
+    df = pd.read_csv(data_path("pc2d.csv"))
+    return df["loo-cv"].values
+
+
+
+@pytest.fixture(scope="session")
+def block_data(pc2d_obs):
+    """Load block sub-nodes and build block description arrays."""
+    coord, value = pc2d_obs
+
+    # gridblockpnt2d.csv: 16 Gaussian quadrature sub-nodes for one block
+    df_pnt = pd.read_csv(os.path.join(DATA_DIR, "gridblockpnt2d.csv"))
+    sub_coords  = df_pnt[["x", "y"]].values          # (16, 2)
+    sub_weights = df_pnt["weight"].values              # (16,)
+
+    # gridblock2d.csv: block centroid and sub-node count
+    # Column header is "#pnts" — read without treating # as comment char
+    df_blk = pd.read_csv(
+        os.path.join(DATA_DIR, "gridblock2d.csv"),
+    )
+    # Rename the first column which may be read as "#pnts" or "# pnts"
+    df_blk.columns = [c.strip().lstrip('#').strip() for c in df_blk.columns]
+    nblockpnt = df_blk["pnts"].values.astype(np.int32)  # [16]
+    nblock = len(nblockpnt)   # 1
+
+    return {
+        "coord": coord,
+        "value": value,
+        "sub_coords":  sub_coords,
+        "sub_weights": sub_weights,
+        "nblockpnt":   nblockpnt,
+        "nblock":      nblock,
+        "block_centroid": np.array([[df_blk["x"].iloc[0],
+                                        df_blk["y"].iloc[0]]]),
+    }

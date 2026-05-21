@@ -150,7 +150,7 @@ class TestPC2DKriging:
         grid_coord, ref_est = pc2d_grid
         est, var = ordinary_kriging(
             coord, value, grid_coord,
-            variogram_spec=_VGM_PC2D,
+            vgm_spec=_VGM_PC2D,
             nmax=62,
         )
         # Pearson correlation with reference must be > 0.99
