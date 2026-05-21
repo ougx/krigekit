@@ -388,7 +388,7 @@ contains
         allocate(self%block%iblockpnt, source = [(igrid, igrid = 1, ngrid)])
         allocate(self%grid%weight(ngrid));         self%grid%weight = 1.0
         !-- +1 so the search still finds nmax neighbours after excluding self
-        self%obs(1)%nmax = self%obs(1)%nmax + 1
+        if (self%obs(1)%nmax>0) self%obs(1)%nmax = self%obs(1)%nmax + 1
         if (ndrift > 0) then
           allocate(self%block%drift(ndrift, ngrid))
           self%block%drift = self%obs(1)%drift
@@ -695,12 +695,11 @@ contains
     integer              :: iblock, ifile, isim
 
     subname = "t_kriging%set_sim"
-    if (self%block%n == 0) call kriging_error(subname, 'Grid needs to be set first.')
-    if (any(self%obs%n == 0)) call kriging_error(subname, 'Observations need to be set first.')
 
     if (self%nsim > 0) then
+      if (self%block%n == 0) call kriging_error(subname, 'Grid needs to be set first.')
+      if (any(self%obs%n == 0)) call kriging_error(subname, 'Observations need to be set first.')
       associate(ndim => self%ndim, obs => self%obs(1))
-
         !-- Random visit path
         if (present(randpath)) then
           self%block%order = randpath
@@ -1130,6 +1129,7 @@ contains
             if (inear(i) == iblock) then
               nnear = nnear - 1
               inear(i:nnear) = inear(i+1:nnear+1)
+              dist (i:nnear) = dist (i+1:nnear+1)
               exit
             end if
           end do
