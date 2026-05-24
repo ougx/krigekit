@@ -33,11 +33,11 @@ endif
 
 ifeq ($(WINDOWS),1)
   DLL_FILE  := src/pykriging/kriging.dll
-  EXE_FILE  := src/sparks/sparks.exe
+  EXE_FILE  := bin/sparks.exe
   OBJEXT    := obj
 else
   DLL_FILE  := src/pykriging/libkriging.so
-  EXE_FILE  := src/sparks/sparks
+  EXE_FILE  := bin/sparks
   OBJEXT    := o
 endif
 
@@ -146,9 +146,9 @@ SPK_SRCS := \
   src/sparks/sparks.f90
 
 # ---------------------------------------------------------------------------
-# Object-file lists (mirror SRCS with .o / .obj extension in build dir)
+# Object-file lists — flat in each build dir (basename only, no subdir)
 # ---------------------------------------------------------------------------
-_src2obj = $(patsubst src/%,$(1)/%.$(OBJEXT),$(basename $(2)))
+_src2obj = $(addprefix $(1)/,$(addsuffix .$(OBJEXT),$(notdir $(basename $(2)))))
 
 LIB_OBJS := $(call _src2obj,$(LIB_BDIR),$(LIB_SRCS))
 SPK_OBJS := $(call _src2obj,$(SPK_BDIR),$(SPK_SRCS))
@@ -205,13 +205,13 @@ endif
 	@echo "Built: $@"
 
 # Pattern rules for object files — libkriging sources
-$(LIB_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.f90 | $(LIB_BDIR)/libkriging
+$(LIB_BDIR)/%.$(OBJEXT): src/libkriging/%.f90 | $(LIB_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(LIB_MODF)
 
-$(LIB_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.F90 | $(LIB_BDIR)/libkriging
+$(LIB_BDIR)/%.$(OBJEXT): src/libkriging/%.F90 | $(LIB_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(LIB_MODF)
 
-$(LIB_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.f | $(LIB_BDIR)/libkriging
+$(LIB_BDIR)/%.$(OBJEXT): src/libkriging/%.f | $(LIB_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(LIB_MODF)
 
 # ---------------------------------------------------------------------------
@@ -224,26 +224,26 @@ $(EXE_FILE): $(SPK_OBJS)
 	@echo "Built: $@"
 
 # Pattern rules for object files — libkriging core sources (for sparks)
-$(SPK_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.f90 | $(SPK_BDIR)/libkriging
+$(SPK_BDIR)/%.$(OBJEXT): src/libkriging/%.f90 | $(SPK_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(SPK_MODF)
 
-$(SPK_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.F90 | $(SPK_BDIR)/libkriging
+$(SPK_BDIR)/%.$(OBJEXT): src/libkriging/%.F90 | $(SPK_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(SPK_MODF)
 
-$(SPK_BDIR)/libkriging/%.$(OBJEXT): src/libkriging/%.f | $(SPK_BDIR)/libkriging
+$(SPK_BDIR)/%.$(OBJEXT): src/libkriging/%.f | $(SPK_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(SPK_MODF)
 
 # Pattern rules for sparks-specific sources
-$(SPK_BDIR)/sparks/%.$(OBJEXT): src/sparks/%.f90 | $(SPK_BDIR)/sparks
+$(SPK_BDIR)/%.$(OBJEXT): src/sparks/%.f90 | $(SPK_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(SPK_MODF)
 
-$(SPK_BDIR)/sparks/%.$(OBJEXT): src/sparks/%.F90 | $(SPK_BDIR)/sparks
+$(SPK_BDIR)/%.$(OBJEXT): src/sparks/%.F90 | $(SPK_BDIR)
 	$(FC) $(FFLAGS) -c $< -o $@ $(SPK_MODF)
 
 # ---------------------------------------------------------------------------
 # Build directories (order-only prerequisites)
 # ---------------------------------------------------------------------------
-$(LIB_BDIR)/libkriging $(SPK_BDIR)/libkriging $(SPK_BDIR)/sparks:
+$(LIB_BDIR) $(SPK_BDIR):
 	python -c "import os; os.makedirs('$@', exist_ok=True)"
 
 # ---------------------------------------------------------------------------
@@ -269,6 +269,7 @@ endif
 clean:
 	-rm -f $(DLL_FILE) $(EXE_FILE) $(DEF_FILE)
 	-rm -rf build
+	-rm -f *.mod *.obj *.o
 
 # ---------------------------------------------------------------------------
 # info — print build settings
