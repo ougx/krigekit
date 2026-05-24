@@ -68,3 +68,5 @@ bin/sparks.exe
 bin/sparks.pdb
 todo/*
 sgsim.dat
+src/sparks/00_compile_sparks.bat
+.claude/
