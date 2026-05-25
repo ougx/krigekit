@@ -12,13 +12,13 @@
 !
 ! Two ST covariance models are supported:
 !
-!   Sum-metric (model=ST_MODEL_SUM_METRIC):
+!   Sum-metric (model=ST_MODEL_SUM_METRIC, can be reduced to metric covariance model with sill=0 for Cs and Ct):
 !     C(hs,dt) = Cs(hs) + Ct(dt) + sum_k{ sill_st(k) * shape_k(h_st) }
 !     where h_st = sqrt( h_s_k^2 + f(dt)^2 )
 !     h_s_k is the dimensionless spatial lag for structure k of cs,
 !     and Cst inherits the functional form (shape + anisotropy) from cs.
 !
-!   Product-sum (model=ST_MODEL_PRODUCT_SUM):
+!   Product-sum (model=ST_MODEL_PRODUCT_SUM, can be reduced to separable model with sill=0 for Cs and Ct):
 !     C(hs,dt) = k_ps * Cs(hs) * Ct(dt) + Cs(hs) + Ct(dt)
 !
 ! Temporal transform f(dt) — controls how dt maps to dimensionless dw used
