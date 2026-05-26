@@ -203,7 +203,7 @@ SPK_OBJS := $(call _src2obj,$(SPK_BDIR),$(SPK_SRCS))
 DEF_FILE  := src/pykriging/kriging.def
 _DEF_SYMS := \
   krige_create krige_destroy krige_initialize \
-  krige_set_obs krige_set_obs_drift krige_set_vgm krige_to_str \
+  krige_set_obs krige_set_obs_drift krige_set_vgm krige_set_vgm_block krige_to_str \
   krige_set_grid krige_set_grid_block krige_set_grid_cv krige_set_grid_drift \
   krige_set_sim krige_set_search krige_prepare \
   krige_get_max_threads krige_get_num_threads \

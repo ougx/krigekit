@@ -1022,7 +1022,7 @@ contains
       if (verbose) open(unit=6, carriagecontrol='fortran')
 #endif
 
-      !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ctx) IF(self%nsim==0 .and. .not. self%store_weight)
+      !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ctx) IF(self%nsim==0 .and. .not. (self%store_weight .or. self%use_old_weight))
       allocate(ctx)                        ! each thread gets its own ctx
       call ctx%initialize(self)
 

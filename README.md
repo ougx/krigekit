@@ -370,6 +370,71 @@ k.set_vgm_block(ib=5, ivar=1, jvar=1, vtype="exp", nugget=0.1, sill=0.9, a_major
 
 ---
 
+## Weight File (Factor File)
+
+Kriging weights — the solution of the per-block linear system — can be saved to a
+**factor file** and reloaded in later runs, skipping the expensive matrix assembly
+and factorisation step entirely. This is exactly the pilot point workflow.
+
+**Typical use cases**
+
+- The grid, observation locations, and variogram are fixed, but estimates need to be recomputed
+  with updated observation values.
+- You want to inspect or archive the exact weights used for each block.
+
+### Step 1 — Write weights
+
+Set `store_weight=True` and provide a `weight_file` path.
+The solve loop assembles and solves the kriging system for every block as normal,
+writes the weights to the file, **and** computes estimates.
+
+> **Note**: `store_weight=True` forces **sequential** execution — OpenMP is disabled
+> to guarantee that blocks are written to the file in a consistent order.
+> Expect roughly single-thread performance during the write run.
+
+```python
+k = Kriging(ndim=2, nvar=1,
+            store_weight=True, weight_file="weights.fac")
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+k.set_grid(coord=grid_coord)
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1000)
+k.set_search(ivar=1)
+k.solve()                          # solves + writes weights + computes estimates
+est, var = k.get_results()
+```
+
+### Step 2 — Reuse weights
+
+Set `use_old_weight=True` with the same `weight_file`.
+The solve loop reads pre-computed weights from the file and calls `estimate_block`
+directly — no matrix assembly or factorisation.
+
+> **Note**: `use_old_weight=True` forces **sequential** execution — OpenMP is disabled
+> to guarantee that blocks are read from the file in a consistent order.
+> Expect roughly single-thread performance during the read run.
+
+```python
+k = Kriging(ndim=2, nvar=1,
+            use_old_weight=True, weight_file="weights.fac")
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+k.set_grid(coord=grid_coord)
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1000)
+k.set_search(ivar=1)
+k.solve()                          # loads weights + computes estimates (fast)
+est, var = k.get_results()
+```
+
+### Rules and constraints
+
+| Constraint | Detail |
+|---|---|
+| `store_weight` and `use_old_weight` are **mutually exclusive** | Passing both raises an error at initialisation |
+| `weight_file` is **required** for both modes | An empty path raises an error |
+| Grid, observations, variogram, and `nmax` must be **identical** between runs | The file stores neighbour indices; mismatched setups produce wrong results silently |
+| `store_weight` **disables OpenMP** | Blocks must be written sequentially to preserve file order |
+
+---
+
 ## Parallel execution
 
 **Single large job** — control OpenMP threads from Python before importing:
