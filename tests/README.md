@@ -25,6 +25,7 @@ The test suite is divided into specific modules covering different geostatistica
 | Test File | Coverage & Features |
 | --- | --- |
 | **`test_api.py`** | Input validation, edge cases, error handling, bounds clipping, universal kriging (drift), and memory safety during object reuse. |
+| **`test_weight_store.py`** | In-memory weight store: array shapes/dtypes, weight correctness (sum-to-1, estimate reconstruction), factor-file round-trip, `set_weights()` in-memory reuse (including variance storage and round-trip), and error handling. |
 | **`test_ordinary_kriging.py`** | Core 2D ordinary kriging functionality, testing both the `Kriging` class and the `ordinary_kriging` convenience function. |
 | **`test_bk.py`** | Block kriging integration, Gaussian quadrature, block variance regularization, and per-block properties. |
 | **`test_cokriging.py`** | Ordinary co-kriging (Primary/Secondary variables) using the Walker Lake dataset and validating the Linear Model of Coregionalization (LMC). |
@@ -85,7 +86,6 @@ pytest tests/test_api.py::TestInputValidation
 * `test_set_search_before_obs_raises_runtime_error`: Verifies that configuring search parameters before observations fails gracefully.
 * `test_solve_without_search_raises_runtime_error`: Ensures `solve()` cannot be called without configuring search parameters first.
 * `test_obs_drift_before_obs_raises_runtime_error`: Ensures universal drift setup fails if observations haven't been loaded.
-* `test_weight_file_roundtrip_matches_normal_solve`: Confirms that saving and reloading kriging weights yields perfectly identical estimates.
 * `test_write_mat_with_openmp_writes_debug_files`: Checks that debug matrices are correctly written to disk safely under OpenMP execution.
 * `test_simple_kriging_with_sk_mean`: Validates that simple kriging configured with a known mean computes correctly.
 * `test_bounds_clip_upper`: Ensures the upper bound clipping parameter strictly restricts maximum estimates.
@@ -98,6 +98,10 @@ pytest tests/test_api.py::TestInputValidation
 * `test_reuse_with_smaller_then_larger_obs`: Confirms memory safety when reusing an object sequentially with a smaller, then a larger dataset.
 * `test_reuse_variance_nonnegative_across_runs`: Ensures kriging variance remains strictly non-negative across multiple continuous object reuses.
 * `test_set_vgm_accumulates_structures`: Documents that calling `set_vgm` repeatedly adds nested structures, doubling the sill if the inputs are identical.
+* `test_nthread_1_is_bitwise_reproducible`: Confirms `solve(nthread=1)` called twice on the same object returns bitwise-identical estimates and variances — no OpenMP scheduling variation.
+* `test_nthread_1_agrees_with_parallel`: Verifies that serial (`nthread=1`) and default parallel `solve()` results agree within floating-point noise, confirming the thread-count argument does not alter the mathematical result.
+* `test_nthread_restores_omp_setting`: Checks that `solve(nthread=1)` saves and restores the ambient `omp_get_max_threads()` value, leaving the runtime unmodified for subsequent calls.
+* `test_nthread_0_accepted_without_error`: Ensures the `nthread=0` no-op sentinel completes without error and returns finite, non-negative results.
 
 ### `test_bk.py`
 
@@ -117,20 +121,15 @@ pytest tests/test_api.py::TestInputValidation
 
 * `test_lmc_validity`: Checks that the provided linear model of coregionalization (LMC) satisfies mathematical validity constraints.
 * `test_result_shapes`: Ensures co-kriging output array structures correctly match the dimensions of the estimation grid.
+* `test_estimate_all_variables_and_covariance_matrix`: Confirms co-kriging fills all target-variable estimates and returns the full `(nblock, nvar, nvar)` conditional covariance matrix.
 * `test_variance_nonnegative`: Validates that co-kriging variance is strictly non-negative.
 * `test_variance_bounded_by_total_sill`: Confirms co-kriging variance does not ever exceed the total sill of the primary variogram.
 * `test_ok_variance_bounded_by_u_total_sill`: Ensures ordinary kriging variance on a secondary variable alone respects its isolated total sill.
 * `test_cokriging_reduces_variance_vs_kriging`: Demonstrates that co-kriging with an abundant primary variable mathematically reduces variance vs ordinary kriging on a sparse secondary variable.
-* `test_exact_match_zero_variance`: Checks that co-kriging at an exact observation location yields a near-zero variance and reproduces the observed value.
+* `test_exact_match_reduces_variance`: Checks that a grid node coinciding with an observation strictly reduces the co-kriging variance below the total sill — the coincident observation conditions the estimate even when variance does not reach exactly zero (as it does in ordinary kriging with no nugget).
 
 ### `test_cross_validation.py`
 
-* `test_second_run_differs_with_different_obs`: Verifies estimates change successfully when the CV observation set is updated.
-* `test_second_run_differs_with_different_grid`: Verifies estimates change successfully when the CV grid is updated.
-* `test_third_run_reproduces_first`: Checks that reloading original CV data reproduces initial CV results exactly.
-* `test_reuse_with_smaller_then_larger_obs`: Confirms memory safety bounds when increasing observation array sizes during CV object reuse.
-* `test_reuse_variance_nonnegative_across_runs`: Ensures CV variance stays non-negative across multiple object reuse cycles.
-* `test_set_vgm_accumulates_structures`: Shows that repeatedly calling `set_vgm` during CV successfully adds nested variogram structures.
 * `test_cross_validation_returns_nobs_estimates`: Verifies cross-validation mode returns an output array length perfectly equal to the number of observations.
 * `test_cross_validation_residuals_unbiased`: Checks that mean cross-validation residuals remain highly constrained close to zero.
 * `test_output_shape`: Confirms LOO-CV produces one discrete estimate and variance output per individual observation.
@@ -167,13 +166,14 @@ pytest tests/test_api.py::TestInputValidation
 
 ### `test_sgsim.py`
 
-* `test_sgsim_shape_single_realisation`: Ensures a single simulation process returns a 1D array perfectly matching the grid size.
-* `test_sgsim_shape_multiple_realisations`: Checks that generating multiple simulations returns a strictly formatted 2D array of shape `(nsim, ngrid)`.
+* `test_sgsim_shape_single_realisation`: Ensures a single simulation returns an array of shape `(ngrid,)` matching the grid size.
+* `test_sgsim_shape_multiple_realisations`: Checks that multiple simulations return a 2D array of shape `(ngrid, nsim)` — grid nodes in the first axis, realisations in the second.
 * `test_realisations_differ`: Confirms that two consecutively generated simulations utilizing the same parameters yield disparate spatial fields.
 * `test_realisations_differ_seperate_seeds`: Checks that configuring distinct random seeds guarantees different spatial fields.
 * `test_seed_reproducibility`: Validates that invoking the exact same random seed identically reproduces the exact simulation arrays.
 * `test_ensemble_mean_close_to_kriging`: Ensures the computed average of many independent SGSIM realizations converges directly toward the ordinary kriging estimate.
 * `test_class_interface_with_precomputed_path_sample`: Verifies deterministic execution behavior across platforms using pre-computed random paths and statistical samples.
+* `test_joint_cosim_get_estimate_all_shape`: Confirms joint co-simulation (`nvar>1`, `nsim>0`) returns `get_estimate_all()` with shape `(nblock, nvar, nsim)` and `get_variance_all()` with shape `(nblock, nvar, nvar)`.
 
 ### `test_spacetime_kriging.py`
 
@@ -283,3 +283,36 @@ pytest tests/test_api.py::TestInputValidation
 * `test_exact_match_among_non_exact_nodes`: Verifies internal interpolators handle layered exactly-matched and inter-point nodes natively and accurately.
 * `test_exact_match_with_nugget_variogram`: Confirms exact match behavior explicitly overrides generalized nugget behavior isolated at specific evaluation nodes.
 * `test_synthetic_exact_match_all_obs`: Validates entire field sets match perfectly if generated grid coordinates explicitly copy observation coordinates.
+
+### `test_weight_store.py`
+
+* `test_nnear_shape`: Asserts `nnear` has shape `(nblock, ngroups)` after a `store_weight=True` solve.
+* `test_inear_shape`: Asserts `inear` has shape `(nblock, ngroups, nmax)`.
+* `test_weight_shape`: Asserts `weight` has shape `(nblock, ngroups, nmax)`.
+* `test_dtypes`: Confirms `nnear`/`inear` are `int32` and `weight` is `float64`.
+* `test_ngroups_kriging`: Checks `ngroups == nvar` (== 1) for ordinary kriging without simulation.
+* `test_ngroups_sgsim`: Checks `ngroups == 2*nvar` (== 2) for SGSIM, covering the obs and sim-block groups.
+* `test_nnear_in_range`: Verifies every `nnear` value lies in `[0, nmax]`.
+* `test_inear_valid_indices`: Confirms all active (non-zero) `inear` entries are valid 1-based observation indices.
+* `test_unused_slots_are_zero`: Ensures padding slots beyond `nnear[ib, ig]` are zero in both `inear` and `weight`.
+* `test_ok_weights_sum_to_one`: For ordinary kriging, checks that obs weights sum to exactly 1 at every block.
+* `test_estimate_consistency`: Reconstructs the estimate from stored weights and confirms it matches `get_results()`.
+* `test_weights_unchanged_by_get_weights`: Confirms that calling `get_weights()` twice returns identical arrays.
+* `test_file_written`: Verifies a factor file is created on disk when `weight_file` is provided.
+* `test_reuse_gives_same_estimates`: Confirms `use_old_weight=True` reproduces estimates and variances from the original `store_weight=True` run.
+* `test_roundtrip_matches_plain_solve`: Verifies that the full round-trip (plain solve → store → reload) gives bit-identical estimates. *(Moved from `test_api.py::TestOperationalModes`.)*
+* `test_cokriging_reuse_gives_same_estimates`: Confirms `use_old_weight=True` reproduces co-kriging estimates and variances for a two-variable model.
+* `test_memory_only_matches_plain_solve`: Confirms that `store_weight=True` without a `weight_file` gives bit-identical estimates to a plain solve (verifying the weight store does not perturb the solver).
+* `test_memory_only_no_file_created`: Confirms that omitting `weight_file` keeps weights in memory only and writes no file.
+* `test_get_weights_without_store_weight_raises`: Checks that `get_weights()` raises `RuntimeError` when the store was never allocated.
+* `test_free_then_get_raises`: Checks that `get_weights()` raises `RuntimeError` after `free_weight_store()` is called.
+* `test_use_old_weight_reproduces_all_realizations`: Joint co-simulation with explicit path/samples: `use_old_weight` reproduces the complete `(nsim, nblock, nvar)` result.
+* `test_use_old_weight_same_seed_reproduces_all_realizations`: Joint co-simulation with auto-generated path/samples: the same integer seed ensures the Fortran RNG produces identical samples in both runs, so `use_old_weight` gives bit-identical realizations.
+* `test_use_old_weight_reads_full_est_var_from_factor_file`: Confirms factor-file replay reads the full persisted covariance matrix rather than recomputing only diagonal variances.
+* `test_different_seed_gives_different_realizations`: Sanity check that different seeds produce different co-simulation realizations.
+* `test_set_weights_reproduces_estimates`: Full round-trip — `store_weight=True` solve → `get_weights()` → `set_weights()` → `solve()` — reproduces the original estimates and variance exactly.
+* `test_set_weights_different_obs_values`: Confirms that `set_weights()` re-estimates with updated observation values while reusing the stored neighbour indices and kriging weights; doubling all obs values doubles the estimates (linearity check).
+* `test_set_weights_variance_key_in_get_weights`: Verifies that `get_weights()` includes a `'variance'` key of shape `(nblock,)` for nvar=1 when called after a `store_weight=True` solve.
+* `test_set_weights_variance_matches_get_results`: Confirms the variance stored inside the weight store (`get_weights()['variance']`) is identical to the variance returned by `get_results()`.
+* `test_set_weights_without_variance_gives_zero_variance`: Checks that passing a dict without the `'variance'` key to `set_weights()` results in zero variance output — a deliberate zero-default rather than stale data.
+* `test_set_weights_with_store_weight_raises`: Verifies that calling `set_weights()` on a `store_weight=True` object raises `ValueError`, since the two modes are mutually exclusive.

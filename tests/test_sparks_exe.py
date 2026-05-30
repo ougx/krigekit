@@ -164,12 +164,13 @@ class TestSimpleOrdinaryKriging:
             fh.write(f"1,{obs['x'].iloc[0]},{obs['y'].iloc[0]}\n")
             tmp = fh.name
         try:
+            vv = ("sph", "100.0", "0.09", "0.0")
             cp = _run(
                 sparks,
                 "-d", "2", "5", "1", "0", "0",
                 "-of", _data("obs_simple.csv"),
                 "-bf", tmp,
-                "-v1", *_VGM_SIMPLE,
+                "-v1", *vv,
                 "-u",
             )
             assert cp.returncode == 0

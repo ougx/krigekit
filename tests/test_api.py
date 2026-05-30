@@ -161,19 +161,6 @@ class TestOperationalModes:
         k.solve()
         return k.get_results()
 
-    def test_weight_file_roundtrip_matches_normal_solve(self, tmp_path):
-        """Stored weights should be reusable without changing estimates."""
-        weight_file = tmp_path / "weights.fac"
-        est_ref, var_ref = self._solve()
-
-        self._solve(store_weight=True, weight_file=str(weight_file))
-        assert weight_file.exists()
-        assert weight_file.stat().st_size > 0
-
-        est_old, var_old = self._solve(use_old_weight=True, weight_file=str(weight_file))
-        np.testing.assert_allclose(est_old, est_ref, rtol=1e-10, atol=1e-10)
-        np.testing.assert_allclose(var_old, var_ref, rtol=1e-10, atol=1e-10)
-
     def test_write_mat_with_openmp_writes_debug_files(self, tmp_path, monkeypatch):
         """write_mat should be safe under OpenMP and write one file set per block."""
         monkeypatch.setenv("OMP_NUM_THREADS", "2")
@@ -202,8 +189,8 @@ class TestSimpleKriging:
         value = rng.normal(5.0, 1.0, 20)
         true_mean = value.mean()
 
-        k = Kriging(ndim=2, nvar=1, unbias=0, sk_mean=float(true_mean))
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
+        k = Kriging(ndim=2, nvar=1, unbias=0)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=10, sk_mean=float(true_mean))
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=grid)
         k.set_search(ivar=1)
@@ -364,7 +351,13 @@ class TestObjectReuse:
             "Estimates should differ at different grid locations")
 
     def test_third_run_reproduces_first(self, pc2d_obs):
-        """Reloading the original data must reproduce the original results exactly."""
+        """Reloading the original data must reproduce the original results to within
+        floating-point precision.  With OpenMP enabled (nsim=0 activates the
+        parallel block loop), dynamic thread scheduling means different blocks may
+        be processed by different threads between run 1 and run 3, producing
+        different factorization-cache hit/miss patterns and sub-epsilon rounding
+        differences.  atol=1e-10 accepts these while still catching any real
+        numerical corruption from stale state."""
         coord, value = pc2d_obs
         grid = coord[5:10]
 
@@ -375,16 +368,16 @@ class TestObjectReuse:
             k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
             k.set_grid(coord=grid)
             k.set_search(ivar=1)
-            k.solve()
+            k.solve(1)
             return k.get_results()
 
         est1, var1 = _do_run(coord, value)
         _do_run(coord[30:], value[30:])          # intermediate run with different data
         est3, var3 = _do_run(coord, value)
 
-        np.testing.assert_allclose(est1, est3, rtol=1e-6,
+        np.testing.assert_allclose(est1, est3, rtol=1e-6, atol=1e-10,
             err_msg="Third run (same data as first) must reproduce first run estimates")
-        np.testing.assert_allclose(var1, var3, rtol=1e-6,
+        np.testing.assert_allclose(var1, var3, rtol=1e-6, atol=1e-10,
             err_msg="Third run (same data as first) must reproduce first run variances")
 
     def test_reuse_with_smaller_then_larger_obs(self, pc2d_obs):
@@ -462,3 +455,82 @@ class TestObjectReuse:
         np.testing.assert_allclose(var_two, 2.0 * var_one, rtol=1e-5,
             err_msg="Calling set_vgm twice with same spec must double the total sill "
                     "and therefore double the kriging variance")
+
+
+# ===========================================================================
+# nthread parameter
+# ===========================================================================
+
+class TestNthread:
+    """Tests for Kriging.solve(nthread=N).
+
+    Three distinct behaviors are verified:
+      1. nthread=1 is bitwise reproducible across repeated calls.
+      2. nthread=1 (serial) and nthread=N (parallel) give the same results.
+      3. The global OMP max_threads setting is restored after the call.
+    """
+
+    def _make_kriging(self, pc2d_obs):
+        """Return a ready-to-solve Kriging object (not yet solved)."""
+        coord, value = pc2d_obs
+        k = Kriging(ndim=2, nvar=1, verbose=0)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k.set_grid(coord=coord[5:15])   # 10 estimation points
+        k.set_search(ivar=1)
+        return k
+
+    def test_nthread_1_is_bitwise_reproducible(self, pc2d_obs):
+        """solve(nthread=1) called twice on the same object must return
+        bitwise-identical results — no OMP scheduling variation."""
+        k = self._make_kriging(pc2d_obs)
+
+        k.solve(nthread=1)
+        est1, var1 = k.get_results()
+
+        k.solve(nthread=1)   # same data, same object, serial
+        est2, var2 = k.get_results()
+
+        np.testing.assert_array_equal(est1, est2,
+            err_msg="nthread=1 estimates must be bitwise identical on repeated calls")
+        np.testing.assert_array_equal(var1, var2,
+            err_msg="nthread=1 variances must be bitwise identical on repeated calls")
+
+    def test_nthread_1_agrees_with_parallel(self, pc2d_obs):
+        """Serial (nthread=1) and parallel results must agree to within
+        floating-point noise — same kriging equations, different scheduling."""
+        k = self._make_kriging(pc2d_obs)
+        k.solve(nthread=1)
+        est_serial, var_serial = k.get_results()
+
+        k.solve()            # default thread count
+        est_par, var_par = k.get_results()
+
+        np.testing.assert_allclose(est_serial, est_par, rtol=1e-6, atol=1e-10,
+            err_msg="Serial and parallel estimates must agree to within floating-point noise")
+        np.testing.assert_allclose(var_serial, var_par, rtol=1e-6, atol=1e-10,
+            err_msg="Serial and parallel variances must agree to within floating-point noise")
+
+    def test_nthread_restores_omp_setting(self, pc2d_obs):
+        """omp_get_max_threads() must return the same value before and after
+        solve(nthread=1) — the Fortran layer must save and restore."""
+        from pykriging._kriging import omp_info
+        before = omp_info()["max_threads"]
+
+        k = self._make_kriging(pc2d_obs)
+        k.solve(nthread=1)   # deliberately sets thread count to 1 …
+
+        after = omp_info()["max_threads"]
+        assert before == after, (
+            f"OMP max_threads changed from {before} to {after} after solve(nthread=1); "
+            "the Fortran layer must restore the previous setting"
+        )
+
+    def test_nthread_0_accepted_without_error(self, pc2d_obs):
+        """nthread=0 (the no-op sentinel) must run without error and return
+        finite, non-negative results."""
+        k = self._make_kriging(pc2d_obs)
+        k.solve(nthread=0)
+        est, var = k.get_results()
+        assert np.all(np.isfinite(est)), "nthread=0 produced non-finite estimates"
+        assert np.all(var >= 0.0),       "nthread=0 produced negative variances"

@@ -58,13 +58,15 @@ class TestKrigingClass:
         assert np.all(var >= 0.0), f"Negative variance found: {var.min()}"
 
     def test_exact_match(self, simple_obs):
-        """When a grid node coincides with an observation, estimate == observed value."""
+        """When a grid node coincides with an observation, estimate == observed value when there is no obs error/nugget."""
         coord, value = simple_obs
         # Grid = first observation point
         grid_at_obs = coord[[0]]
+        vv = _VGM_SIMPLE.copy()
+        vv["nugget"] = 0.0
         k = Kriging(ndim=2, nvar=1)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=5)
-        k.set_vgm(ivar=1, jvar=1, **_VGM_SIMPLE)
+        k.set_vgm(ivar=1, jvar=1, **vv)
         k.set_grid(coord=grid_at_obs)
         k.set_search(ivar=1)
         k.solve()

@@ -342,7 +342,6 @@ program sparks
     store_weight=store_weight, &
     use_old_weight=use_old_weight, &
     bounds=[vmin, vmax], &
-    sk_mean=sk_mean, &
     seed=seed)
   call stop_if_kriging_failed('initializing kriging')
 
@@ -507,9 +506,9 @@ contains
       call read_data(obsfile, nobs, ndim+1, obs, ioerr)
     end if
     if (obserror) then
-   call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), variance=obs(ndim + 2, :), nmax=nmax, maxdist=maxdist)
+   call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), variance=obs(ndim + 2, :), nmax=nmax, maxdist=maxdist, sk_mean=sk_mean)
     else
-      call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), nmax=nmax, maxdist=maxdist)
+      call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), nmax=nmax, maxdist=maxdist, sk_mean=sk_mean)
     end if
     call stop_if_kriging_failed('setting observations')
     if (ndrift > 0) then
@@ -581,15 +580,19 @@ contains
     !   samfile only       → use supplied samples; krig generates the path
     !   randpath only      → use supplied path; krig generates samples
     !   neither            → krig generates both samples and path from seed
+    real :: samples_tmp(nsim, nvar, nblock)
     if (samfile /= '') then
       if (verbose) print *, 'Reading SAMPLE in "'//trim(samfile)//'"'
       call read_data(samfile, samples, ioerr)
+      do ii = 1, nvar
+        samples_tmp(:, ii, :) = samples
+      end do
       if (randpath /= '') then
         if (verbose) print *, 'Reading PATH in "'//trim(randpath)//'"'
         call read_data(randpath, nblock, irandpath, ioerr)
-        call krig%set_sim(irandpath, samples)
+        call krig%set_sim(irandpath, samples_tmp)
       else
-        call krig%set_sim(sample=samples)
+        call krig%set_sim(sample=samples_tmp)
       end if
     else
       if (randpath /= '') then
@@ -648,15 +651,16 @@ contains
       do ib2 = 1, krig%block%n
         if (loocv) then
           write (iout, "(I0,*(:,',',G0.12))") &
-            ib2, krig%block%coord(:, ib2), krig%obs(1)%value(ib2),krig%block%estimate(:, ib2), krig%block%variance(ib2)
+            ib2, krig%block%coord(:, ib2), krig%obs(1)%value(1,1,ib2), &
+            krig%block%value(1, 1, ib2), krig%block%variance(1, 1, ib2)
         else
           write (iout, "(I0,*(:,',',G0.12))") &
-            ib2, krig%block%coord(:, ib2), krig%block%estimate(:, ib2), krig%block%variance(ib2)
+            ib2, krig%block%coord(:, ib2), krig%block%value(:, 1, ib2), krig%block%variance(1, 1, ib2)
         end if
       end do
     else
       do ib2 = 1, krig%block%n
-        write (iout, "(*(G0.12,:,','))") krig%block%estimate(:, ib2)
+        write (iout, "(*(G0.12,:,','))") krig%block%value(:, 1, ib2)
       end do
     end if
 

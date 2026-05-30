@@ -46,6 +46,7 @@
 !  and reads garbage memory or crashes.
 !==============================================================================
 module kriging_capi
+  use, intrinsic :: ieee_arithmetic
   use iso_c_binding
   use kriging, only: t_kriging
   use kriging_err, only: kriging_clear_error, kriging_ierr, kriging_copy_error, &
@@ -128,14 +129,13 @@ contains
   !   verbose            : 0/1 print progress messages
   !   weight_file        : null-terminated path (empty string when not used)
   !   bounds             : [lower, upper] clipping bounds for the estimate
-  !   sk_mean            : global mean for simple kriging (unbias=0)
   !   seed               : random seed for SGSIM (0 = use clock)
   !=============================================================================
   integer(c_int) function krige_initialize(handle, &
       ndim, nvar, ndrift, unbias, nsim, &
       anisotropic_search, weight_correction, use_old_weight, &
       store_weight, cross_validation, write_mat, neglect_error, varying_vgm, verbose, &
-      weight_file, bounds, sk_mean, seed) &
+      weight_file, bounds, seed) &
       bind(C, name='krige_initialize') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
@@ -146,7 +146,6 @@ contains
     integer(c_int),      intent(in), value :: varying_vgm, verbose
     character(kind=c_char), intent(in) :: weight_file(*)
     real(c_double),      intent(in) :: bounds(2)
-    real(c_double),      intent(in), value :: sk_mean
 
     type(t_kriging), pointer :: obj
     !-- Local copy avoids an implicit array temporary for the 'bounds' argument
@@ -180,7 +179,6 @@ contains
       verbose            = l(verbose), &
       weight_file        = c2fstr(weight_file), &
       bounds             = fbounds, &
-      sk_mean            = real(sk_mean), &
       seed               = int(seed))
     ierr = int(kriging_ierr(), c_int)
   end function krige_initialize
@@ -201,9 +199,10 @@ contains
   !              pass zeros when measurement error is unknown
   !   nmax     : maximum number of neighbours; pass huge(0) to use all
   !   maxdist  : maximum search distance; pass huge(0.0) for unlimited
+  !   sk_mean  : global mean for simple kriging (unbias=0)
   !=============================================================================
   integer(c_int) function krige_set_obs(handle, ivar, nobs, ndim_c, &
-      coord, value, variance, nmax, maxdist) &
+      coord, value, variance, nmax, maxdist, sk_mean) &
       bind(C, name='krige_set_obs') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
@@ -213,6 +212,7 @@ contains
     real(c_double),      intent(in) :: variance(nobs)
     integer(c_int),      intent(in), value :: nmax
     real(c_double),      intent(in), value :: maxdist
+    real(c_double),      intent(in), value :: sk_mean
 
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
@@ -225,7 +225,8 @@ contains
     call obj%set_obs(int(ivar), real(coord), real(value), &
       variance = real(variance), &
       nmax     = int(nmax), &
-      maxdist  = real(maxdist))
+      maxdist  = real(maxdist), &
+      sk_mean  = real(sk_mean))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_obs
 
@@ -512,19 +513,21 @@ contains
   !   nblocks  : number of blocks (= length of randpath = second dim of sample)
   !   randpath : random visiting order for the block loop [nblocks]
   !   nsim_c   : number of simulations (= nsim)
+  !   nvar_c   : number of variables (= nvar)
   !   sample   : pre-drawn standard-normal samples [nsim_c, nblocks]
   !
   ! Note: randpath length and sample second dimension are both nblocks, so a
   ! single parameter covers both — no separate n_rp / n_s needed.
   !=============================================================================
-  integer(c_int) function krige_set_sim(handle, nblocks, randpath, nsim_c, sample) &
+  integer(c_int) function krige_set_sim(handle, nblocks, randpath, nsim_c, nvar_c, sample) &
       bind(C, name='krige_set_sim') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: nblocks
     integer(c_int),      intent(in) :: randpath(nblocks)
     integer(c_int),      intent(in), value :: nsim_c
-    real(c_double),      intent(in) :: sample(nsim_c, nblocks)
+    integer(c_int),      intent(in), value :: nvar_c
+    real(c_double),      intent(in) :: sample(nsim_c, nvar_c, nblocks)
 
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
@@ -592,10 +595,12 @@ contains
   ! krige_solve
   !
   ! Runs the kriging or SGSIM block loop.
+  ! nthread: max OMP threads for this call (0 = use the OMP runtime default).
   ! After this returns, results are available via the getters below.
   !=============================================================================
-  integer(c_int) function krige_solve(handle) bind(C, name='krige_solve') result(ierr)
+  integer(c_int) function krige_solve(handle, nthread) bind(C, name='krige_solve') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nthread
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -603,7 +608,11 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    call obj%solve()
+    if (nthread > 0) then
+      call obj%solve(nthread = int(nthread))
+    else
+      call obj%solve()
+    end if
     ierr = int(kriging_ierr(), c_int)
   end function krige_solve
 
@@ -639,16 +648,16 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    n = max(int(obj%nsim, c_int), 1_c_int)
+    n = int(obj%nsim, c_int)
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_nsim
 
-  !-- Copy estimate(1:nsim_c, 1:nblocks) into the caller-allocated out array.
+  !-- Copy primary estimate(1:nblocks, 1:nsim_c, 1) into the caller-allocated out array.
   integer(c_int) function krige_get_estimate(handle, nsim_c, nblocks, out) &
       bind(C, name='krige_get_estimate') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value  :: nsim_c, nblocks
-    real(c_double),      intent(out) :: out(nsim_c, nblocks)
+    real(c_double),      intent(out) :: out(nblocks,nsim_c)
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -656,9 +665,44 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    out = real(obj%block%estimate(1:nsim_c, 1:nblocks), c_double)
+    out = real(transpose(obj%block%value(1:nsim_c, 1:nblocks, 1)), c_double)
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_estimate
+
+  !-- Copy estimate into out(nblocks, nvar_c, nsim_c) — Python convention.
+  !
+  !   block%value is stored as (nsim, nvar, nblock) in Fortran column-major order.
+  !   Python expects (nblock, nvar, nsim) so that the block index is first, matching
+  !   the coord[nobs, ndim] convention used throughout the API.
+  !
+  !   The loop iterates over blocks and uses the 2-D TRANSPOSE intrinsic to swap
+  !   the (nsim, nvar) slice into (nvar, nsim) for each block.
+  !     out[ib, kvar, isim] = estimate of variable kvar+1 at block ib+1
+  !                           in realization isim+1.
+  integer(c_int) function krige_get_estimate_all(handle, nblocks, nvar_c, nsim_c, out) &
+      bind(C, name='krige_get_estimate_all') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nblocks, nvar_c, nsim_c
+    real(c_double),      intent(out) :: out(nblocks, nvar_c, nsim_c)
+    type(t_kriging), pointer :: obj
+    integer :: ib
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+    if (.not. allocated(obj%block%value)) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+    !-- For each block, transpose the (nsim, nvar) slice → (nvar, nsim).
+    do ib = 1, nblocks
+      out(ib, 1:nvar_c, 1:nsim_c) = &
+        real(transpose(obj%block%value(1:nsim_c, 1:nvar_c, ib)), c_double)
+    end do
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_estimate_all
 
   !-- Copy variance(1:nblocks) into the caller-allocated out array.
   integer(c_int) function krige_get_variance(handle, nblocks, out) &
@@ -673,9 +717,160 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    out = real(obj%block%variance(1:nblocks), c_double)
+    if (allocated(obj%block%variance)) then
+      out = real(obj%block%variance(1, 1, 1:nblocks), c_double)
+    else
+      out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)
+    end if
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_variance
+
+  !-- Copy block%variance into out(nblocks, nvar_c, nvar_c).
+  !
+  !   block%variance is stored in Fortran as (nvar, nvar, nblock).
+  !   out is (nblock, nvar, nvar) — block index first so that Python sees
+  !   out[ib, iv, jv] = covariance between variable iv+1 and jv+1 at block ib+1.
+  !   The loop transposes the leading (nvar,nvar) pair against the block dimension;
+  !   a plain whole-array assignment would do a flat copy and produce garbage.
+  integer(c_int) function krige_get_variance_all(handle, nblocks, nvar_c, out) &
+      bind(C, name='krige_get_variance_all') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nblocks, nvar_c
+    real(c_double),      intent(out) :: out(nblocks, nvar_c, nvar_c)
+    type(t_kriging), pointer :: obj
+    integer :: ib
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+    if (allocated(obj%block%variance)) then
+      do ib = 1, nblocks
+        out(ib, 1:nvar_c, 1:nvar_c) = &
+          real(obj%block%variance(1:nvar_c, 1:nvar_c, ib), c_double)
+      end do
+    else
+      out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)
+    end if
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_variance_all
+
+  !=============================================================================
+  ! Weight-store API
+  !=============================================================================
+
+  !-- Free the in-memory weight store.
+  integer(c_int) function krige_free_weight_store(handle) &
+      bind(C, name='krige_free_weight_store') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call obj%free_weight_store()
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_free_weight_store
+
+  !-- Copy nnear[ngroups, nblock] into the caller-allocated integer buffer.
+  integer(c_int) function krige_get_weight_nnear(handle, ngroups_c, nblock_c, out) &
+      bind(C, name='krige_get_weight_nnear') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ngroups_c, nblock_c
+    integer(c_int),      intent(out)       :: out(ngroups_c, nblock_c)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) then
+      call kriging_error('krige_get_weight_nnear', 'Weight store not allocated')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    out = int(obj%wstore%nnear(1:ngroups_c, 1:nblock_c), c_int)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_weight_nnear
+
+  !-- Copy inear[nmax, ngroups, nblock] into the caller-allocated integer buffer.
+  integer(c_int) function krige_get_weight_inear(handle, nmax_c, ngroups_c, nblock_c, out) &
+      bind(C, name='krige_get_weight_inear') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nmax_c, ngroups_c, nblock_c
+    integer(c_int),      intent(out)       :: out(nmax_c, ngroups_c, nblock_c)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) then
+      call kriging_error('krige_get_weight_inear', 'Weight store not allocated')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    out = int(obj%wstore%inear(1:nmax_c, 1:ngroups_c, 1:nblock_c), c_int)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_weight_inear
+
+  !-- Copy weight[nmax, ngroups, nblock] into the caller-allocated double buffer.
+  integer(c_int) function krige_get_weight_data(handle, nmax_c, ngroups_c, nvar_c, nblock_c, out) &
+      bind(C, name='krige_get_weight_data') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nmax_c, ngroups_c, nvar_c, nblock_c
+    real(c_double),      intent(out)       :: out(nmax_c, ngroups_c, nvar_c, nblock_c)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) then
+      call kriging_error('krige_get_weight_data', 'Weight store not allocated')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    out = real(obj%wstore%weight(1:nmax_c, 1:ngroups_c, 1:nvar_c, 1:nblock_c), c_double)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_weight_data
+
+  !-- Copy var[nvar, nvar, nblock] from wstore into the caller-allocated double buffer.
+  integer(c_int) function krige_get_weight_var(handle, nvar_c, nblock_c, out) &
+      bind(C, name='krige_get_weight_var') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nvar_c, nblock_c
+    real(c_double),      intent(out)       :: out(nvar_c, nvar_c, nblock_c)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) then
+      call kriging_error('krige_get_weight_var', 'Weight store not allocated')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    if (.not. allocated(obj%wstore%var)) then
+      call kriging_error('krige_get_weight_var', 'Variance not stored (recompile with updated library)')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    out = real(obj%wstore%var(1:nvar_c, 1:nvar_c, 1:nblock_c), c_double)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_weight_var
+
+  !-- Set nnear, inear, weight, and variance from caller-supplied arrays.
+  !   Allocates (or re-allocates) wstore and sets use_old_weight=.true. so that
+  !   solve() applies the supplied weights directly without re-solving the system.
+  integer(c_int) function krige_set_weights(handle, nmax_c, ngroups_c, nvar_c, nblock_c, &
+                                             nnear_in, inear_in, weight_in, order_in, var_in) &
+      bind(C, name='krige_set_weights') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: nmax_c, ngroups_c, nvar_c, nblock_c
+    integer(c_int),      intent(in)        :: nnear_in (ngroups_c, nblock_c)
+    integer(c_int),      intent(in)        :: inear_in (nmax_c, ngroups_c, nblock_c)
+    real(c_double),      intent(in)        :: weight_in(nmax_c, ngroups_c, nvar_c, nblock_c)
+    integer(c_int),      intent(in)        :: order_in (nblock_c)
+    real(c_double),      intent(in)        :: var_in   (nvar_c, nvar_c, nblock_c)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) call obj%alloc_weight_store()
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call obj%set_weights(int(nnear_in), int(inear_in), real(weight_in), int(order_in), real(var_in))
+    obj%use_old_weight = .true.
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_set_weights
 
   integer(c_int) function krige_get_last_error(buffer, nbuf) &
       bind(C, name='krige_get_last_error') result(ierr)
@@ -686,19 +881,18 @@ contains
   end function krige_get_last_error
 
   !-- Return a string representation of the kriging object.
-  function krige_to_str(handle) result(ptr) bind(C, name='krige_to_str')
+  integer(c_intptr_t) function krige_to_str(handle) result(ptr) bind(C, name='krige_to_str')
     integer(c_intptr_t), intent(in), value :: handle
-    type(c_ptr) :: ptr
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
     if (kriging_failed()) then
-      ptr = c_null_ptr
+      ptr = 0_c_intptr_t
       return
     end if
     call obj%update_info()
-    ptr = c_loc(obj%krige_info(1))
-  end function
+    ptr = transfer(c_loc(obj%krige_info(1)), ptr)
+  end function krige_to_str
 
   !=============================================================================
   ! Internal helpers (private to this module)
