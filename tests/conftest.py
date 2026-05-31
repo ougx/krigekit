@@ -83,7 +83,7 @@ def sgsim_path_sample():
     path   = pd.read_csv(data_path("path4800.csv"))["randpath"].values.astype(np.int32)
     sample = pd.read_csv(data_path("sample4800.csv"))["sample"].values
     # sample is 1D (nsim=1); reshape to (1, nblocks)
-    return path, sample.reshape(1, -1)
+    return path, sample
 
 @pytest.fixture(scope="session")
 def pc2d_loo():

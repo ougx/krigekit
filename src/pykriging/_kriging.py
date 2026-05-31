@@ -111,6 +111,24 @@ def _status_cfun(name, argtypes):
     checked._cfunc = fn
     return checked
 
+def _optional_status_cfun(name, argtypes):
+    """Like _status_cfun but tolerates a missing DLL symbol.
+
+    If the symbol is absent (e.g. the library was compiled before this feature
+    was added), returns a stub that raises a clear RuntimeError when called,
+    instead of crashing the whole module at import time.
+    """
+    try:
+        return _status_cfun(name, argtypes)
+    except AttributeError:
+        def _stub(*_args, **_kwargs):
+            raise RuntimeError(
+                f"'{name}' was not found in the compiled library.  "
+                "Recompile the Fortran library to enable the weight-store API."
+            )
+        _stub.__name__ = name
+        return _stub
+
 _ptr_int64 = ctypes.POINTER(ctypes.c_int64)
 _krige_create      = _status_cfun("krige_create",      [_ptr_int64])
 _krige_destroy     = _status_cfun("krige_destroy",     [_ptr_int64])
@@ -122,14 +140,13 @@ _krige_initialize  = _status_cfun("krige_initialize",  [
     _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int,
     _c_char_p,                                   # weight_file
     _ptr_dbl,                                    # bounds[2]
-    _c_double,                                   # sk_mean
     _c_int,                                      # seed
 ])
 _krige_set_obs     = _status_cfun("krige_set_obs", [
     ctypes.c_int64,                              # handle
     _c_int, _c_int, _c_int,                      # ivar, nobs, ndim_c
     _ptr_dbl, _ptr_dbl, _ptr_dbl,                # coord, value, variance
-    _c_int, _c_double,                           # nmax, maxdist
+    _c_int, _c_double, _c_double,                # nmax, maxdist, sk_mean
 ])
 _krige_set_obs_drift = _status_cfun("krige_set_obs_drift", [
     ctypes.c_int64,                              # handle
@@ -175,18 +192,38 @@ _krige_set_grid_drift = _status_cfun("krige_set_grid_drift", [
 _krige_set_sim     = _status_cfun("krige_set_sim", [
     ctypes.c_int64,                              # handle
     _c_int, _ptr_int,                            # nblocks, randpath[nblocks]
-    _c_int, _ptr_dbl,                            # nsim_c, sample[nsim_c, nblocks]
+    _c_int, _c_int, _ptr_dbl,                    # nsim_c, nvar_c, sample[nsim_c, nvar_c, nblocks]
 ])
 _krige_set_search  = _status_cfun("krige_set_search", [
     ctypes.c_int64, _c_int,                      # handle, ivar
     _c_double, _c_double, _c_double, _c_double, _c_double,  # anis1, anis2, az, dip, plunge
 ])
-_krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64])
+_krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64, ctypes.c_int])
 # _krige_print       = _cfun("krige_print",       [ctypes.c_int64])
 _krige_get_nblocks = _status_cfun("krige_get_nblocks", [ctypes.c_int64, _ptr_int])
 _krige_get_nsim    = _status_cfun("krige_get_nsim",    [ctypes.c_int64, _ptr_int])
-_krige_get_estimate= _status_cfun("krige_get_estimate",[ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
-_krige_get_variance= _status_cfun("krige_get_variance",[ctypes.c_int64, _c_int, _ptr_dbl])
+_krige_get_estimate    = _status_cfun("krige_get_estimate",    [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_krige_get_estimate_all= _status_cfun("krige_get_estimate_all",[ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
+_krige_get_variance    = _status_cfun("krige_get_variance",    [ctypes.c_int64, _c_int, _ptr_dbl])
+_krige_get_variance_all= _status_cfun("krige_get_variance_all",[ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+
+# _krige_alloc_weight_store = _optional_status_cfun("krige_alloc_weight_store", [ctypes.c_int64])
+_krige_free_weight_store  = _optional_status_cfun("krige_free_weight_store",  [ctypes.c_int64])
+# _krige_get_weight_dims    = _optional_status_cfun("krige_get_weight_dims",
+#     [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int, _ptr_int])
+_krige_get_weight_nnear   = _optional_status_cfun("krige_get_weight_nnear",
+    [ctypes.c_int64, _c_int, _c_int, _ptr_int])
+_krige_get_weight_inear   = _optional_status_cfun("krige_get_weight_inear",
+    [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_int])
+_krige_get_weight_data    = _optional_status_cfun("krige_get_weight_data",
+    [ctypes.c_int64, _c_int, _c_int, _c_int, _c_int, _ptr_dbl])
+_krige_get_weight_var     = _optional_status_cfun("krige_get_weight_var",
+    [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_krige_set_weights        = _optional_status_cfun("krige_set_weights",
+    [ctypes.c_int64, _c_int, _c_int, _c_int, _c_int,
+     _ptr_int, _ptr_int, _ptr_dbl, _ptr_int, _ptr_dbl])
+     # handle, nmax, ngroups, nvar, nblock, nnear, inear, weight, order, var
+
 _krige_get_last_error = _cfun("krige_get_last_error", [_ptr_char, _c_int], _c_int)
 
 _krige_to_str      = _cfun("krige_to_str"   , [ctypes.c_int64], _ptr_void)
@@ -243,6 +280,10 @@ def get_omp_info():
 def _farray(a, dtype=np.float64):
     """Return a Fortran-contiguous array of the given dtype."""
     return np.asfortranarray(a, dtype=dtype)
+
+def _fempty(shape, dtype=np.float64):
+    """Allocate a Fortran-contiguous output array directly."""
+    return np.empty(shape, dtype=dtype, order="F")
 
 def _coord_to_fortran(coord: np.ndarray) -> np.ndarray:
     """
@@ -349,7 +390,6 @@ class Kriging:
         verbose: bool = False,
         weight_file: str = "",
         bounds: Optional[tuple] = None,
-        sk_mean: float = 0.0,
         seed: Optional[int] = None,
     ):
         """
@@ -391,8 +431,6 @@ class Kriging:
         bounds : tuple(float, float) or None
             (lower, upper) clipping bounds for the estimate.
             None means no clipping (uses Fortran defaults: [-huge, +huge]).
-        sk_mean : float
-            Global mean for simple kriging (unbias=0). Default 0.0.
         seed : int, optional
             Random seed.
         """
@@ -429,7 +467,6 @@ class Kriging:
             _c_int(int(verbose)),
             weight_file.encode("utf-8") if weight_file else b"",
             _dptr(c_bounds),
-            _c_double(sk_mean),
             _c_int(seed),
         )
 
@@ -450,12 +487,11 @@ class Kriging:
         self.varying_vgm = varying_vgm
         self.weight_file = weight_file
         self.bounds = c_bounds
-        self.sk_mean = sk_mean
         self.seed = seed
 
         #-- Sanity checks: mutually exclusive flag combinations
-        if (self.use_old_weight and self.weight_file == b""):
-            raise ValueError('use_old_weight requires weight_file to be specified')
+        # use_old_weight + weight_file="" is valid: signals the in-memory wstore path.
+        # Call set_weights() before solve() to populate the store in that case.
         if (self.store_weight and self.weight_file == b""):
             raise ValueError('store_weight requires weight_file to be specified')
         if (self.store_weight and self.use_old_weight):
@@ -466,10 +502,12 @@ class Kriging:
         # -- size tracking
         self._nblock = 0
         self._nobs = np.zeros(self.nvar, dtype=np.uint32)
+        self._nmax = np.zeros(self.nvar, dtype=np.uint32)
         self._set_search = [False,] * self.nvar
         self._set_sim    = False
         self._nobsdrift = np.zeros(self.nvar, dtype=np.uint32)
         self._nvgm_struct = np.zeros([self.nvar, self.nvar], dtype=np.uint32) # does not fully track nvgm_struct with varying vgm mode
+        self._ngroups = self.nvar if nsim==0 else self.nvar*2
     # ------------------------------------------------------------------
     def set_obs(
         self,
@@ -479,6 +517,7 @@ class Kriging:
         variance: Optional[np.ndarray] = None,
         nmax: Optional[int] = None,
         maxdist: Optional[float] = None,
+        sk_mean: float = 0.0,
     ):
         """
         Set observations for variable ``ivar``.
@@ -503,6 +542,8 @@ class Kriging:
             Maximum number of neighbours. Default: use all observations.
         maxdist : float, optional
             Maximum search distance. Default: unlimited.
+        sk_mean : float
+            Global mean for simple kriging (unbias=0). Default 0.0.
         """
         import sys
         coord_f  = _coord_to_fortran(coord)        # (nobs, ndim) -> (ndim, nobs) F-order
@@ -526,13 +567,14 @@ class Kriging:
         # nmax/maxdist: pass huge values when not specified (Fortran treats as "unlimited")
         c_nmax    = _c_int(nmax    if nmax    is not None else np.iinfo(np.int32).max)
         c_maxdist = _c_double(maxdist if maxdist is not None else sys.float_info.max)
-
+        c_sk_mean = _c_double(sk_mean)
         _krige_set_obs(_h(self._handle),
             _c_int(ivar), _c_int(nobs), _c_int(ndim_c),
             _dptr(coord_f), _dptr(value_f), _dptr(var_f),
-            c_nmax, c_maxdist,
+            c_nmax, c_maxdist, c_sk_mean
         )
         self._nobs[ivar-1] = nobs
+        self._nmax[ivar-1] = min(nobs, nmax) if nmax is not None else nobs + (self._nblock if self.nsim>0 else 0)
 
     # ------------------------------------------------------------------
     def set_obs_drift(self, ivar: int, drift: np.ndarray):
@@ -856,7 +898,7 @@ class Kriging:
         randpath : ndarray of int, shape (nblocks,), optional
             Random visiting order for the block loop.
             Generated with a random permutation if omitted.
-        sample : ndarray, shape (nsim, nblocks), optional
+        sample : ndarray, shape (nblocks, nvar, nsim), optional
             Pre-drawn standard-normal samples used to add simulated variability.
             Drawn from N(0,1) if omitted.
         """
@@ -886,22 +928,32 @@ class Kriging:
         if sample is not None:
             sample_a = np.asarray(sample, dtype=np.float64)
             if sample_a.ndim == 1:
-                sample_a = sample_a.reshape(1, -1)
-            s_f    = _farray(sample_a)
-            nsim_c = s_f.shape[0]
-            n_s    = s_f.shape[1]
-            if (nsim_c, n_s) != (self.nsim, nblocks):
+                # (nblocks) shorthand when nvar==1
+                sample_a = sample_a[:, np.newaxis, np.newaxis]  # → (nblocks, 1, 1, )
+            elif sample_a.ndim == 2:
+                # (nsim, nblocks) shorthand when nvar==1
+                sample_a = sample_a[:, np.newaxis, :]  # → (nblocks, 1 ,nsim)
+            elif sample_a.ndim != 3:
                 raise ValueError(
-                    f"sample shape ({nsim_c}, {n_s}) must be "
-                    f"({self.nsim}, {nblocks})")
+                    f"sample must be 2-D (nblocks, nsim) or 3-D (nblocks, nvar, nsim), "
+                    f"got shape {sample_a.shape}")
+            s_f    = _drift_to_fortran(sample_a)
+            nsim_c = s_f.shape[0]
+            nvar_c = s_f.shape[1]
+            n_s    = s_f.shape[2]
+            if nsim_c != self.nsim or nvar_c != self.nvar or n_s != nblocks:
+                raise ValueError(
+                    f"sample shape ({nsim_c}, {nvar_c}, {n_s}) must be "
+                    f"({self.nsim}, {self.nvar}, {nblocks})")
         else:
             nsim_c = self.nsim
+            nvar_c = self.nvar
             n_s    = nblocks
-            s_f    = _farray(rng.standard_normal((nsim_c, n_s)))
+            s_f    = _farray(rng.standard_normal((nsim_c, nvar_c, n_s)))
 
         _krige_set_sim(_h(self._handle),
             _c_int(nblocks), _iptr(rp_f),         # nblocks covers both randpath and sample
-            _c_int(nsim_c), _dptr(s_f),
+            _c_int(nsim_c), _c_int(nvar_c), _dptr(s_f),
         )
         self._set_sim = True
 
@@ -942,25 +994,46 @@ class Kriging:
         self._set_search[ivar-1] = True
 
     # ------------------------------------------------------------------
-    def solve(self):
+    def solve(self, nthread: int = 0):
         """
         Run the kriging or SGSIM loop over all blocks.
         Calls prepare(), then the parallel block loop internally.
+
+        Parameters
+        ----------
+        nthread : int, optional
+            Number of OpenMP threads to use for this call.
+            ``0`` (default) leaves the OMP runtime setting unchanged.
+            ``1`` forces single-threaded execution (useful for reproducible
+            results or when calling :meth:`solve` from inside another
+            parallel region).
         """
         if self.verbose:
             get_omp_info()
-        _krige_solve(_h(self._handle))
+        _krige_solve(_h(self._handle), ctypes.c_int(nthread))
 
     # ------------------------------------------------------------------
-    def get_results(self):
+    def get_results(self, copy: bool = False, squeeze: bool = True):
         """
         Retrieve the kriging estimates and variances after :meth:`solve`.
+
+        Fortran fills ``estimate(nsim, nblocks)`` directly into a
+        Fortran-contiguous Python-owned buffer.
+
+        Parameters
+        ----------
+        copy : bool, default False
+            If True, return C-contiguous copies for downstream NumPy/Pandas use.
+            If False, return views / Fortran-order arrays when possible.
+        squeeze : bool, default True
+            If True, return a 1-D estimate when ``nsim == 1``.
 
         Returns
         -------
         estimate : ndarray
-            Shape **(ngrid,)** for ordinary kriging; shape
-            **(nsim, ngrid)** for SGSIM.
+            **(ngrid, nvar, nsim)**.
+            Shape **(ngrid,)** when ``(nsim == 1 or ==1) and squeeze``; otherwise shape
+            **(ngrid, nvar, nsim)**.
         variance : ndarray, shape (nblocks,)
             Kriging variance at each block.
 
@@ -976,18 +1049,88 @@ class Kriging:
         _krige_get_nsim(_h(self._handle), ctypes.byref(n_sim))
 
         nb = n_blocks.value
-        ns = n_sim.value
+        nv = self.nvar
+        ns = max(1, n_sim.value)
 
-        estimate = _farray(np.empty((ns, nb), dtype=np.float64))
-        variance = _farray(np.empty(nb,       dtype=np.float64))
+        estimate = _fempty((nb, nv, ns), dtype=np.float64)   # (nblock, nvar, nsim)
+        variance = _fempty((nb, nv, nv), dtype=np.float64)   # (nblock, nvar, nvar)
 
-        _krige_get_estimate(_h(self._handle), _c_int(ns), _c_int(nb), _dptr(estimate))
-        _krige_get_variance(_h(self._handle), _c_int(nb),              _dptr(variance))
+        _krige_get_estimate_all(_h(self._handle), _c_int(nb), _c_int(nv), _c_int(ns), _dptr(estimate))
+        _krige_get_variance_all(_h(self._handle), _c_int(nb), _c_int(nv), _dptr(variance))
 
-        # Return (ngrid,) for kriging (ns==1) or (nsim, ngrid) for SGSIM
-        if ns == 1:
-            return estimate[0].copy(), variance
-        return estimate.copy(), variance
+        if squeeze:
+            if self.nvar == 1:
+                estimate = estimate[:, 0]     # (nb, 1, ns) → (nb, ns)
+                variance = variance[:, 0, 0]  # (nb, 1, 1) → (nb,)
+            if ns <= 1:
+                estimate = estimate[..., 0]   # (..., 1)   → (...) — remove last dim
+        est = estimate
+
+
+        if copy:
+            est = np.array(est, order="C", copy=True)
+            variance = np.array(variance, order="C", copy=True)
+
+        return est, variance
+
+    def get_estimate_all(self, copy: bool = False):
+        """Return multivariable estimates / simulations for all variables.
+
+        Populated when ``nvar > 1``.  For co-kriging without simulation,
+        the leading dimension is 1.
+
+        Parameters
+        ----------
+        copy : bool, default False
+            If True, return a C-contiguous copy. If False, return the
+            Fortran-contiguous output buffer filled by the Fortran core.
+
+        Returns
+        -------
+        np.ndarray, shape (nblock, nvar, max(nsim, 1))
+            Values of all variables.  ``out[ib, kvar, isim]`` is the value at
+            block ``ib+1`` for variable ``kvar+1`` in realization ``isim+1``.
+        """
+        if self.nvar <= 1:
+            raise RuntimeError("get_estimate_all is only available for multivariable kriging/simulation (nvar > 1)")
+
+        n_blocks = ctypes.c_int(0)
+        n_sim    = ctypes.c_int(0)
+        _krige_get_nblocks(_h(self._handle), ctypes.byref(n_blocks))
+        _krige_get_nsim   (_h(self._handle), ctypes.byref(n_sim))
+
+        nb = n_blocks.value
+        ns = max(1, n_sim.value)
+        nv = self.nvar
+
+        out = _fempty((nb, nv, ns), dtype=np.float64)
+        _krige_get_estimate_all(_h(self._handle), _c_int(nb), _c_int(nv), _c_int(ns), _dptr(out))
+
+        if copy:
+            return np.array(out, order="C", copy=True)
+        return out
+
+    def get_variance_all(self, copy: bool = False):
+        """Return the conditional covariance matrix for all variables.
+
+        Returns
+        -------
+        np.ndarray, shape (nblock, nvar, nvar)
+            Conditional covariance matrix at each block.  The diagonal contains
+            each variable's kriging variance, and ``out[:, 0, 0]`` matches the
+            variance returned by :meth:`get_results`.
+        """
+        n_blocks = ctypes.c_int(0)
+        _krige_get_nblocks(_h(self._handle), ctypes.byref(n_blocks))
+
+        nb = n_blocks.value
+        nv = self.nvar
+        out = _fempty((nb, nv, nv), dtype=np.float64)
+        _krige_get_variance_all(_h(self._handle), _c_int(nb), _c_int(nv), _dptr(out))
+
+        if copy:
+            return np.array(out, order="C", copy=True)
+        return out
 
     # ------------------------------------------------------------------
     def __del__(self):
@@ -999,6 +1142,218 @@ class Kriging:
                 pass
             self._handle = 0
 
+    # ------------------------------------------------------------------
+    def free_weight_store(self):
+        """Release the in-memory weight store, freeing its memory."""
+        _krige_free_weight_store(_h(self._handle))
+
+    # ------------------------------------------------------------------
+    def set_weights(self, weights: dict) -> None:
+        """Load kriging weights into the in-memory store so solve() reuses them.
+
+        Activated when ``use_old_weight=True`` and no ``weight_file`` is given.
+        :meth:`solve` then applies the supplied neighbour indices and kriging
+        weights directly — skipping the kriging-system solve — and restores
+        the stored variance.  This is the in-memory equivalent of the
+        ``use_old_weight=True`` + factor-file workflow.
+
+        Typical workflow
+        ----------------
+        >>> # First run: solve and capture weights + variance
+        >>> k1 = Kriging(ndim=2, nvar=1, store_weight=True)
+        >>> k1.set_obs(...); k1.set_grid(...); k1.set_vgm(...); k1.set_search(...)
+        >>> k1.solve()
+        >>> w = k1.get_weights()           # {'nnear', 'inear', 'weight', 'variance'}
+        >>>
+        >>> # Second run: same grid/vgm, new obs values, reuse weights
+        >>> k2 = Kriging(ndim=2, nvar=1, use_old_weight=True)   # no weight_file
+        >>> k2.set_obs(...new_values...)
+        >>> k2.set_grid(...); k2.set_vgm(...); k2.set_search(...)
+        >>> k2.set_weights(w)              # populate the in-memory store
+        >>> k2.solve()                     # fast: skips kriging system solve
+        >>> est, var = k2.get_results()
+
+        Parameters
+        ----------
+        weights : dict
+            Dict as returned by :meth:`get_weights`, with keys:
+
+            ``nnear`` : ndarray (nblock, ngroups), int32
+                Number of active neighbours per block and group.
+            ``inear`` : ndarray (nblock, ngroups, nmax), int32
+                1-based neighbour indices.
+            ``weight`` : ndarray (nblock, nvar, ngroups, nmax), float64
+                Kriging weights.  For ``nvar==1`` the array may be 3-D
+                ``(nblock, ngroups, nmax)`` (the shape returned by
+                :meth:`get_weights`).
+            ``order`` : ndarray (nblock,), optional
+                Random visiting order for SGSIM.  Defaults to None.
+            ``variance`` : ndarray (nblock,) or (nblock, nvar, nvar), optional
+                Per-block conditional variance.  Included automatically
+                when the dict was produced by :meth:`get_weights`.
+                Defaults to zeros if absent.
+
+        Notes
+        -----
+        Call after :meth:`set_obs`, :meth:`set_grid`, :meth:`set_vgm`, and
+        :meth:`set_search`.  The Fortran-side ``use_old_weight`` flag is set
+        automatically; you may also pass ``use_old_weight=True`` to the
+        constructor to declare intent explicitly.
+        """
+        if self.store_weight:
+            raise ValueError(
+                "set_weights() is incompatible with store_weight=True. "
+                "Construct Kriging without store_weight=True when reusing weights."
+            )
+
+        nnear  = np.ascontiguousarray(weights["nnear"],  dtype=np.int32)
+        inear  = np.ascontiguousarray(weights["inear"],  dtype=np.int32)
+        weight = np.asarray(weights["weight"],           dtype=np.float64)
+
+        if nnear.ndim != 2:
+            raise ValueError("nnear must be 2-D (nblock, ngroups)")
+        if inear.ndim != 3:
+            raise ValueError("inear must be 3-D (nblock, ngroups, nmax)")
+
+        nb, ng = nnear.shape
+        nm     = inear.shape[2]
+        nv     = self.nvar
+
+        # order: 1-based block path indices (nblock,).
+        # Use the stored value when present; default to sequential (plain kriging).
+        order_raw = weights.get("order", None)
+        if order_raw is None or self.nsim == 0:
+            order_f = np.ascontiguousarray(np.arange(1, nb + 1, dtype=np.int32))
+        else:
+            order_f = np.ascontiguousarray(order_raw, dtype=np.int32)
+
+        # Transpose nnear/inear to Fortran column-major order.
+        nnear_f = np.asfortranarray(nnear.T)          # (ng, nb)
+        inear_f = np.asfortranarray(inear.T)           # (nm, ng, nb)
+
+        # weight may be:
+        #   3-D (nb, ng, nm)       — nvar=1 shape from get_weights()
+        #   4-D (nb, nv, ng, nm)   — general shape (nv first after nb)
+        # Fortran wstore layout: weight(nm, ng, nv, nb)
+        if weight.ndim == 3:
+            # (nb, ng, nm) → (nm, ng, nb) → insert nvar axis → (nm, ng, nv=1, nb)
+            w3 = np.asfortranarray(weight.T)           # (nm, ng, nb)
+            weight_f = np.asfortranarray(w3[:, :, np.newaxis, :])  # (nm, ng, 1, nb)
+        elif weight.ndim == 4:
+            # (nb, nv, ng, nm) → (nm, ng, nv, nb)
+            weight_f = np.asfortranarray(np.transpose(weight, (3, 2, 1, 0)))
+        else:
+            raise ValueError(
+                "weight must be 3-D (nblock, ngroups, nmax) or "
+                "4-D (nblock, nvar, ngroups, nmax)"
+            )
+
+        # Variance: (nb,) for nvar=1 or (nb, nv, nv) for general.
+        # Fortran layout: var(nv, nv, nb).
+        if "variance" in weights and weights["variance"] is not None:
+            var = np.asarray(weights["variance"], dtype=np.float64)
+            if var.ndim == 1:
+                var = var[:, np.newaxis, np.newaxis]   # (nb,) → (nb, 1, 1)
+            # (nb, nv, nv) → (nv, nv, nb)
+            var_f = np.asfortranarray(np.transpose(var, (1, 2, 0)))
+        else:
+            var_f = np.asfortranarray(np.zeros((nv, nv, nb), dtype=np.float64))
+
+        _krige_set_weights(
+            _h(self._handle),
+            _c_int(nm), _c_int(ng), _c_int(nv), _c_int(nb),
+            nnear_f.ctypes.data_as(_ptr_int),
+            inear_f.ctypes.data_as(_ptr_int),
+            weight_f.ctypes.data_as(_ptr_dbl),
+            order_f.ctypes.data_as(_ptr_int),
+            var_f.ctypes.data_as(_ptr_dbl),
+        )
+        self.use_old_weight = True
+
+    # ------------------------------------------------------------------
+    def get_weights(self) -> dict:
+        """Return the stored kriging weights and neighbour indices.
+
+        :meth:`alloc_weight_store` must have been called before
+        :meth:`solve`.
+
+        Returns
+        -------
+        dict with keys:
+
+        ``nnear`` : ndarray, shape ``(nblock, ngroups)``, dtype int32
+            Number of active neighbours for each block and group.
+            Group indices 0..nvar-1 are real-observation groups (variable
+            1..nvar); groups nvar..ngroups-1 are simulated-block groups
+            (SGSIM only, nvar=1 → one extra group).
+
+        ``inear`` : ndarray, shape ``(nblock, ngroups, nmax)``, dtype int32
+            1-based neighbour indices.  Entries beyond ``nnear[ib, ig]``
+            are zero.
+
+        ``weight`` : ndarray, shape ``(nblock, nvar, ngroups, nmax)``, dtype float64
+            Kriging weights.  Entries beyond ``nnear[ib, ig]`` are zero.
+            Shape is ``(nblock, ngroups, nmax)`` when ``nvar == 1``.
+
+        ``variance`` : ndarray, shape ``(nblock,)`` for ``nvar==1``, else ``(nblock, nvar, nvar)``
+            Per-block conditional kriging variance stored alongside the
+            weights.  Present only when the compiled library supports the
+            variance store (i.e. built with the current source).  Pass this
+            dict directly to :meth:`set_weights` to get a full round-trip.
+        """
+
+        nb, ng, nm, nv = self._nblock, self._ngroups, max(self._nmax), self.nvar
+
+        # Allocate Fortran-order buffers matching the CAPI layout
+        nnear_f  = np.zeros((ng, nb),     dtype=np.int32,   order='F')
+        inear_f  = np.zeros((nm, ng, nb), dtype=np.int32,   order='F')
+        weight_f = np.zeros((nm, ng, nv, nb), dtype=np.float64, order='F')
+
+        _krige_get_weight_nnear(
+            _h(self._handle), _c_int(ng), _c_int(nb),
+            nnear_f.ctypes.data_as(_ptr_int),
+        )
+        _krige_get_weight_inear(
+            _h(self._handle), _c_int(nm), _c_int(ng), _c_int(nb),
+            inear_f.ctypes.data_as(_ptr_int),
+        )
+        _krige_get_weight_data(
+            _h(self._handle), _c_int(nm), _c_int(ng), _c_int(nv), _c_int(nb),
+            weight_f.ctypes.data_as(_ptr_dbl),
+        )
+
+        # Transpose to Python-friendly (block-major) layout:
+        #   nnear_f  (ng, nb)         → .T → (nb, ng)
+        #   inear_f  (nm, ng, nb)     → .T → (nb, ng, nm)
+        #   weight_f (nm, ng, nv, nb) → .T → (nb, nv, ng, nm)
+        #     squeeze nvar axis when nvar==1 → (nb, ng, nm)
+        weight_out = np.ascontiguousarray(weight_f.T)  # (nb, nv, ng, nm)
+        if nv == 1:
+            weight_out = weight_out[:, 0, :, :]        # (nb, ng, nm)
+        out = {
+            "nnear":  np.ascontiguousarray(nnear_f.T),
+            "inear":  np.ascontiguousarray(inear_f.T),
+            "weight": weight_out,
+        }
+
+        # Retrieve per-block conditional variance from the weight store.
+        var_f = np.zeros((nv, nv, nb), dtype=np.float64, order='F')
+        try:
+            _krige_get_weight_var(
+                _h(self._handle), _c_int(nv), _c_int(nb),
+                var_f.ctypes.data_as(_ptr_dbl),
+            )
+            # var_f (nv, nv, nb) → .T → (nb, nv, nv); squeeze for nvar=1
+            var_out = np.ascontiguousarray(var_f.T)     # (nb, nv, nv)
+            if nv == 1:
+                var_out = var_out[:, 0, 0]              # (nb,)
+            out["variance"] = var_out
+        except RuntimeError:
+            pass  # old library without krige_get_weight_var — omit variance key
+
+        return out
+
+    # ------------------------------------------------------------------
     def get_info(self):
         ptr = _krige_to_str(_h(self._handle))
         if not ptr:

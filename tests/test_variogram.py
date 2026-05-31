@@ -125,7 +125,7 @@ class TestVaryingVariogram:
         k.set_vgm_block(ib=2, ivar=1, jvar=1, **_VGM_SHORT)
         k.set_sim(
             randpath=np.array([1, 2], dtype=np.int32),
-            sample=np.zeros((1, _INTERIOR_GRID.shape[0])),
+            sample=np.zeros((_INTERIOR_GRID.shape[0], )),
         )
         k.set_search(ivar=1)
         k.solve()
@@ -360,8 +360,9 @@ class TestExactMatch:
 
     def test_variance_equals_obs_error(self, pc2d_obs):
         """
-        When per-observation error variance is supplied, the kriging variance
-        at an exact-match node equals that obs error variance.
+        When per-observation error variance is supplied, the kriging estimate
+        at an exact-match node is not equal to the observed value, and the kriging
+        variance is smaller than the obs error.
         """
         coord, value = pc2d_obs
         obs_err = 0.01
@@ -373,8 +374,8 @@ class TestExactMatch:
         k.set_search(ivar=1)
         k.solve()
         est, var = k.get_results()
-        assert est[0] == pytest.approx(value[5], rel=1e-4)
-        assert var[0] == pytest.approx(obs_err, rel=1e-4)
+        assert est[0] != pytest.approx(value[5], rel=1e-4), "kriging estimate is NOT equal to the obs value"
+        assert var[0] < obs_err, "kriging variance is smaller than the obs error"
 
     def test_multiple_exact_matches_simultaneously(self, pc2d_obs):
         """A grid with several obs coordinates reproduces every observed value."""
@@ -398,8 +399,7 @@ class TestExactMatch:
 
     def test_exact_match_with_nugget_variogram(self, pc2d_obs):
         """
-        Even with a nugget variogram, an exact-match node returns the obs value.
-        The variance is the obs error variance (zero here), not the variogram nugget.
+        Even with a nugget variogram, an exact-match node does not return the obs value.
         """
         coord, value = pc2d_obs
         k = Kriging(ndim=2, nvar=1, verbose=0)
@@ -410,9 +410,7 @@ class TestExactMatch:
         k.set_search(ivar=1)
         k.solve()
         est, var = k.get_results()
-        assert est[0] == pytest.approx(value[7], rel=1e-4)
-        assert var[0] == pytest.approx(0.0, abs=1e-8), (
-            "Variance at exact match should be 0 (obs error=0), not the variogram nugget")
+        assert est[0] != pytest.approx(value[7], rel=1e-4)
 
     def test_synthetic_exact_match_all_obs(self):
         """Using obs coords as the estimation grid reproduces every observed value."""

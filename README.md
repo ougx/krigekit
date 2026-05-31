@@ -116,6 +116,24 @@ grid_coord = np.array([[gx1,gy1], [gx2,gy2], ...])  # shape (ngrid, ndim)
 drift      = np.array([[d1a,d1b], [d2a,d2b], ...])  # shape (nobs, ndrift)
 ```
 
+Result arrays use these shapes:
+
+| Method | Shape | Notes |
+|--------|-------|-------|
+| `get_results()` for kriging or one SGSIM realization | `(nblock,)` | Primary variable only |
+| `get_results()` for co-kriging (nvar>1, nsim=1) | `(nblock, nvar)` | All variables; `out[ib, kvar]` |
+| `get_results()` for multiple SGSIM realizations | `(nblock, nvar, nsim)` | Primary variable only; `out[ib, ivar, isim]` |
+| `get_estimate_all()` | `(nblock, nvar, nsim)` | All variables and realizations; `out[ib, ivar, isim]` |
+| `get_variance_all()` | `(nblock, nvar, nvar)` | Full conditional covariance matrix; `out[ib, :, :]` is the nvar×nvar matrix at block ib; diagonal `out[:, k, k]` is variable k's kriging variance |
+
+Internally the Fortran core stores multivariable results as
+`estimate(isim, ivar, iblock)` and conditional covariance as
+`est_var(ivar, jvar, iblock)`. The Python getters return the transpose dimension
+order.
+Use `get_results(squeeze=False)` to keep the leading simulation dimension when
+`nsim == 1`, and `copy=True` when a C-contiguous copy is preferred for downstream
+NumPy/Pandas workflows.
+
 ---
 
 ## Variogram parameters
@@ -370,74 +388,143 @@ k.set_vgm_block(ib=5, ivar=1, jvar=1, vtype="exp", nugget=0.1, sill=0.9, a_major
 
 ---
 
-## Weight File (Factor File)
+## In-Memory Weight Store
 
-Kriging weights — the solution of the per-block linear system — can be saved to a
-**factor file** and reloaded in later runs, skipping the expensive matrix assembly
-and factorisation step entirely. This is exactly the pilot point workflow.
+Setting `store_weight=True` saves every block's kriging weights in memory during
+`solve()`.  The stored weights and neighbour indices are then accessible via
+`get_weights()` — no file required.
 
 **Typical use cases**
 
-- The grid, observation locations, and variogram are fixed, but estimates need to be recomputed
-  with updated observation values.
-- You want to inspect or archive the exact weights used for each block.
+- Inspect which observations contributed most to each estimate (audit / QC).
+- Reconstruct estimates in Python from updated observation values without
+  re-running the Fortran solver.
+- Archive or visualise the spatial influence of each data point.
 
-### Step 1 — Write weights
-
-Set `store_weight=True` and provide a `weight_file` path.
-The solve loop assembles and solves the kriging system for every block as normal,
-writes the weights to the file, **and** computes estimates.
-
-> **Note**: `store_weight=True` forces **sequential** execution — OpenMP is disabled
-> to guarantee that blocks are written to the file in a consistent order.
-> Expect roughly single-thread performance during the write run.
+### Basic usage
 
 ```python
-k = Kriging(ndim=2, nvar=1,
-            store_weight=True, weight_file="weights.fac")
+k = Kriging(ndim=2, nvar=1, store_weight=True)
 k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
 k.set_grid(coord=grid_coord)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1000)
 k.set_search(ivar=1)
-k.solve()                          # solves + writes weights + computes estimates
+k.solve()               # solves + stores weights in memory
 est, var = k.get_results()
+
+w = k.get_weights()     # retrieve stored weights
 ```
 
-### Step 2 — Reuse weights
+### `get_weights()` return value
 
-Set `use_old_weight=True` with the same `weight_file`.
-The solve loop reads pre-computed weights from the file and calls `estimate_block`
-directly — no matrix assembly or factorisation.
+Returns a dict with three NumPy arrays indexed `[block, group, neighbour]`:
 
-> **Note**: `use_old_weight=True` forces **sequential** execution — OpenMP is disabled
-> to guarantee that blocks are read from the file in a consistent order.
-> Expect roughly single-thread performance during the read run.
+| Key | Shape | dtype | Description |
+|-----|-------|-------|-------------|
+| `nnear` | `(nblock, ngroups)` | `int32` | Active neighbour count per block and group |
+| `inear` | `(nblock, ngroups, nmax)` | `int32` | **1-based** obs/block indices; `0` = unused |
+| `weight` | `(nblock, nvar, ngroups, nmax)` | `float64` | Kriging weights; `0.0` = unused |
+
+**Groups** correspond to the neighbour-group layout:
+
+| `group` index | Contents |
+|---|---|
+| `0 … nvar-1` | Real observation neighbours, variable `group+1` |
+| `nvar … ngroups-1` | Previously-simulated block neighbours (SGSIM only) |
+
+For ordinary kriging with one variable `ngroups == 1`, so `group=0` is the only
+group and its weights always sum to 1.
+
+### Example: reconstructing estimates from weights
 
 ```python
-k = Kriging(ndim=2, nvar=1,
-            use_old_weight=True, weight_file="weights.fac")
+w = k.get_weights()
+nblock, ngroups, nmax = w["weight"].shape
+
+est_manual = np.zeros(nblock)
+for ib in range(nblock):
+    nn  = w["nnear"][ib, 0]               # number of active obs neighbours
+    idx = w["inear"][ib, 0, :nn] - 1      # 1-based → 0-based Python index
+    wts = w["weight"][ib, 0, :nn]
+    est_manual[ib] = np.dot(wts, obs_value[idx])
+```
+
+### Optionally persist to a factor file
+
+Add `weight_file` to also write the completed weight store to disk after `solve()`.
+The file can be reloaded on a subsequent run with `use_old_weight=True`, skipping
+the matrix assembly and factorisation step entirely (fast re-estimation with
+different data values on the same grid).
+
+```python
+# --- Run 1: solve, store in memory, and write factor file ---
+k = Kriging(ndim=2, nvar=1, store_weight=True, weight_file="weights.fac")
 k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
 k.set_grid(coord=grid_coord)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1000)
 k.set_search(ivar=1)
-k.solve()                          # loads weights + computes estimates (fast)
-est, var = k.get_results()
+k.solve()
+w = k.get_weights()     # available in memory immediately
+est1, _ = k.get_results()
+
+# --- Run 2: read weights from file, skip linear solve (fast) ---
+k2 = Kriging(ndim=2, nvar=1, use_old_weight=True, weight_file="weights.fac")
+k2.set_obs(ivar=1, coord=obs_coord, value=new_obs_value, nmax=20)
+k2.set_grid(coord=grid_coord)
+k2.set_sim(sample=sample)   # set sample for SGSIM; skip this for kriging
+k2.solve()                  # reads weights, calls estimate_block only
+est2, _ = k2.get_results()
 ```
 
-### Rules and constraints
+### Constraints
 
 | Constraint | Detail |
 |---|---|
-| `store_weight` and `use_old_weight` are **mutually exclusive** | Passing both raises an error at initialisation |
-| `weight_file` is **required** for both modes | An empty path raises an error |
+| `store_weight` and `use_old_weight` are **mutually exclusive** | Passing both raises an error |
+| `weight_file` is optional for `store_weight` | Omit it for memory-only storage |
+| `weight_file` is **required** for `use_old_weight` | An empty path raises an error |
 | Grid, observations, variogram, and `nmax` must be **identical** between runs | The file stores neighbour indices; mismatched setups produce wrong results silently |
-| `store_weight` **disables OpenMP** | Blocks must be written sequentially to preserve file order |
+| `store_weight` is now **OMP-compatible** | OpenMP is fully active during `solve()` |
 
 ---
 
 ## Parallel execution
 
-**Single large job** — control OpenMP threads from Python before importing:
+The Fortran block loop (kriging or SGSIM) is parallelised with OpenMP.
+Thread count can be controlled at two levels.
+
+### Per-call: `solve(nthread=N)`
+
+Pass `nthread` to `solve()` to cap OpenMP threads **for that call only**.
+The runtime's previous setting is saved and restored automatically.
+
+| `nthread` | Effect |
+|-----------|--------|
+| `0` (default) | Leave the OMP runtime setting unchanged |
+| `1` | Force single-threaded execution |
+| `N > 1` | Use at most N threads |
+
+```python
+k = Kriging(ndim=2, nvar=1)
+k.set_obs(...)
+k.set_grid(...)
+k.set_vgm(...)
+k.set_search(ivar=1)
+
+k.solve(nthread=4)   # use 4 threads for this solve
+k.solve(nthread=1)   # serial — fully reproducible, no OMP scheduling variation
+k.solve()            # use whatever OMP_NUM_THREADS is set to (default)
+```
+
+`nthread=1` is useful when you need **bitwise-reproducible results**: with
+multiple threads and dynamic scheduling the factorization-cache hit/miss pattern
+can vary between runs, producing sub-machine-epsilon differences for near-zero
+estimates (see performance notes below).
+
+### Global: `OMP_NUM_THREADS` environment variable
+
+Set the environment variable **before importing pykriging** to apply a global
+default that affects all subsequent `solve()` calls:
 
 ```python
 import os
@@ -445,17 +532,21 @@ os.environ["OMP_NUM_THREADS"] = "8"
 from pykriging import Kriging
 ```
 
-**Multiple independent jobs** — use `multiprocessing` to avoid shared Fortran state:
+### Multiple independent jobs with `multiprocessing`
+
+Avoid shared Fortran state by running jobs in separate processes:
 
 ```python
 import os, multiprocessing as mp
 from pykriging import ordinary_kriging
 
 def run(args):
-    os.environ["OMP_NUM_THREADS"] = "4"
     coord, value, grid, spec = args
     return ordinary_kriging(coord, value, grid, spec)
 
+# Each worker process inherits OMP_NUM_THREADS from the parent.
+# Set it before spawning if you want to cap threads per worker:
+os.environ["OMP_NUM_THREADS"] = "4"
 with mp.Pool(4) as pool:
     results = pool.map(run, jobs)
 ```
@@ -488,6 +579,11 @@ the kriging matrix on a per-thread basis.  When consecutive estimation blocks
 share the same neighbour set (common on regular grids), the cached factorization
 is reused — only the right-hand side is reassembled.  This can give a significant
 speedup on dense grids where neighbours change slowly across the domain.
+
+**Weight store and OpenMP** — `store_weight=True` writes to disjoint per-block
+array slices and is fully OpenMP-compatible.  The block loop runs in parallel at
+full thread count; the factor file is written as a single sequential pass *after*
+the parallel loop completes.
 
 ---
 

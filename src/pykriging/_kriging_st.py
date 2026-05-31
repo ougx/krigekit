@@ -174,6 +174,9 @@ _TRANSFORM_MAP = {"linear": 0, "bounded": 1, "power": 2}
 def _farray(a, dtype=np.float64):
     return np.asfortranarray(a, dtype=dtype)
 
+def _fempty(shape, dtype=np.float64):
+    return np.empty(shape, dtype=dtype, order="F")
+
 def _coord3_to_fortran(coord: np.ndarray) -> np.ndarray:
     """(nobs, 3) → Fortran (3, nobs)."""
     a = np.asarray(coord, dtype=np.float64)
@@ -524,13 +527,22 @@ class SpaceTimeKriging:
         _st_solve(_h(self._handle))
 
     # ------------------------------------------------------------------
-    def get_results(self) -> "tuple[np.ndarray, np.ndarray]":
+    def get_results(self, copy: bool = False, squeeze: bool = True) -> "tuple[np.ndarray, np.ndarray]":
         """
         Retrieve kriging estimate and variance.
 
+        Parameters
+        ----------
+        copy : bool, default False
+            If True, return C-contiguous copies for downstream NumPy/Pandas use.
+            If False, return views / Fortran-order arrays when possible.
+        squeeze : bool, default True
+            If True, return a 1-D estimate when ``nsim == 1``.
+
         Returns
         -------
-        estimate : ndarray, shape (ngrid,) for kriging or (nsim, ngrid) for SGSIM
+        estimate : ndarray, shape (ngrid,) when ``nsim == 1 and squeeze``;
+            otherwise shape (nsim, ngrid)
         variance : ndarray, shape (ngrid,)
         """
         nb = ctypes.c_int(0)
@@ -539,14 +551,21 @@ class SpaceTimeKriging:
         _st_get_nsim   (_h(self._handle), ctypes.byref(ns))
         nb, ns = nb.value, ns.value
 
-        estimate = _farray(np.empty((ns, nb), dtype=np.float64))
-        variance = _farray(np.empty(nb,       dtype=np.float64))
+        estimate = _fempty((ns, nb), dtype=np.float64)
+        variance = _fempty(nb, dtype=np.float64)
         _st_get_estimate(_h(self._handle), _c_int(ns), _c_int(nb), _dptr(estimate))
         _st_get_variance(_h(self._handle), _c_int(nb),              _dptr(variance))
 
-        if ns == 1:
-            return estimate[0].copy(), variance.copy()
-        return estimate.copy(), variance.copy()
+        if squeeze and ns == 1:
+            est = estimate[0]
+        else:
+            est = estimate
+
+        if copy:
+            est = np.array(est, order="C", copy=True)
+            variance = np.array(variance, order="C", copy=True)
+
+        return est, variance
 
     # ------------------------------------------------------------------
     def _get_nblocks_raw(self) -> int:

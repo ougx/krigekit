@@ -35,7 +35,7 @@ class TestSGSIM:
         sims = sequential_gaussian_simulation(
             coord, value, grid_coord, _VGM_PC2D, nsim=nsim, nmax=20, seed=42
         )
-        assert sims.shape == (nsim, grid_coord.shape[0])
+        assert sims.shape == (grid_coord.shape[0], nsim)
 
     def test_realisations_differ(self, pc2d_obs, pc2d_grid):
         """Different realisations must not be identical."""
@@ -81,10 +81,8 @@ class TestSGSIM:
         sims = sequential_gaussian_simulation(
             coord, value, grid_coord, _VGM_PC2D, nsim=50, nmax=20, seed=1001
         )
-        ens_mean = sims.mean(axis=0)
-
+        ens_mean = sims.mean(axis=1)
         est, _ = ordinary_kriging(coord, value, grid_coord, _VGM_PC2D, nmax=20)
-        np.savetxt("sgsim.dat", np.vstack([sims, est[None,:]]), fmt="%s")
         corr = np.corrcoef(ens_mean, est)[0, 1]
         assert corr > 0.90, (
             f"Ensemble mean correlation with kriging = {corr:.3f} (expected > 0.90). "
@@ -109,8 +107,53 @@ class TestSGSIM:
         k.set_search(ivar=1)
         k.solve()
         sims, _ = k.get_results()
+        sims_matrix, _ = k.get_results(squeeze=False)
+        sims_copy, _ = k.get_results(copy=True)
 
         assert sims.shape == (grid_coord.shape[0],)
+        assert sims_matrix.shape == (grid_coord.shape[0], 1, 1)
+        np.testing.assert_array_equal(sims_matrix[:,0,0], sims)
+        assert sims_copy.flags.c_contiguous
         # Realisations must lie within a physically reasonable range
         assert sims.min() >= -5.0, f"Simulation minimum {sims.min()} is unreasonably low"
         assert sims.max() <=  5.0, f"Simulation maximum {sims.max()} is unreasonably high"
+
+    def test_joint_cosim_get_estimate_all_shape(self):
+        """Joint co-simulation returns simulations, blocks, then variables."""
+        coord = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+        grid = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]])
+
+        k = Kriging(ndim=2, nvar=2, nsim=2, seed=123)
+        k.set_obs(ivar=1, coord=coord, value=np.array([1.0, 2.0, 1.5]))
+        k.set_obs(ivar=2, coord=coord, value=np.array([10.0, 20.0, 15.0]))
+        k.set_grid(coord=grid)
+        nobs = len(coord)
+        nnew = len(grid)
+        nsim=2
+        nv = 2
+        k.set_sim(
+            randpath=np.array([1, 2, 3], dtype=np.int32),
+            sample=np.ones((nnew, nv, nsim), order="F"),
+        )
+        k.set_search(ivar=1)
+        k.set_search(ivar=2)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=1.0)
+        k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.0, sill=0.25, a_major=1.0)
+        k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.0, sill=1.0, a_major=1.0)
+
+        k.solve()
+        primary, primary_var = k.get_results()
+        all_est = k.get_estimate_all()
+        all_est_copy = k.get_estimate_all(copy=True)
+        all_var = k.get_variance_all()
+        all_var_copy = k.get_variance_all(copy=True)
+
+        assert all_est.shape == (nnew, nv, nsim)
+        assert all_var.shape == (nnew, nv, nv)
+        assert np.all(np.diagonal(all_var, axis1=1, axis2=2) >= -1e-10)
+        assert all_est.flags.f_contiguous
+        assert all_var.flags.f_contiguous
+        assert all_est_copy.flags.c_contiguous
+        assert all_var_copy.flags.c_contiguous
+        np.testing.assert_allclose(all_est_copy, all_est)
+        np.testing.assert_allclose(all_var_copy, all_var)

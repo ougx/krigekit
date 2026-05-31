@@ -92,16 +92,24 @@ module kriging_st
   end type t_blockgrid_st
 
   !=============================================================================
+  ! Neighbour-group layout (same convention as kriging.F90):
+  !   Groups 1:nvar         = real observations, variable ig        (always)
+  !   Groups nvar+1:ngroups = previously simulated blocks, variable ig-nvar  (SGSIM only)
+  !   group_ivar(ig, nvar)  -> real variable index 1:nvar
+  !   ig > nvar             -> .true. for a simulated-block group
+  !=============================================================================
+
+  !=============================================================================
   ! t_kriging_st_ctx — per-thread working context (allocated per OMP thread)
   !=============================================================================
   type :: t_kriging_st_ctx
     integer              :: iblock  = 0
     integer              :: npp     = 0     ! total neighbours = sum(nnear)
     integer              :: matsize = 0     ! npp + ndrift + unbias
-    integer, allocatable :: nnear(:)        ! [0:nvar]
-    integer, allocatable :: inear(:,:)      ! [nmax, 0:nvar]
-    real,    allocatable :: weight(:,:)     ! [nmax, 0:nvar]
-    real,    allocatable :: sqdist(:,:)     ! squared spatial distances [nmax, 0:nvar]
+    integer, allocatable :: nnear(:)        ! [1:ngroups]
+    integer, allocatable :: inear(:,:)      ! [nmax, 1:ngroups]
+    real,    allocatable :: weight(:,:)     ! [nmax, 1:ngroups]
+    real,    allocatable :: sqdist(:,:)     ! squared spatial distances [nmax, 1:ngroups]
     real,    allocatable :: x(:,:)          ! solver output [1, matsize]
     real,    allocatable :: matA(:,:)       ! covariance matrix [matsize, matsize]
     real,    allocatable :: rhsB(:,:)       ! right-hand side [1, matsize]
@@ -130,9 +138,9 @@ module kriging_st
 
     !-- Dimensions
     integer              :: ndim   = 3    ! always 3 (spatial)
-    integer              :: nvar   = 1
-    integer              :: ivar0  = 1    ! 0 for SGSIM (includes simulated-block index)
-    integer              :: ndrift = 0
+    integer              :: nvar    = 1
+    integer              :: ngroups = 0   ! nvar (kriging) or 2*nvar (SGSIM)
+    integer              :: ndrift  = 0
     integer              :: unbias = 1    ! 1=OK, 0=SK
     integer              :: nsim   = 0
     integer              :: seed   = 12345
@@ -148,10 +156,10 @@ module kriging_st
     integer              :: matsize_max = 0
 
     !-- Data
-    type(t_obsgrid_st),  allocatable :: obs(:)    ! [ivar0:nvar]
+    type(t_obsgrid_st),  allocatable :: obs(:)    ! [1:nvar]
     type(t_grid_st)                  :: grid
     type(t_blockgrid_st)             :: block
-    type(vgm_struct_st), allocatable :: vgm(:,:)  ! [ivar0:nvar, ivar0:nvar]
+    type(vgm_struct_st), allocatable :: vgm(:,:)  ! [1:nvar, 1:nvar]
 
   contains
     procedure :: initialize         => initialize_st
@@ -187,19 +195,21 @@ contains
     class(t_kriging_st),     intent(in)    :: krige
     integer :: mmax, iv
     mmax = maxval(krige%obs%nmax)
-    associate(npp => krige%nppmax, matsize => krige%matsize_max)
-      allocate(self%sqdist(mmax,    0:krige%nvar));  self%sqdist = 0.0
+    associate(npp => krige%nppmax, matsize => krige%matsize_max, ng => krige%ngroups)
+      allocate(self%sqdist(mmax,    ng));  self%sqdist = 0.0
       allocate(self%matA  (matsize, matsize))
       allocate(self%rhsB  (1,       matsize))
-      allocate(self%nnear (         0:krige%nvar))
-      allocate(self%inear (mmax,    0:krige%nvar))
-      allocate(self%weight(mmax,    0:krige%nvar));  self%weight = 0.0
+      allocate(self%nnear (         ng))
+      allocate(self%inear (mmax,    ng))
+      allocate(self%weight(mmax,    ng));  self%weight = 0.0
       allocate(self%x     (1,       matsize));       self%x      = 0.0
-      self%nnear(0) = 0
-      call set_seq(self%inear(1:mmax, 0), mmax)
+      call set_seq(self%inear(1:mmax, 1), mmax)
       do iv = 1, krige%nvar
         self%nnear(iv)   = krige%obs(iv)%nmax
-        self%inear(:,iv) = self%inear(:,0)
+        self%inear(:,iv) = self%inear(:,1)
+      end do
+      do iv = krige%nvar + 1, ng
+        self%nnear(iv) = 0
       end do
     end associate
   end subroutine ctx_initialize
@@ -209,13 +219,22 @@ contains
     class(t_kriging_st),     intent(in)    :: krige
     integer :: ivar, k1
     k1 = 0
-    do ivar = krige%ivar0, krige%nvar
+    do ivar = 1, krige%ngroups
       if (self%nnear(ivar) == 0) cycle
       self%weight(1:self%nnear(ivar), ivar) = self%x(1, k1+1:k1+self%nnear(ivar))
       k1 = k1 + self%nnear(ivar)
     end do
   end subroutine ctx_assign_weight
 
+
+  !=============================================================================
+  ! group_ivar — map group index ig (1:ngroups) to real variable index (1:nvar).
+  ! Obs groups (ig = 1:nvar) -> ig; sim groups (ig = nvar+1:2*nvar) -> ig-nvar.
+  !=============================================================================
+  pure elemental integer function group_ivar(ig, nvar)
+    integer, intent(in) :: ig, nvar
+    group_ivar = mod(ig - 1, nvar) + 1
+  end function group_ivar
 
   !=============================================================================
   ! initialize_st — allocate obs, vgm arrays and set options
@@ -250,17 +269,14 @@ contains
     if (present(bounds))             self%bounds             = bounds
     if (present(sk_mean))            self%sk_mean            = sk_mean
 
-    !-- SGSIM requires ivar0=0 for the simulated-block slot
-    self%ivar0 = merge(0, 1, self%nsim > 0)
+    self%ngroups = merge(2 * self%nvar, self%nvar, self%nsim > 0)
 
     call random_seed_initialize(self%seed)
 
-    associate(iv0 => self%ivar0, nv => self%nvar)
-      if (allocated(self%obs)) deallocate(self%obs)
-      if (allocated(self%vgm)) deallocate(self%vgm)
-      allocate(self%obs(iv0:nv))
-      allocate(self%vgm(iv0:nv, iv0:nv))
-    end associate
+    if (allocated(self%obs)) deallocate(self%obs)
+    if (allocated(self%vgm)) deallocate(self%vgm)
+    allocate(self%obs(1:self%nvar))
+    allocate(self%vgm(1:self%nvar, 1:self%nvar))
   end subroutine initialize_st
 
 
@@ -279,8 +295,8 @@ contains
     self%st_at        = at
     if (present(alpha)) self%st_alpha = alpha
 
-    do j = self%ivar0, self%nvar
-      do i = self%ivar0, self%nvar
+    do j = 1, self%nvar
+      do i = 1, self%nvar
         self%vgm(i,j)%model     = model
         self%vgm(i,j)%transform = transform
         self%vgm(i,j)%at        = at
@@ -746,9 +762,6 @@ contains
       inear   => ctx%inear(:, ivar), &
       nnear   => ctx%nnear(ivar), &
       dist    => ctx%sqdist(:, ivar), &
-      inearb  => ctx%inear(:, 0), &
-      nnearb  => ctx%nnear(0), &
-      distb   => ctx%sqdist(:, 0), &
       maxdist => self%obs(ivar)%maxdist, &
       maxtlag => self%obs(ivar)%maxtlag, &
       rotmat  => self%obs(ivar)%rotmat)
@@ -766,49 +779,56 @@ contains
       ! SGSIM path: search over original obs + previously simulated blocks
       !----------------------------------------------------------------------
       if (self%nsim > 0 .and. ivar == 1) then
-        allocate(results(nmax))
-        if (nmax < nobs + iblock - 1) then
-          call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, &
-                                        results, nobs + iblock - 1)
-          if (kriging_failed()) return
-          allocate(is_obs, source = results%idx <= nobs)
-          nnear  = count(is_obs)
-          nnearb = nmax - nnear
-          inear (1:nnear)  = pack(results%idx,  is_obs)
-          inearb(1:nnearb) = pack(results%idx, .not. is_obs) - nobs
-          dist  (1:nnear)  = pack(results%dis,  is_obs)
-          distb (1:nnearb) = pack(results%dis, .not. is_obs)
-        else
-          nnear  = nobs
-          nnearb = iblock - 1
-          dist (1:nnear)  = rotated_dists(rotmat, 3, newloc(:,1), obsloc(:, 1:nnear))
-          distb(1:nnearb) = rotated_dists(rotmat, 3, newloc(:,1), &
-                                          self%block%coord(:, 1:nnearb))
-        end if
+        associate( &
+          inearb => ctx%inear(:, self%nvar + ivar), &
+          nnearb => ctx%nnear(self%nvar + ivar), &
+          distb  => ctx%sqdist(:, self%nvar + ivar))
 
-        !-- Spatial + temporal filter on obs neighbours
-        k = 0
-        do i = 1, nnear
-          if (dist(i) <= maxdist .and. &
-              abs(obstime(inear(i)) - block_t) <= maxtlag) then
-            k = k + 1
-            inear(k) = inear(i)
-            dist(k)  = dist(i)
+          allocate(results(nmax))
+          if (nmax < nobs + iblock - 1) then
+            call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, &
+                                          results, nobs + iblock - 1)
+            if (kriging_failed()) return
+            allocate(is_obs, source = results%idx <= nobs)
+            nnear  = count(is_obs)
+            nnearb = nmax - nnear
+            inear (1:nnear)  = pack(results%idx,  is_obs)
+            inearb(1:nnearb) = pack(results%idx, .not. is_obs) - nobs
+            dist  (1:nnear)  = pack(results%dis,  is_obs)
+            distb (1:nnearb) = pack(results%dis, .not. is_obs)
+          else
+            nnear  = nobs
+            nnearb = iblock - 1
+            dist (1:nnear)  = rotated_dists(rotmat, 3, newloc(:,1), obsloc(:, 1:nnear))
+            distb(1:nnearb) = rotated_dists(rotmat, 3, newloc(:,1), &
+                                            self%block%coord(:, 1:nnearb))
           end if
-        end do
-        nnear = k
 
-        !-- Temporal filter on simulated-block neighbours
-        k = 0
-        do i = 1, nnearb
-          if (distb(i) <= maxdist .and. &
-              abs(self%block%time(inearb(i)) - block_t) <= maxtlag) then
-            k = k + 1
-            inearb(k) = inearb(i)
-            distb(k)  = distb(i)
-          end if
-        end do
-        nnearb = k
+          !-- Spatial + temporal filter on obs neighbours
+          k = 0
+          do i = 1, nnear
+            if (dist(i) <= maxdist .and. &
+                abs(obstime(inear(i)) - block_t) <= maxtlag) then
+              k = k + 1
+              inear(k) = inear(i)
+              dist(k)  = dist(i)
+            end if
+          end do
+          nnear = k
+
+          !-- Temporal filter on simulated-block neighbours
+          k = 0
+          do i = 1, nnearb
+            if (distb(i) <= maxdist .and. &
+                abs(self%block%time(inearb(i)) - block_t) <= maxtlag) then
+              k = k + 1
+              inearb(k) = inearb(i)
+              distb(k)  = distb(i)
+            end if
+          end do
+          nnearb = k
+
+        end associate  ! inearb, nnearb, distb
 
       !----------------------------------------------------------------------
       ! Standard kriging / cokriging search
@@ -882,12 +902,12 @@ contains
       ! obs1 coord/time: ivar==0 → block (SGSIM prior), else obs(ivar)
       !------------------------------------------------------------------------
       if (jvar == -1) then
-        associate(vgm => self%vgm(1, ivar))
+        associate(vgm => self%vgm(1, group_ivar(ivar, self%nvar)))
           do i = 1, nnear
             tmp = 0.0
             k1  = self%block%iblockpnt(ctx%iblock) - 1
             do k = 1, self%block%nblockpnt(ctx%iblock)
-              if (ivar == 0) then
+              if (ivar > self%nvar) then
                 lag_s = (self%block%coord(:, inear(i)) - self%grid%coord(:, k1+k)) / rs
                 dt    =  self%block%time(inear(i))     - self%block%time(ctx%iblock)
               else
@@ -907,14 +927,14 @@ contains
         associate( &
           nnear2 => ctx%nnear(jvar), &
           inear2 => ctx%inear(1:ctx%nnear(jvar), jvar), &
-          vgm    => self%vgm(jvar, ivar))
+          vgm    => self%vgm(group_ivar(jvar, self%nvar), group_ivar(ivar, self%nvar)))
 
           do i = 1, nnear
             if (ivar == jvar) then
               istart = i + 1
-              !-- Diagonal: C(0,0) + obs error + local nugget
-              !   ivar==0 (SGSIM) has variance=0 (no measurement error on sims)
-              if (ivar == 0) then
+              !-- Diagonal: C(0) + obs error + local nugget.
+              !   Simulated blocks are treated as hard data (variance = 0).
+              if (ivar > self%nvar) then
                 ctx%matA(ic0+i, ir0+i) = vgm%cov0_val + ln
               else
                 ctx%matA(ic0+i, ir0+i) = &
@@ -924,20 +944,19 @@ contains
               istart = 1
             end if
             do j = istart, nnear2
-              !-- Compute lag_s and dt depending on whether ivar/jvar == 0
-              if (ivar == 0) then
+              if (ivar > self%nvar) then
                 lag_s = self%block%coord(:, inear(i))
                 dt    = self%block%time(inear(i))
               else
                 lag_s = self%obs(ivar)%coord(:, inear(i))
                 dt    = self%obs(ivar)%time(inear(i))
               end if
-              if (jvar == 0) then
+              if (jvar > self%nvar) then
                 lag_s = (lag_s - self%block%coord(:, inear2(j))) / rs
                 dt    =  dt    - self%block%time(inear2(j))
               else
-                lag_s = (lag_s - self%obs(jvar)%coord(:, inear2(j))) / rs
-                dt    =  dt    - self%obs(jvar)%time(inear2(j))
+                lag_s = (lag_s - self%obs(group_ivar(jvar, self%nvar))%coord(:, inear2(j))) / rs
+                dt    =  dt    - self%obs(group_ivar(jvar, self%nvar))%time(inear2(j))
               end if
               ctx%matA(ic0+j, ir0+i) = vgm%cov_lag_st(lag_s, dt)
             end do
@@ -970,7 +989,8 @@ contains
             ctx%weight = 0.0;  ctx%weight(1,1) = 1.0
             ctx%inear(1,ivar) = ctx%inear( &
               minloc(ctx%sqdist(1:ctx%nnear(ivar),ivar), dim=1), ivar)
-            ctx%nnear(ivar) = 1;  ctx%nnear(0) = 0
+            ctx%nnear(ivar) = 1
+            ctx%nnear(self%nvar+1:self%ngroups) = 0
             self%block%variance(ctx%iblock) = &
               self%obs(1)%variance(ctx%inear(1,ivar)) + self%block%localnugget(ctx%iblock)
             do jvar = 2, nvar; ctx%nnear(jvar) = 0; end do
@@ -980,7 +1000,7 @@ contains
       end do
 
       npp = sum(ctx%nnear)
-      if (ctx%nnear(0) + ctx%nnear(1) == 0) then
+      if (npp == 0) then
         if (self%neglect_error) then
           !-- No temporal neighbours: return NaN estimate and prior variance
           self%block%estimate(:, ctx%iblock) = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
@@ -1002,7 +1022,7 @@ contains
         matsize = npp + self%unbias + ndrift
 
         irow1 = 0
-        do ivar = self%ivar0, nvar
+        do ivar = 1, self%ngroups
           if (nnear(ivar) == 0) cycle
           irow2 = irow1 + nnear(ivar)
           icol1 = 0
@@ -1011,15 +1031,15 @@ contains
           call self%calc_covariance(ctx, irow1, icol1, ivar, -1)
 
           !-- Upper triangle LHS
-          do jvar = self%ivar0, nvar
+          do jvar = 1, self%ngroups
             if (nnear(jvar) == 0) cycle
             icol2 = icol1 + nnear(jvar)
             if (jvar >= ivar) call self%calc_covariance(ctx, irow1, icol1, ivar, jvar)
             icol1 = icol2
           end do
 
-          !-- Drift columns
-          if (ndrift > 0) then
+          !-- Drift columns (obs groups only; simulated blocks carry no drift)
+          if (ndrift > 0 .and. ivar <= self%nvar) then
             icol2 = icol1 + ndrift
             matA(icol1+1:icol2, irow1+1:irow2) = &
               self%obs(ivar)%drift(:, ctx%inear(1:nnear(ivar), ivar))
@@ -1116,11 +1136,12 @@ contains
     class(t_kriging_st),     intent(inout) :: self
     class(t_kriging_st_ctx), intent(inout) :: ctx
 
-    integer           :: ivar, k, nx, nnearb
+    integer           :: ivar, k, nx, nnearb, ig_sim1
     real, allocatable :: v(:), w(:)
-    real              :: avg(max(1, self%nsim)), total_weight(self%ivar0:self%nvar)
+    real              :: avg(max(1, self%nsim)), total_weight(self%ngroups)
 
-    nx = max(1, self%nsim)
+    nx      = max(1, self%nsim)
+    ig_sim1 = self%nvar + 1   ! sim group index for variable 1 (valid only when nsim > 0)
     associate( &
       var    => self%block%variance(   ctx%iblock), &
       val    => self%block%estimate(:, ctx%iblock), &
@@ -1128,16 +1149,18 @@ contains
       inear  => ctx%inear, &
       weight => ctx%weight)
 
-      val = 0.0;  avg = 0.0
+      val          = 0.0
+      avg          = 0.0
+      total_weight = 0.0
 
       !-- SGSIM: previously simulated block contributions
       if (self%nsim > 0) then
-        do k = 1, nnear(0)
-          val = val + self%block%estimate(:, inear(k,0)) * weight(k,0)
-          avg = avg + self%block%estimate(:, inear(k,0))
+        do k = 1, nnear(ig_sim1)
+          val = val + self%block%estimate(:, inear(k, ig_sim1)) * weight(k, ig_sim1)
+          avg = avg + self%block%estimate(:, inear(k, ig_sim1))
         end do
-        total_weight(0) = sum(weight(1:nnear(0), 0))
-        nnearb = nnear(0)
+        total_weight(ig_sim1) = sum(weight(1:nnear(ig_sim1), ig_sim1))
+        nnearb = nnear(ig_sim1)
       else
         nnearb = 0
       end if
@@ -1189,16 +1212,8 @@ contains
       end do
     end do
 
-    !-- SGSIM: propagate primary variogram to index-0 slots
-    if (self%nsim > 0) then
-      self%vgm(0,0) = self%vgm(1,1)
-      do ivar = 1, self%nvar
-        self%vgm(0, ivar) = self%vgm(1, ivar)
-        self%vgm(ivar, 0) = self%vgm(ivar, 1)
-      end do
-      !-- Recompute cov0 for the propagated slots
-      call self%vgm(0,0)%compute_cov0()
-    end if
+    !-- vgm is always 1:nvar; group_ivar() maps sim-group indices to the correct
+    !   variogram entry at evaluation time — no slot-0 copies needed.
 
     associate(npp => self%nppmax, matsize => self%matsize_max)
       npp = 0
@@ -1297,7 +1312,7 @@ contains
     integer :: ivar
 
     if (allocated(self%obs)) then
-      do ivar = self%ivar0, self%nvar
+      do ivar = 1, self%nvar
         if (associated(self%obs(ivar)%tree)) then
           call kdtree2_destroy(self%obs(ivar)%tree)
           self%obs(ivar)%tree => null()
