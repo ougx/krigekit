@@ -262,6 +262,37 @@ contains
   end function krige_set_obs_drift
 
   !=============================================================================
+  ! krige_update_obs_value
+  !
+  ! Replace observation values for variable ivar in-place.
+  ! Coordinates and the kd-tree are unchanged; use with use_old_weight to
+  ! re-estimate with new data without recomputing search neighbourhoods or
+  ! the LHS factorization.
+  !
+  ! Parameters
+  !   ivar  : variable index, 1-based
+  !   nobs  : number of observations (must equal the count set by set_obs)
+  !   value : new observed values [nobs]
+  !=============================================================================
+  integer(c_int) function krige_update_obs_value(handle, ivar, nobs, value) &
+      bind(C, name='krige_update_obs_value') result(ierr)
+
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, nobs
+    real(c_double),      intent(in) :: value(nobs)
+
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+    call obj%update_obs_value(int(ivar), real(value))
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_update_obs_value
+
+  !=============================================================================
   ! krige_set_vgm
   !
   ! Add one nested variogram structure for the (ivar, jvar) pair.

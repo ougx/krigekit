@@ -119,7 +119,7 @@ _DEF_SYMS := \
   krige_free_weight_store krige_get_weight_nnear krige_get_weight_inear krige_get_weight_data \
   krige_get_weight_var krige_set_weights \
   krige_st_create krige_st_destroy krige_st_initialize \
-  krige_st_set_st_model \
+  krige_st_set_st_model krige_update_obs_value \
   krige_st_set_obs krige_st_set_obs_drift krige_st_set_vgm \
   krige_st_set_vgm_temporal krige_st_set_vgm_joint_sills \
   krige_st_set_grid krige_st_set_grid_block krige_st_set_grid_cv \

@@ -437,6 +437,8 @@ group and its weights always sum to 1.
 
 ### Example: reconstructing estimates from weights
 
+**python**
+
 ```python
 w = k.get_weights()
 nblock, ngroups, nmax = w["weight"].shape
@@ -447,6 +449,32 @@ for ib in range(nblock):
     idx = w["inear"][ib, 0, :nn] - 1      # 1-based → 0-based Python index
     wts = w["weight"][ib, 0, :nn]
     est_manual[ib] = np.dot(wts, obs_value[idx])
+```
+
+**Fortran**
+
+```fortran
+use kriging
+
+type(t_kriging) :: k
+real            :: est(ngrid), var(ngrid)
+integer         :: ip
+
+call k%initialize(ndim=3, nvar=1, store_weight=.true.)
+call k%set_obs(ivar=1, coord=obs_coord, value=parameter_value(:, 1), nmax=20)
+call k%set_grid(coord=grid_coord)
+call k%set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1000.0)
+call k%set_search(ivar=1)
+call k%solve() ! k%wstore is now populated automatically
+est = k%block%value(1, 1, :)
+var = k%block%variance(1, 1, :)
+
+! for other parameters — weights reused, only the obs values change
+do ip = 2, nparameter
+    call k%update_obs_value(ivar=1, value=parameter_value(:, ip))
+    call k%solve()
+    est = k%block%value(1, 1, :)
+end do
 ```
 
 ### Optionally persist to a factor file

@@ -190,6 +190,7 @@ _CAPI_EXPORTS = [
     "krige_get_weight_data",
     "krige_get_weight_var",
     "krige_set_weights",
+    "krige_update_obs_value",
     # Space-time kriging
     "krige_st_create",
     "krige_st_destroy",

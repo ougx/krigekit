@@ -179,6 +179,10 @@ module kriging
     integer, allocatable :: inear (:,:, :)   ! [nmax,    ngroups, nblock]
     real,    allocatable :: weight(:,:, :,:) ! [nmax,    ngroups, nvar, nblock]
     real,    allocatable :: var   (:,:, :)   ! [nvar,    nvar,          nblock] — conditional covariance
+  contains
+    ! add subroutine check if weights have been stored
+
+    procedure :: stored     => wstore_check_stored
   end type t_weight_store
 
   !============================================================================
@@ -230,6 +234,7 @@ module kriging
   contains
     procedure :: initialize
     procedure :: set_obs
+    procedure :: update_obs_value
     procedure :: set_obs_drift
     procedure :: set_vgm
     procedure :: set_grid
@@ -823,6 +828,36 @@ contains
     end associate
   end subroutine set_obs
 
+  ! ===========================================================================
+  ! update_obs_value
+  !
+  ! Update observation values for variable ivar; useful for weight reuse.
+  ! assume that set_obs has already been called for ivar
+  ! if weights have already been computed, switch to use_old_weight mode.
+  ! ===========================================================================
+  subroutine update_obs_value(self, ivar, value)
+    class(t_kriging)              :: self
+    integer, intent(in)           :: ivar
+    real,    intent(in)           :: value(:)
+    character(len=*), parameter   :: subname = "t_kriging%update_obs_value"
+    if (self%obs(ivar)%n == 0) then
+      call kriging_error(subname, 'Call set_obs() before update_obs_value.')
+      return
+    end if
+    if (size(value) /= self%obs(ivar)%n) then
+      call kriging_error(subname, 'size(value) /= self%obs(ivar)%n')
+      return
+    end if
+    self%obs(ivar)%value(1,1,:) = value
+    ! turn on weight reuse if weights have already been computed
+    if (allocated(self%wstore)) then
+      if (self%wstore%stored() .and. .not. all(ieee_is_nan(self%block%value))) then
+        self%use_old_weight = .true.
+        self%store_weight   = .false.
+      end if
+    end if
+  end subroutine update_obs_value
+
 
   !============================================================================
   ! set_obs_drift
@@ -1283,7 +1318,7 @@ contains
               'use_old_weight with no weight_file requires set_weights() to be called first.')
             return
           end if
-          if (sum(self%wstore%nnear(:, 1)) == 0) then
+          if (.not. self%wstore%stored()) then
             call kriging_error(subname, &
               'in-memory weight store is empty. Call set_weights() first.')
             return
@@ -2863,6 +2898,19 @@ end subroutine update_info
     end do
   end subroutine isort
 
-
+  ! ===========================================================================
+  ! wstore_check_stored
+  !
+  ! Check that the weights have been stored.
+  !============================================================================
+  function wstore_check_stored(self) result(stored)
+    class(t_weight_store) :: self
+    logical :: stored
+    stored = .false.
+    if (self%nblock == 0) return
+    if (allocated(self%nnear) .and. allocated(self%inear) .and. allocated(self%weight)) then
+      stored = any(self%nnear /= 0)
+    end if
+  end function wstore_check_stored
 
 end module kriging

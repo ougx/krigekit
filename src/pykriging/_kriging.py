@@ -153,6 +153,11 @@ _krige_set_obs_drift = _status_cfun("krige_set_obs_drift", [
     _c_int, _c_int, _c_int,                      # ivar, ndrift_c, nobs
     _ptr_dbl,                                    # drift[ndrift_c, nobs]
 ])
+_krige_update_obs_value = _status_cfun("krige_update_obs_value", [
+    ctypes.c_int64,                              # handle
+    _c_int, _c_int,                              # ivar, nobs
+    _ptr_dbl,                                    # value[nobs]
+])
 _krige_set_vgm     = _status_cfun("krige_set_vgm",  [
     ctypes.c_int64,                              # handle
     _c_int, _c_int,                              # ivar, jvar
@@ -598,6 +603,38 @@ class Kriging:
         _krige_set_obs_drift(_h(self._handle),
             _c_int(ivar), _c_int(ndrift_c), _c_int(nobs),
             _dptr(drift_f),
+        )
+
+    # ------------------------------------------------------------------
+    def update_obs_value(self, ivar: int, value: np.ndarray):
+        """
+        Replace observation values for variable ``ivar`` in-place.
+
+        Coordinates and the kd-tree are unchanged.  The primary use case
+        is weight reuse: after solving once (with ``store_weight=True`` or
+        ``use_old_weight=True``), call this method with new observed values
+        at the same locations and call :meth:`solve` again to get updated
+        estimates without recomputing search neighbourhoods or the LHS
+        factorization.
+
+        Parameters
+        ----------
+        ivar : int
+            Variable index, 1-based.
+        value : ndarray, shape (nobs,)
+            New observed values.  Length must match the ``nobs`` passed to
+            the previous :meth:`set_obs` call for this variable.
+        """
+        nobs    = self._nobs[ivar - 1]
+        value_f = _farray(np.asarray(value, dtype=np.float64).ravel())
+        if value_f.size != nobs:
+            raise ValueError(
+                f"value length ({value_f.size}) must match nobs ({nobs}) "
+                f"set by the previous set_obs call for ivar={ivar}"
+            )
+        _krige_update_obs_value(_h(self._handle),
+            _c_int(ivar), _c_int(nobs),
+            _dptr(value_f),
         )
 
     # ------------------------------------------------------------------
