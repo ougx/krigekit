@@ -75,12 +75,10 @@ k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
 
 ## Result clipping
 
-Clip estimates to a physically meaningful range with `lower` / `upper` bounds
-on `set_obs`:
+Clip estimates to a physically meaningful range with `bounds`:
 
 ```python
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20,
-          lower=0.0, upper=100.0)
+k = Kriging(bounds=[0.0, 100.0])
 ```
 
 Values outside the range are clamped after kriging, which avoids negative

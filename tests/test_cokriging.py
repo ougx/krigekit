@@ -276,6 +276,63 @@ class TestCoKrigingTextbook:
             f"OK mean variance ({var_ok.mean():.0f}) — I&S Table 17.1"
         )
 
+    def test_secondary_maxdist_zero_reduces_to_ok(self, walker_all):
+        """
+        When maxdist on the secondary variable is so small that no secondary
+        observations fall within any search neighbourhood, co-kriging must
+        produce the same estimates and variances as ordinary kriging on the
+        primary variable alone.
+
+        The Walker Lake domain spans 260 x 300 units; maxdist=0.5 guarantees
+        zero U neighbours at every grid node while leaving V unaffected.
+
+        Root cause of the former bug: estimate_block computed
+        target_mean(ivar) = sum / nnear(ivar), which was a divide-by-zero
+        when nnear(ivar)==0 for the secondary.  The resulting NaN propagated
+        through the Isaaks correction into every estimate.  Fixed by guarding
+        the division: if (nnear(ivar) > 0) target_mean(ivar) /= nnear(ivar).
+        """
+        coord_v, val_v, coord_u, val_u = walker_all
+
+        # --- Reference: ordinary kriging on V alone ---
+        k_ok = Kriging(ndim=2, nvar=1)
+        k_ok.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
+        for spec in _VGM_VV:
+            k_ok.set_vgm(ivar=1, jvar=1, **spec)
+        k_ok.set_grid(coord=_GRID)
+        k_ok.set_search(ivar=1)
+        k_ok.solve()
+        est_ok, var_ok = k_ok.get_results()
+
+        # --- Co-kriging: secondary maxdist so small no U obs are ever found ---
+        k_cok = Kriging(ndim=2, nvar=2)
+        k_cok.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
+        k_cok.set_obs(ivar=2, coord=coord_u, value=val_u, nmax=20, maxdist=0.5)
+        for spec in _VGM_VV:
+            k_cok.set_vgm(ivar=1, jvar=1, **spec)
+        for spec in _VGM_UU:
+            k_cok.set_vgm(ivar=2, jvar=2, **spec)
+        for spec in _VGM_VU:
+            k_cok.set_vgm(ivar=1, jvar=2, **spec)
+        k_cok.set_grid(coord=_GRID)
+        k_cok.set_search(ivar=1)
+        k_cok.set_search(ivar=2)
+        k_cok.solve()
+        est_cok, var_cok = k_cok.get_results()
+
+        np.testing.assert_allclose(
+            est_cok[:, 0], est_ok,
+            rtol=1e-5,
+            err_msg="Co-kriging estimate (V) with empty secondary neighbourhood "
+                    "must match ordinary kriging on V alone",
+        )
+        np.testing.assert_allclose(
+            var_cok[:, 0, 0], var_ok,
+            rtol=1e-5,
+            err_msg="Co-kriging variance (V) with empty secondary neighbourhood "
+                    "must match ordinary kriging variance on V alone",
+        )
+
     def test_exact_match_reduces_variance(self, walker_all):
         """
         At a grid node coinciding with an observation the kriging variance

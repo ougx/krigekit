@@ -520,6 +520,7 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
+    obj%cross_validation = .true.
     call obj%set_grid()
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_grid_cv

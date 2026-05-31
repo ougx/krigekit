@@ -78,10 +78,7 @@ k.set_search(ivar=1)
 k.solve()
 
 # second run — different variogram
-k.set_obs(...)
 k.set_vgm(ivar=1, jvar=1, vtype="exp", sill=1.0, a_major=800.0, append=False)
-k.set_grid(...)
-k.set_search(ivar=1)
 k.solve()
 ```
 

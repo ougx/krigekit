@@ -1087,9 +1087,6 @@ contains
       need_search        => self%obs(ivar)%need_search, &
       anisotropic_search => self%obs(ivar)%anisotropic_search)
 
-      !-- Precompute 3×3 rotation+scale matrix from variogram angles
-      obs%rotmat = calc_rotmat(azimuth, dip, plunge, anis1, anis2)
-
       !-- Activate anisotropic search only when there is meaningful anisotropy
       anisotropic_search = (abs(anis1 - 1.0) > EPSLON .or. abs(anis2 - 1.0) > EPSLON) &
                            .and. self%anisotropic_search
@@ -1110,6 +1107,8 @@ contains
       !-- Build k-d tree only when a subset search is needed
       if (need_search) then
         if (anisotropic_search) then
+          !-- compute 3×3 rotation+scale matrix from variogram angles
+          obs%rotmat = calc_rotmat(azimuth, dip, plunge, anis1, anis2)
           !-- Project coordinates into anisotropically scaled space before indexing
           allocate(rcoord, mold = obs%coord)
           call sub_rotate(obs%rotmat, ndim, size(obs%coord, 2), obs%coord, rcoord)
@@ -2211,7 +2210,11 @@ contains
           do k = 1, nnear(ivar)
             target_mean(ivar) = target_mean(ivar) + self%obs(ivar)%value(1,1,inear(k, ivar))
           end do
-          target_mean(ivar) = target_mean(ivar) / nnear(ivar)
+          !-- Guard against division by zero when a variable has no neighbours
+          !   (e.g. secondary maxdist is too small).  total_weight(ivar) will
+          !   also be zero in that case, so the correction term below is 0
+          !   regardless of the value chosen here.
+          if (nnear(ivar) > 0) target_mean(ivar) = target_mean(ivar) / nnear(ivar)
         end do
       else
         ck_correction = .false.
@@ -2223,7 +2226,7 @@ contains
         do ivar = 1, self%nvar  ! source variable [observations only]
           total_weight(ivar) = total_weight(ivar) + sum(weight(1:nnear(ivar), ivar, jvar))
           avg = avg + dot_product(self%obs(ivar)%value(1,1,inear(1:nnear(ivar), ivar)), weight(1:nnear(ivar), ivar, jvar))
-          if (ck_correction .and. ivar/=jvar) avg = avg + (target_mean(jvar) - target_mean(ivar)) * total_weight(ivar)
+          if (ck_correction .and. ivar/=jvar .and. nnear(ivar) > 0) avg = avg + (target_mean(jvar) - target_mean(ivar)) * total_weight(ivar)
         end do
 
         !-- Simple kriging mean correction.
