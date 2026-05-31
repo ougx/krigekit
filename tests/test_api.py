@@ -513,7 +513,7 @@ class TestNthread:
     def test_nthread_restores_omp_setting(self, pc2d_obs):
         """omp_get_max_threads() must return the same value before and after
         solve(nthread=1) — the Fortran layer must save and restore."""
-        from pykriging._kriging import omp_info
+        from pykriging.kriging import omp_info
         before = omp_info()["max_threads"]
 
         k = self._make_kriging(pc2d_obs)

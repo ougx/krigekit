@@ -60,6 +60,10 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# ── Docs build artefacts ─────────────────────────────────────────────────────
+docs/_build/
+docs/autoapi/
+
 # ── TEMP FILES ─────────────────────────────────────────────────────────────────
 *data_*.csv
 *matA_*.csv

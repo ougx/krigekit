@@ -302,9 +302,9 @@ class SpaceTimeKriging:
         model     : 'sum_metric' or 'product_sum'
         transform : 'linear' | 'bounded' | 'power'
                     Controls f(dt) used in the joint ST distance:
-                      linear  → dw = |dt| / at
-                      bounded → dw = 1 - exp(-|dt| / at)
-                      power   → dw = (|dt| / at)^alpha
+                      linear  → dw = \|dt\| / at
+                      bounded → dw = 1 - exp(-\|dt\| / at)
+                      power   → dw = (\|dt\| / at)^alpha
         at        : joint temporal scale (same time units as observations)
         alpha     : power exponent (transform='power' only)
         k_ps      : product-sum coefficient k (model='product_sum' only)

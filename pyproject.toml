@@ -34,6 +34,14 @@ dev = [
     "pytest>=7.0",
     "pandas>=1.5",
 ]
+docs = [
+    "sphinx>=7.0",
+    "pydata-sphinx-theme>=0.15",
+    "myst-parser>=3.0",
+    "sphinx-autoapi>=3.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.5",
+]
 
 [project.urls]
 Homepage = "https://github.com/your-username/pykriging"

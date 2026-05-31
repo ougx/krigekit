@@ -18,14 +18,14 @@ Convenience functions
     sequential_gaussian_simulation — one-shot SGSIM
 """
 
-from pykriging._kriging import (   # noqa: F401
+from pykriging.kriging import (   # noqa: F401
     Kriging,
     ordinary_kriging,
     cokriging,
     sequential_gaussian_simulation,
 )
 
-from pykriging._kriging_st import (   # noqa: F401
+from pykriging.kriging_st import (   # noqa: F401
     SpaceTimeKriging,
     spacetime_kriging,
     spacetime_cokriging,

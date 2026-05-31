@@ -1,0 +1,94 @@
+"""Sphinx configuration for pyKriging documentation."""
+
+import os
+import sys
+
+# Make the package importable for type resolution (autoapi doesn't need it,
+# but sphinx.ext.intersphinx and napoleon benefit from it).
+sys.path.insert(0, os.path.abspath("../src"))
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+project   = "pyKriging"
+copyright = "2025, Michael Ou"
+author    = "Michael Ou"
+release   = "0.1.0"
+
+# ---------------------------------------------------------------------------
+# Extensions
+# ---------------------------------------------------------------------------
+extensions = [
+    "myst_parser",              # Markdown source files
+    "autoapi.extension",        # API reference (no import needed)
+    "sphinx.ext.napoleon",      # NumPy/Google docstring styles
+    "sphinx.ext.intersphinx",   # Cross-links to numpy, python docs
+    "sphinx_copybutton",        # Copy button on code blocks
+    "sphinx_design",            # Grid cards, tabs, badges on index page
+]
+
+# ---------------------------------------------------------------------------
+# autoapi — generate API pages from Python source without importing
+# ---------------------------------------------------------------------------
+autoapi_dirs    = ["../src"]
+autoapi_type    = "python"
+autoapi_root    = "autoapi"   # default; keeps generated pages separate from docs/api/
+autoapi_options = [
+    "members",
+    "undoc-members",
+    "show-inheritance",
+    "show-module-summary",
+    "imported-members",
+]
+autoapi_keep_files       = True
+autoapi_add_toctree_entry = False   # we add it manually in index.md
+
+# ---------------------------------------------------------------------------
+# MyST — enable useful Markdown extensions
+# ---------------------------------------------------------------------------
+myst_enable_extensions = [
+    "colon_fence",   # ::: directive syntax
+    "deflist",       # definition lists
+    "fieldlist",     # field lists
+]
+
+# ---------------------------------------------------------------------------
+# Intersphinx
+# ---------------------------------------------------------------------------
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "numpy":  ("https://numpy.org/doc/stable", None),
+}
+
+# ---------------------------------------------------------------------------
+# Source files
+# ---------------------------------------------------------------------------
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".md":  "markdown",
+}
+
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# ---------------------------------------------------------------------------
+# HTML output — pydata-sphinx-theme
+# ---------------------------------------------------------------------------
+html_theme = "pydata_sphinx_theme"
+
+html_theme_options = {
+    "github_url":         "https://github.com/your-username/pykriging",
+    "navbar_end":         ["navbar-icon-links"],
+    "secondary_sidebar_items": ["page-toc"],
+    "show_nav_level":     2,
+}
+
+html_static_path = ["_static"]
+html_css_files   = []   # add custom CSS here if needed
+
+# ---------------------------------------------------------------------------
+# Napoleon (docstring style)
+# ---------------------------------------------------------------------------
+napoleon_numpy_docstring   = True
+napoleon_google_docstring  = False
+napoleon_use_rtype         = False
+napoleon_use_param         = True
