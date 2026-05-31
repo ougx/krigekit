@@ -510,7 +510,7 @@ est2, _ = k2.get_results()
 |---|---|
 | `store_weight` and `use_old_weight` are **mutually exclusive** | Passing both raises an error |
 | `weight_file` is optional for `store_weight` | Omit it for memory-only storage |
-| `weight_file` is **required** for `use_old_weight` | An empty path raises an error |
+| `weight_file` is optional for `use_old_weight` | Omit it for memory-only storage |
 | Grid, observations, variogram, and `nmax` must be **identical** between runs | The file stores neighbour indices; mismatched setups produce wrong results silently |
 | `store_weight` is now **OMP-compatible** | OpenMP is fully active during `solve()` |
 
