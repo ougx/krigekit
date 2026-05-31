@@ -237,6 +237,7 @@ module kriging
     procedure :: update_obs_value
     procedure :: set_obs_drift
     procedure :: set_vgm
+    procedure :: reset_vgm
     procedure :: set_grid
     procedure :: set_grid_drift
     procedure :: set_sim
@@ -753,6 +754,25 @@ contains
       end if
     end do
   end subroutine set_vgm
+
+
+  !============================================================================
+  ! reset_vgm
+  !
+  ! Clear all nested structures for the (ivar, jvar) pair across every block.
+  ! After this call, set_vgm may be used to build a fresh model for the pair.
+  !============================================================================
+  subroutine reset_vgm(self, ivar, jvar)
+    class(t_kriging), intent(inout) :: self
+    integer,          intent(in)    :: ivar, jvar
+    integer :: ib_, mb
+    if (.not. associated(self%vgm)) return
+    mb = merge(self%block%n, 1, self%varying_vgm)
+    do ib_ = 1, mb
+      call self%vgm(jvar, ivar, ib_)%reset()
+      if (ivar /= jvar) call self%vgm(ivar, jvar, ib_)%reset()
+    end do
+  end subroutine reset_vgm
 
 
   !============================================================================

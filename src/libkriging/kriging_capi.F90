@@ -293,6 +293,29 @@ contains
   end function krige_update_obs_value
 
   !=============================================================================
+  ! krige_reset_vgm
+  !
+  ! Clear all nested variogram structures for the (ivar, jvar) pair.
+  ! After this call, krige_set_vgm builds a fresh model for the pair.
+  !=============================================================================
+  integer(c_int) function krige_reset_vgm(handle, ivar, jvar) &
+      bind(C, name='krige_reset_vgm') result(ierr)
+
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, jvar
+
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+    call obj%reset_vgm(int(ivar), int(jvar))
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_reset_vgm
+
+  !=============================================================================
   ! krige_set_vgm
   !
   ! Add one nested variogram structure for the (ivar, jvar) pair.

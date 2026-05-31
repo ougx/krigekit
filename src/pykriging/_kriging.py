@@ -158,6 +158,10 @@ _krige_update_obs_value = _status_cfun("krige_update_obs_value", [
     _c_int, _c_int,                              # ivar, nobs
     _ptr_dbl,                                    # value[nobs]
 ])
+_krige_reset_vgm   = _status_cfun("krige_reset_vgm", [
+    ctypes.c_int64,                              # handle
+    _c_int, _c_int,                              # ivar, jvar
+])
 _krige_set_vgm     = _status_cfun("krige_set_vgm",  [
     ctypes.c_int64,                              # handle
     _c_int, _c_int,                              # ivar, jvar
@@ -645,10 +649,14 @@ class Kriging:
         a_minor1: Optional[float] = None,
         a_minor2: Optional[float] = None,
         azimuth: float = 0.0, dip: float = 0.0, plunge: float = 0.0,
+        append: bool = True,
     ):
         """
         Add one nested variogram structure for the (ivar, jvar) pair.
-        Call multiple times to build a nested (multi-structure) model.
+        Call multiple times with ``append=True`` to build a nested
+        (multi-structure) model.  Pass ``append=False`` to clear any
+        previously set structures for the pair before adding this one
+        (useful when reusing a Kriging object with a different variogram).
 
         Parameters
         ----------
@@ -683,6 +691,11 @@ class Kriging:
             a_minor1 = a_major
         if a_minor2 is None:
             a_minor2 = a_minor1
+        if not append and self._nvgm_struct[ivar-1, jvar-1] > 0:
+            _krige_reset_vgm(_h(self._handle), _c_int(ivar), _c_int(jvar))
+            self._nvgm_struct[ivar-1, jvar-1] = 0
+            if ivar != jvar:
+                self._nvgm_struct[jvar-1, ivar-1] = 0
         _krige_set_vgm(_h(self._handle),
             _c_int(ivar), _c_int(jvar),
             vtype.encode("utf-8"),

@@ -164,6 +164,7 @@ _CAPI_EXPORTS = [
     "krige_initialize",
     "krige_set_obs",
     "krige_set_obs_drift",
+    "krige_reset_vgm",
     "krige_set_vgm",
     "krige_set_vgm_block",
     "krige_set_grid",

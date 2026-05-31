@@ -361,9 +361,9 @@ class TestObjectReuse:
         coord, value = pc2d_obs
         grid = coord[5:10]
 
-        k = Kriging(ndim=2, nvar=1, verbose=0)
 
         def _do_run(obs_coord, obs_val):
+            k = Kriging(ndim=2, nvar=1, verbose=0)
             k.set_obs(ivar=1, coord=obs_coord, value=obs_val, nmax=_NMAX)
             k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
             k.set_grid(coord=grid)
@@ -375,9 +375,9 @@ class TestObjectReuse:
         _do_run(coord[30:], value[30:])          # intermediate run with different data
         est3, var3 = _do_run(coord, value)
 
-        np.testing.assert_allclose(est1, est3, rtol=1e-6, atol=1e-10,
+        np.testing.assert_allclose(est1, est3,
             err_msg="Third run (same data as first) must reproduce first run estimates")
-        np.testing.assert_allclose(var1, var3, rtol=1e-6, atol=1e-10,
+        np.testing.assert_allclose(var1, var3,
             err_msg="Third run (same data as first) must reproduce first run variances")
 
     def test_reuse_with_smaller_then_larger_obs(self, pc2d_obs):
@@ -398,7 +398,7 @@ class TestObjectReuse:
         est_small, _ = k.get_results()
 
         k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
-        k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D, append=False)
         k.set_grid(coord=grid)
         k.set_search(ivar=1)
         k.solve()
@@ -416,7 +416,7 @@ class TestObjectReuse:
         k = Kriging(ndim=2, nvar=1, verbose=0)
         for sl in [slice(None), slice(30), slice(15, 45)]:
             k.set_obs(ivar=1, coord=coord[sl], value=value[sl], nmax=_NMAX)
-            k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+            k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D, append=False)
             k.set_grid(coord=grid)
             k.set_search(ivar=1)
             k.solve()
@@ -426,11 +426,10 @@ class TestObjectReuse:
 
     def test_set_vgm_accumulates_structures(self, pc2d_obs):
         """
-        Calling set_vgm twice on the same object with the same spec adds two
-        copies of that structure (doubled sill).  This is intentional: it is
-        how multi-struct models are built.  The test documents the behaviour
-        so that callers know they must not call set_vgm redundantly when reusing
-        an object — create a fresh Kriging when the variogram changes.
+        Calling set_vgm twice with append=True (the default) on the same object
+        adds two copies of the structure, doubling the sill.  This is how
+        multi-structure nested models are built.  Pass append=False when reusing
+        an object to replace the previous model instead of accumulating.
         """
         coord, value = pc2d_obs
         grid = _INTERIOR_GRID

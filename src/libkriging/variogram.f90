@@ -187,6 +187,7 @@ module variogram
     real     :: cov0    = 0.0
     type(vgm_component) :: structs(maxvgm)
   contains
+    procedure :: reset         => struct_reset
     procedure :: add_args      => struct_add_args
     procedure :: add_comp      => struct_add_comp
     generic   :: add           => add_args, add_comp
@@ -400,6 +401,12 @@ contains
   !=============================================================================
   ! vgm_struct
   !=============================================================================
+
+  subroutine struct_reset(this)
+    class(vgm_struct), intent(inout) :: this
+    this%nstruct = 0
+    this%cov0    = 0.0
+  end subroutine struct_reset
 
   subroutine struct_add_comp(this, comp)
     class(vgm_struct),   intent(inout) :: this
