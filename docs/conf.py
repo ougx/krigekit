@@ -76,7 +76,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "pydata_sphinx_theme"
 
 html_theme_options = {
-    "github_url":         "https://github.com/your-username/pykriging",
+    "github_url":         "https://github.com/ougx/pykriging",
     "navbar_end":         ["navbar-icon-links"],
     "secondary_sidebar_items": ["page-toc"],
     "show_nav_level":     2,
