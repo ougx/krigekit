@@ -36,9 +36,9 @@ contains
 !!
 !! Angles are in degrees.
 !!
-!! @param ang1   Azimuth (clockwise from North, Z-rotation)
-!! @param ang2   Dip (positive up, X-rotation)
-!! @param ang3   Rotation about principal axis (Y-rotation)
+!! @param ang1   Azimuth: (clockwise from North, Z-rotation)
+!! @param ang2   Dip: (positive up, X-rotation)
+!! @param ang3   Plunge: rotation about principal axis (Y-rotation)
 !! @param anis1  First anisotropy ratio (X scaling)
 !! @param anis2  Second anisotropy ratio (Z scaling)
 !!

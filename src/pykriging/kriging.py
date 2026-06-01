@@ -136,8 +136,8 @@ _krige_initialize  = _status_cfun("krige_initialize",  [
     ctypes.c_int64,                              # handle
     _c_int, _c_int, _c_int, _c_int, _c_int,     # ndim, nvar, ndrift, unbias, nsim
     # flags: anisotropic_search, weight_correction, use_old_weight, store_weight,
-    #        cross_validation, write_mat, neglect_error, varying_vgm, verbose  (9 booleans as int)
-    _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int,
+    #        cross_validation, write_mat, neglect_error, varying_vgm, std_ck, verbose  (10 booleans as int)
+    _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int,
     _c_char_p,                                   # weight_file
     _ptr_dbl,                                    # bounds[2]
     _c_int,                                      # seed
@@ -195,6 +195,7 @@ _krige_set_grid_block = _status_cfun("krige_set_grid_block", [
 _krige_set_grid_cv = _status_cfun("krige_set_grid_cv", [ctypes.c_int64])
 _krige_set_grid_drift = _status_cfun("krige_set_grid_drift", [
     ctypes.c_int64,                              # handle
+    _c_int,                                      # ivar (1-based target variable, or < 0 = broadcast)
     _c_int, _c_int,                              # ndrift_c, nblocks
     _ptr_dbl,                                    # drift[ndrift_c, nblocks]
 ])
@@ -396,6 +397,7 @@ class Kriging:
         write_mat: bool = False,
         neglect_error: bool = True,
         varying_vgm: bool = False,
+        std_ck: bool = False,
         verbose: bool = False,
         weight_file: str = "",
         bounds: Optional[tuple] = None,
@@ -433,6 +435,16 @@ class Kriging:
             Use a different variogram per estimation block (spatially varying
             anisotropy).  When True, call :meth:`set_vgm_block` for each block
             after :meth:`set_grid`.  Defaults to False (single global model).
+        std_ck : bool
+            Co-kriging unbiasedness formulation (only relevant when ``nvar > 1``
+            and ``unbias=1``).
+
+            * ``False`` (default) — Isaaks & Srivastava: single combined
+              constraint (Σw₁ + Σw₂ = 1) plus a local-mean correction applied
+              post-solve.  Matches the GSLIB/legacy behaviour.
+            * ``True`` — standard cokriging: separate per-variable constraints
+              (Σwᵢ = 1 for own variable, Σwⱼ = 0 for others), equivalent to
+              the gstat/ISATIS formulation.  Use this to match gstat output.
         verbose : bool
             Print progress messages.
         weight_file : str
@@ -473,6 +485,7 @@ class Kriging:
             _c_int(int(write_mat)),
             _c_int(int(neglect_error)),
             _c_int(int(varying_vgm)),
+            _c_int(int(std_ck)),
             _c_int(int(verbose)),
             weight_file.encode("utf-8") if weight_file else b"",
             _dptr(c_bounds),
@@ -494,6 +507,7 @@ class Kriging:
         self.cross_validation = cross_validation
         self.write_mat = write_mat
         self.varying_vgm = varying_vgm
+        self.std_ck = std_ck
         self.weight_file = weight_file
         self.bounds = c_bounds
         self.seed = seed
@@ -696,9 +710,13 @@ class Kriging:
             self._nvgm_struct[ivar-1, jvar-1] = 0
             if ivar != jvar:
                 self._nvgm_struct[jvar-1, ivar-1] = 0
+        if (jvar<ivar):
+            it = ivar
+            jvar=ivar
+            ivar=it
         _krige_set_vgm(_h(self._handle),
             _c_int(ivar), _c_int(jvar),
-            vtype.encode("utf-8"),
+            vtype.lower()[:3].encode("utf-8"),
             nugget, sill, a_major, a_minor1, a_minor2,
             azimuth, dip, plunge,
         )
@@ -908,7 +926,7 @@ class Kriging:
         self._nblock = self._nobs[0]
 
     # ------------------------------------------------------------------
-    def set_grid_drift(self, drift: np.ndarray):
+    def set_grid_drift(self, drift: np.ndarray, ivar: Optional[int] = None):
         """
         Set external drift values at grid/block locations.
 
@@ -922,11 +940,25 @@ class Kriging:
             Note: use **nblocks** (number of blocks), not ngrid (number of
             sub-nodes), even for block kriging.
             Transposed to (ndrift, nblocks) internally before calling Fortran.
+        ivar : int, optional
+            Target-variable index (1-based) whose RHS receives this drift.
+            ``None`` (default) broadcasts the same drift to **all** target
+            variables — the usual case when external drift is independent of
+            which variable is being estimated.
+
+        Note
+        ----
+        ``ivar`` here refers to the **target** variable (which variable's
+        estimate uses this drift in its RHS), not the source variable.
+        This is the opposite end from :meth:`set_obs_drift`, whose ``ivar``
+        identifies the **source** variable (whose observations form the
+        F-matrix column).
         """
         drift_f  = _drift_to_fortran(drift)   # (nblocks, ndrift) -> (ndrift, nblocks)
         ndrift_c = drift_f.shape[0]
         nblocks  = drift_f.shape[1]
         _krige_set_grid_drift(_h(self._handle),
+            _c_int(ivar if ivar is not None else -1),
             _c_int(ndrift_c), _c_int(nblocks),
             _dptr(drift_f),
         )

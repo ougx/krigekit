@@ -16,3 +16,41 @@ Initial release.
 - Kriging weight storage and reuse (`store_weight` / `use_old_weight`)
 - OpenMP parallelism with per-`solve()` thread count control
 - `set_vgm(append=False)` to replace variogram model on a reused object
+
+### Co-kriging improvements
+
+- **`std_ck` flag** — selects the co-kriging unbiasedness formulation when
+  `nvar > 1` and `unbias = 1`:
+  - `std_ck=True` (default): standard co-kriging with separate per-variable
+    constraints (Σwᵢ = 1 for the target variable, Σwⱼ = 0 for secondary
+    variables).  Results match gstat/ISATIS.
+  - `std_ck=False`: Isaaks & Srivastava formulation — single combined
+    constraint (Σw = 1 across all variables) plus a local-mean correction
+    applied post-solve.  Matches legacy GSLIB behaviour.
+
+- **Unified drift array** — `obs%drift` and `block%drift` are now 3-D:
+  - `obs%drift  [ndrift+naug, 1,    nobs]`  — F-matrix column (same for all targets)
+  - `block%drift [ndrift+naug, nvar, nblock]` — f₀ RHS (varies per target variable)
+  
+  External drift rows (1:`ndrift`) and unbiasedness indicator/RHS rows
+  (`ndrift+1:ndrift+naug`) are stored in the same array.  This eliminates all
+  branching from the matrix-assembly loop and resolves the long-standing
+  "TODO: need separate drift for each variable" in `assemble_rhs`.
+
+- **Auto-allocation of drift arrays** — `set_obs()` and `set_grid()` now
+  allocate and fill the unbiasedness indicator / RHS rows automatically.
+  `set_obs_drift()` and `set_grid_drift()` write into the pre-allocated arrays
+  instead of allocating.
+
+- **`set_grid_drift(drift, ivar=None)`** — `ivar` selects which target
+  variable's RHS receives this drift (`None` or `ivar < 0` broadcasts to all).
+  Replaces the old broadcast-only signature.
+
+### Internal / correctness fixes
+
+- Fixed a bug in `initialize_kriging_ctx` where `pmax` (sizing the Cholesky
+  factor-cache arrays `factor_kinv_drift` and `factor_schur`) was not scaled
+  by `nvar` for standard co-kriging, causing out-of-bounds writes at runtime.
+- `naug` is now defined as the number of unbiasedness constraint rows only
+  (not including `ndrift`).  Total augmented rows = `ndrift + naug`.  All
+  internal matsize/pmax computations updated accordingly.

@@ -134,7 +134,7 @@ contains
   integer(c_int) function krige_initialize(handle, &
       ndim, nvar, ndrift, unbias, nsim, &
       anisotropic_search, weight_correction, use_old_weight, &
-      store_weight, cross_validation, write_mat, neglect_error, varying_vgm, verbose, &
+      store_weight, cross_validation, write_mat, neglect_error, varying_vgm, std_ck, verbose, &
       weight_file, bounds, seed) &
       bind(C, name='krige_initialize') result(ierr)
 
@@ -143,7 +143,7 @@ contains
     integer(c_int),      intent(in), value :: anisotropic_search, weight_correction
     integer(c_int),      intent(in), value :: use_old_weight, store_weight
     integer(c_int),      intent(in), value :: cross_validation, write_mat, neglect_error
-    integer(c_int),      intent(in), value :: varying_vgm, verbose
+    integer(c_int),      intent(in), value :: varying_vgm, std_ck, verbose
     character(kind=c_char), intent(in) :: weight_file(*)
     real(c_double),      intent(in) :: bounds(2)
 
@@ -176,6 +176,7 @@ contains
       write_mat          = l(write_mat), &
       neglect_error      = l(neglect_error), &
       varying_vgm        = l(varying_vgm), &
+      std_ck             = l(std_ck), &
       verbose            = l(verbose), &
       weight_file        = c2fstr(weight_file), &
       bounds             = fbounds, &
@@ -533,15 +534,18 @@ contains
   ! only when ndrift > 0 was passed to krige_initialize.
   !
   ! Parameters
+  !   ivar     : target-variable index (1-based) whose RHS receives this drift.
+  !              Pass ivar < 0 to broadcast the same drift to ALL target variables
+  !              (the common case when external drift is independent of the target).
   !   ndrift_c : number of drift functions (= ndrift)
   !   nblocks  : number of blocks (= block%n, not grid%n)
   !   drift    : drift values [ndrift_c, nblocks], Fortran order
   !=============================================================================
-  integer(c_int) function krige_set_grid_drift(handle, ndrift_c, nblocks, drift) &
+  integer(c_int) function krige_set_grid_drift(handle, ivar, ndrift_c, nblocks, drift) &
       bind(C, name='krige_set_grid_drift') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
-    integer(c_int),      intent(in), value :: ndrift_c, nblocks
+    integer(c_int),      intent(in), value :: ivar, ndrift_c, nblocks
     real(c_double),      intent(in) :: drift(ndrift_c, nblocks)
 
     type(t_kriging), pointer :: obj
@@ -551,7 +555,7 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    call obj%set_grid_drift(real(drift))
+    call obj%set_grid_drift(real(drift), int(ivar))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_grid_drift
 

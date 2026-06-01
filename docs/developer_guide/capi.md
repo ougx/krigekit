@@ -53,7 +53,7 @@ int krige_initialize(int64_t handle,
     int anisotropic_search, int weight_correction,
     int use_old_weight, int store_weight,
     int cross_validation, int write_mat,
-    int neglect_error, int varying_vgm, int verbose,
+    int neglect_error, int varying_vgm, int std_ck, int verbose,
     const char *weight_file,
     const double bounds[2],
     int seed)
@@ -76,6 +76,7 @@ Must be called once after `krige_create` and before any other function.
 | `write_mat` | `int` | 0/1 write kriging matrix to CSV (debug) |
 | `neglect_error` | `int` | 0/1 write NaN instead of stopping on singular matrix |
 | `varying_vgm` | `int` | 0/1 use a different variogram per block (SVA mode) |
+| `std_ck` | `int` | 0/1 co-kriging unbiasedness formulation (only used when `nvar > 1` and `unbias = 1`). **1** = standard co-kriging: separate per-variable constraints (Σw₁=1, Σw₂=0); matches gstat/ISATIS. **0** = Isaaks & Srivastava: single combined constraint (Σw₁+Σw₂=1) plus local-mean correction. Default: 1. |
 | `verbose` | `int` | 0/1 print progress messages |
 | `weight_file` | `char*` | Path for weight file; empty string when unused |
 | `bounds` | `double[2]` | `[lower, upper]` clipping bounds on the estimate |
@@ -223,12 +224,26 @@ from the observation coordinates automatically.  Call instead of
 
 ```c
 int krige_set_grid_drift(int64_t handle,
+    int ivar,
     int ndrift_c, int nblocks,
     const double *drift)    // [ndrift_c × nblocks], Fortran column-major
 ```
 
 Sets external drift values at block locations.  Must be called after any
 `krige_set_grid*` variant, and only when `ndrift > 0`.
+
+| Parameter | Description |
+|---|---|
+| `ivar` | Target-variable index (1-based) whose RHS receives this drift. Pass `ivar < 0` to broadcast the same drift to **all** target variables — the common case when external drift is the same regardless of which variable is being estimated. |
+| `ndrift_c` | Number of drift functions (= `ndrift` from `krige_initialize`) |
+| `nblocks` | Number of blocks (`block%n`, **not** `grid%n` for block kriging) |
+| `drift` | Drift values `[ndrift_c × nblocks]`, Fortran column-major |
+
+> **Note on `ivar` semantics.** In `krige_set_obs_drift`, `ivar` identifies the
+> **source** variable (whose observations form the F-matrix column).  Here it
+> identifies the **target** variable (which estimation's RHS uses this drift).
+> These are opposite ends of the kriging system — both use 1-based indexing and
+> `< 0` is not valid for `krige_set_obs_drift`.
 
 ---
 

@@ -64,7 +64,9 @@ module kriging
   type t_data
     integer              :: n = 0            ! number of spatial nodes
     real, allocatable    :: coord(:,:)       ! coordinates            [ndim, n]
-    real, allocatable    :: drift(:,:)       ! drift function values  [ndrift, n]
+    real, allocatable    :: drift(:,:,:)     ! augmented drift + unbias  [ndrift+naug, nvar_rhs, n]
+                                              !   obs  : second dim = 1 (F-matrix col, same for all targets)
+                                              !   block: second dim = nvar (f₀ RHS differs per target variable)
     real, allocatable    :: value(:,:,:)     ! obs values [1,1,n] or kriging/SGSIM result     [nsim, nvar, n]
     real, allocatable    :: variance(:,:,:)  ! conditional covariance [nvar, nvar, n] or [1, 1, n] for observation error
   end type t_data
@@ -203,6 +205,8 @@ module kriging
     logical              :: verbose            = .false. ! print progress to stdout
     logical              :: neglect_error      = .false. ! set NaN instead of stopping on singular
     logical              :: varying_vgm        = .false. ! use different vgm per block
+    logical              :: std_ck             = .true.  ! .true. = standard cokriging (separate per-variable unbias constraints used in `gstat`)
+                                                         ! .false. = Isaaks & Srivastava single combined constraint + local-mean correction
 
     !-- File path for factor file (weight storage/reload)
     character(len=1024)  :: weight_file = ""
@@ -218,7 +222,8 @@ module kriging
 
     !-- Scratch / bookkeeping
     integer              :: nppmax = 0            ! max total neighbours across all variables
-    integer              :: matsize_max = 0       ! nppmax + ndrift + unbias
+    integer              :: matsize_max = 0       ! nppmax + ndrift + naug
+    integer              :: naug    = 0           ! unbiasedness constraint rows only (NOT including ndrift); computed once in initialize()
 
     !-- Bounds for simulated/estimated values
     real                 :: bounds(2) = [-verylarge, verylarge]
@@ -284,7 +289,7 @@ module kriging
   type :: t_kriging_ctx
     integer              :: iblock           ! current block index
     integer              :: npp              ! total neighbours = sum(nnear(1:ngroups))
-    integer              :: matsize          ! npp + ndrift + unbias (actual, this block)
+    integer              :: matsize          ! npp + ndrift + naug (actual, this block)
     integer, allocatable :: nnear(:)         ! neighbour count per variable [ngroups]
     integer, allocatable :: istart(:)        ! the starting index in the matrix for each variable; 0-based
     integer, allocatable :: inear(:,:)       ! neighbour indices            [nmax, ngroups]
@@ -313,8 +318,8 @@ module kriging
     !                      Stored sorted so the comparison is order-independent
     !                      (the KD-tree ranks by distance, which varies across blocks).
     ! factor_L           : Cholesky factor of K                              [nppmax, nppmax].
-    ! factor_kinv_drift  : K^{-1} F (drift columns solved against K)         [nppmax, ndrift+unbias].
-    ! factor_schur       : Cholesky factor of the Schur complement F^T K^-1 F [ndrift+unbias, ndrift+unbias].
+    ! factor_kinv_drift  : K^{-1} F (drift columns solved against K)         [nppmax, naug].
+    ! factor_schur       : Cholesky factor of the Schur complement F^T K^-1 F [naug, naug].
     ! ------------------------------------------------------------------
     logical              :: factor_cache_hit   = .false.
     logical              :: factor_cache_valid = .false.
@@ -353,7 +358,7 @@ contains
   !============================================================================
   subroutine initialize(self, ndim, nvar, ndrift, unbias, nsim, anisotropic_search,  &
                         weight_correction, use_old_weight, store_weight, cross_validation, &
-                        write_mat, neglect_error, varying_vgm, verbose, &
+                        write_mat, neglect_error, varying_vgm, std_ck, verbose, &
                         weight_file, bounds, seed)
     class(t_kriging)                         :: self
     integer, intent(in), optional            :: ndim
@@ -361,7 +366,7 @@ contains
     real,    intent(in), optional            :: bounds(2)
     logical, intent(in), optional            :: anisotropic_search, weight_correction, &
                                                 use_old_weight, write_mat, store_weight, &
-                                                verbose, cross_validation, neglect_error, varying_vgm
+                                                verbose, cross_validation, neglect_error, varying_vgm, std_ck
     character(len=*), intent(in), optional   :: weight_file
     character(len=*), parameter              :: subname = "t_kriging%initialize"
 
@@ -381,6 +386,7 @@ contains
     if (present(bounds))             self%bounds             = bounds
     if (present(cross_validation))   self%cross_validation   = cross_validation
     if (present(varying_vgm))        self%varying_vgm        = varying_vgm
+    if (present(std_ck))             self%std_ck             = std_ck
     if (present(verbose))            self%verbose            = verbose
     if (present(neglect_error))      self%neglect_error      = neglect_error
 
@@ -406,6 +412,10 @@ contains
     !   to the correct positive index, removing the need for vgm(0,:) copies.
     if (.not. self%varying_vgm) &
       allocate(self%vgm(1:self%nvar, 1:self%nvar, 1))
+
+    !-- Pre-compute the number of unbiasedness constraint rows (excluding external drift).
+    !   Total augmented rows in the kriging system = ndrift + naug.
+    self%naug = merge(self%unbias * self%nvar, self%unbias, self%std_ck)
 
     !-- Sanity checks: mutually exclusive flag combinations
     !   use_old_weight + weight_file=""  → in-memory wstore path (set_weights() must be
@@ -463,7 +473,7 @@ contains
     real,    intent(in), optional          :: rangescale(:)   ! variogram range scaler       [nblocks]
     real,    intent(in), optional          :: localnugget(:)  ! per-block extra nugget       [nblocks]
 
-    integer :: ngrid, nn, nb, iblock, igrid, idim, igq
+    integer :: ngrid, nn, nb, iblock, igrid, idim, igq, ivar
     character(len=*), parameter :: subname = "t_kriging%set_grid"
 
 
@@ -491,10 +501,6 @@ contains
         allocate(self%grid%weight(ngrid));         self%grid%weight = 1.0
         !-- +1 so the search still finds nmax neighbours after excluding self
         if (self%obs(1)%nmax>0) self%obs(1)%nmax = self%obs(1)%nmax + 1
-        if (ndrift > 0) then
-          allocate(self%block%drift(ndrift, ngrid))
-          self%block%drift = self%obs(1)%drift
-        end if
 
       else
         !----------------------------------------------------------------------
@@ -607,6 +613,29 @@ contains
       allocate(self%block%value      (max(self%nsim, 1), self%nvar, self%block%n))
       allocate(self%block%variance   (self%nvar, self%nvar, self%block%n))
 
+      !-- Allocate block drift [ndrift+naug, nvar, nblock] and fill all rows.
+      !   Rows 1:ndrift        = external drift values (zeros here; set_grid_drift fills them).
+      !   Rows ndrift+1:ndrift+naug = unbiasedness RHS (filled now; same for all blocks).
+      !   For cross-validation, external drift rows are also copied from obs(1).
+      if (self%ndrift + self%naug > 0) then
+        allocate(self%block%drift(self%ndrift + self%naug, self%nvar, self%block%n))
+        self%block%drift = 0.0
+        if (self%naug > 0) then
+          if (self%std_ck) then
+            do ivar = 1, self%nvar
+              self%block%drift(self%ndrift + ivar, ivar, :) = 1.0   ! identity RHS
+            end do
+          else
+            self%block%drift(self%ndrift + 1, :, :) = 1.0           ! combined RHS
+          end if
+        end if
+        if (self%cross_validation .and. self%ndrift > 0) then
+          do ivar = 1, self%nvar
+            self%block%drift(1:self%ndrift, ivar, :) = self%obs(1)%drift(1:self%ndrift, 1, :)
+          end do
+        end if
+      end if
+
       !-- Default sequential visit order (overridden by set_sim for SGSIM)
       call set_seq(self%block%order, self%block%n)
 
@@ -639,14 +668,20 @@ contains
   !============================================================================
   ! set_grid_drift
   !
-  ! Attach one drift-function value per block to block%drift.
-  ! Called after set_grid() when ndrift > 0.  The drift array has shape
-  ! (ndrift, nblock) — one scalar per drift function per block centre,
-  ! NOT per integration node.
+  ! Set external drift values at block locations.
+  ! Must be called after set_grid() when ndrift > 0.
+  !
+  !   drift : [ndrift, nblock]  one scalar per drift function per block centre
+  !           (NOT per integration node)
+  !   ivar  : target-variable index (1-based) whose RHS receives this drift.
+  !           Pass ivar < 0 to broadcast the same drift to ALL target variables
+  !           (the common case when external drift is the same for every variable).
   !============================================================================
-  subroutine set_grid_drift(self, drift)
-    class(t_kriging)   :: self
-    real, intent(in)   :: drift(:,:)   ! drift values [ndrift, nblock]
+  subroutine set_grid_drift(self, drift, ivar)
+    class(t_kriging)    :: self
+    real,    intent(in) :: drift(:,:)   ! [ndrift, nblock]
+    integer, intent(in) :: ivar         ! target variable (1-based), or < 0 = broadcast
+    integer             :: iv
     character(len=*), parameter :: subname = "t_kriging%set_grid_drift"
 
     if (.not. associated(self%block)) then
@@ -669,7 +704,21 @@ contains
       call kriging_error(subname, 'size(drift, 2) /= block%n; one drift value per block, not per grid node')
       return
     end if
-    allocate(self%block%drift, source = drift)
+    if (.not. allocated(self%block%drift)) then
+      call kriging_error(subname, 'block%drift not allocated; call set_grid() before set_grid_drift().')
+      return
+    end if
+    if (ivar >= 1 .and. ivar <= self%nvar) then
+      !-- Set for a specific target variable
+      self%block%drift(1:self%ndrift, ivar, :) = drift
+    else if (ivar < 0) then
+      !-- Broadcast to all target variables (external drift independent of target)
+      do iv = 1, self%nvar
+        self%block%drift(1:self%ndrift, iv, :) = drift
+      end do
+    else
+      call kriging_error(subname, 'ivar must be 1..nvar or < 0 (broadcast)')
+    end if
   end subroutine set_grid_drift
 
 
@@ -843,6 +892,21 @@ contains
       obs%value(1,1,:) = value
       allocate(obs%coord, source = coord)
 
+      !-- Allocate the augmented drift array [ndrift+naug, 1, nobs] and fill the
+      !   unbiasedness indicator rows.  External drift rows (1:ndrift) are left
+      !   zero here; set_obs_drift() fills them after this call.
+      if (self%ndrift + self%naug > 0) then
+        allocate(obs%drift(self%ndrift + self%naug, 1, obs%n))
+        obs%drift = 0.0
+        if (self%naug > 0) then
+          if (self%std_ck) then
+            obs%drift(self%ndrift + ivar, 1, :) = 1.0   ! indicator for own variable only
+          else
+            obs%drift(self%ndrift + 1,   1, :) = 1.0   ! combined indicator (Isaaks & Srivastava)
+          end if
+        end if
+      end if
+
       !-- Identity rotation matrix (updated by set_search for anisotropic search)
       obs%rotmat = reshape([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], [3, 3])
     end associate
@@ -911,7 +975,13 @@ contains
       call kriging_error(subname, 'size(drift, 2) /= nobs')
       return
     end if
-    allocate(self%obs(ivar)%drift, source = drift)
+    !-- obs%drift was pre-allocated in set_obs(); write the external drift rows.
+    !   The unbiasedness indicator rows (ndrift+1:end) are already filled.
+    if (.not. allocated(self%obs(ivar)%drift)) then
+      call kriging_error(subname, 'obs%drift not allocated; call set_obs() before set_obs_drift().')
+      return
+    end if
+    self%obs(ivar)%drift(1:self%ndrift, 1, :) = drift
   end subroutine set_obs_drift
 
 
@@ -1019,7 +1089,7 @@ contains
         self%block%nblockpnt  = self%block%nblockpnt (   self%block%order)
         self%block%rangescale = self%block%rangescale(   self%block%order)
         self%block%localnugget= self%block%localnugget(  self%block%order)
-        if (self%ndrift > 0) self%block%drift = self%block%drift(:, self%block%order)
+        if (self%ndrift + self%naug > 0) self%block%drift = self%block%drift(:, :, self%block%order)
 
         !-- Extend obs(k)%coord for ALL variables to include all block centres so
         !   the k-d tree can return previously simulated blocks of any variable as
@@ -1140,7 +1210,7 @@ contains
     integer :: ivar, kvar, mmax, pmax
     logical :: need_rhs
     mmax = maxval(krige%obs%nmax)   ! max neighbours across all variables
-    pmax = krige%ndrift + krige%unbias
+    pmax = krige%ndrift + krige%naug
 
     associate(npp => krige%nppmax, matsize => krige%matsize_max, &
               ng  => krige%ngroups, nv => krige%nvar)
@@ -1308,7 +1378,7 @@ contains
       do ivar = 1, self%nvar
         npp = npp + self%obs(ivar)%nmax
       end do
-      matsize = npp + self%ndrift + self%unbias
+      matsize = npp + self%ndrift + self%naug
 
       !-- Weight reuse: pre-load all blocks from the factor file into wstore so the
       !   parallel block loop can use load_block_weights without any file I/O.
@@ -1700,6 +1770,7 @@ contains
       npp     => ctx%npp, &
       matsize => ctx%matsize, &
       ndrift  => self%ndrift, &
+      naug    => self%naug, &
       ndim    => self%ndim)
 
       rs   = self%block%rangescale(ctx%iblock)
@@ -1730,8 +1801,10 @@ contains
             end do
           end associate
         end do
-        if (ndrift > 0) rhsB(ivar, npp+1:npp+ndrift) = self%block%drift(:, iblock) ! TODO: need separate drift for each variable
-        if (self%unbias == 1) rhsB(ivar, matsize) = 1.0
+        !-- Augmented RHS (external drift + unbiasedness) in positions npp+1:matsize.
+        !   block%drift(:, ivar, :) carries both rows, varying correctly per target variable.
+        if (ndrift + naug > 0) &
+          rhsB(ivar, npp+1:matsize) = self%block%drift(:, ivar, iblock)
       end do
     end associate
   end subroutine assemble_rhs
@@ -1745,9 +1818,10 @@ contains
   !
   ! Matrix layout (ordinary kriging, two variables, npp = n1 + n2)
   ! ---------------------------------------------------------------
-  !   [ C₁₁  C₁₂  F1 ] [ λ₁ ]   [ c₀₁ ] rows/cols 1:n1
-  !   [ C₂₁  C₂₂  F2 ] [ λ₂ ] = [ c₀₂ ] rows/cols n1+1:npp
-  !   [ F1ᵀ  F2ᵀ   0 ] [ μ  ]   [ f₀  ] npp+1:matsize
+  !   [ C₁₁  C₁₂  1   0 ] [ w₁ ]   [ c₀₁ ]
+  !   [ C₂₁  C₂₂  0   1 ] [ w₂ ] = [ c₀₂ ]
+  !   [  1ᵀ   0ᵀ  0   0 ] [ μ₁ ]   [  1  ]   npp+1
+  !   [  0ᵀ   1ᵀ  0   0 ] [ μ₂ ]   [  0  ]   npp+2  (for estimating var1)
   !
   ! For each row group kvar and column group lvar (lvar >= kvar, upper triangle):
   !   Diagonal block (kvar == lvar): C(0) + obs_variance + localnugget
@@ -1772,6 +1846,7 @@ contains
       npp     => ctx%npp, &
       matsize => ctx%matsize, &
       ndrift  => self%ndrift, &
+      naug    => self%naug, &
       ndim    => self%ndim)
 
       lag  = 0.0
@@ -1829,14 +1904,14 @@ contains
           end associate
         end do columnloop
 
-        !-- Drift columns start at npp+1 (fixed position regardless of kvar)
-        if (ndrift > 0) then
-          matA(npp+1:npp+ndrift, istart(kvar)+1:istart(kvar)+nnear(kvar)) = obs1%drift(:, inear(1:nnear(kvar), kvar))
+        !-- Augmented rows (external drift + unbiasedness) in columns npp+1:matsize.
+        !   obs%drift(:,1,:) carries both: rows 1:ndrift = external drift values;
+        !   rows ndrift+1:ndrift+naug = unbiasedness indicators (pre-filled by set_obs).
+        if (ndrift + naug > 0) then
+          matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
+            obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
         end if
       end do rowloop
-
-      !-- Unbiasedness constraint column: sum(weights) = 1
-      if (self%unbias == 1) matA(matsize, 1:npp) = 1.0
 
       !-- Mirror lower triangle from upper (C is symmetric)
       do irow1 = 1, npp
@@ -1845,8 +1920,6 @@ contains
         end do
       end do
 
-      !-- Zero the constraint-row diagonal block (no constraint-constraint covariance)
-      matA(npp+1:matsize, npp+1:matsize) = 0.0
     end associate
   end subroutine assemble_lhs
 
@@ -1915,7 +1988,7 @@ contains
         if (ctx%nnear(ivar) > 0) call isort(ctx%inear(1:ctx%nnear(ivar), ivar), ctx%nnear(ivar))
       end do
 
-      ctx%matsize = npp + self%unbias + self%ndrift
+      ctx%matsize = npp + self%ndrift + self%naug
 
       if (ctx%factor_cache_matches(self)) then
         ctx%factor_cache_hit = .true.
@@ -1971,14 +2044,11 @@ contains
       iblock    => ctx%iblock, &
       matA      => ctx%matA, &
       rhsB      => ctx%rhsB, &
-      matsize   => ctx%matsize, &
       npp       => ctx%npp, &
-      x         => ctx%x, &
-      unbias    => self%unbias, &
-      ndrift    => self%ndrift)
+      x         => ctx%x)
 
-      p = unbias + ndrift
       q = self%nvar
+      p = self%ndrift + self%naug
 
       !-- Primary solver: Cholesky setup plus per-block RHS solve.
       if (ctx%factor_cache_hit) then
@@ -2172,11 +2242,6 @@ contains
   !     z(isim) = mu + L * epsilon,  epsilon ~ N(0, I_nvar)
   !     epsilon(1) from pre-drawn sample (reproducibility); epsilon(2:nvar) freshly drawn.
   !     For nvar==1 this reduces to z = mu + sqrt(Sigma) * epsilon, same as before.
-  !
-  ! ISAAKS & SRIVASTAVA correction (co-kriging, nsim==0 only)
-  !   When nvar>1 and unbias==1, adjusts secondary-variable weight sums so
-  !   the co-kriging estimate is unbiased across variables with differing
-  !   local means.
   !============================================================================
   subroutine estimate_block(self, ctx)
     implicit none
@@ -2185,11 +2250,11 @@ contains
 
     integer           :: ivar, jvar, kvar, k, k1, j, jb, nn, isim, real_ivar, info
     real              :: total_weight(self%nvar)
-    real              :: target_mean(self%nvar)
+    real              :: target_mean(self%nvar)   ! local mean per variable for Isaaks correction
     real              :: L_chol(self%nvar, self%nvar)
     real              :: avg
-    real              :: weight(self%nvar), perturbation(self%nvar)
-    logical           :: ck_correction
+    real              :: perturbation(self%nvar)
+    logical           :: ck_isa   ! .true. when Isaaks & Srivastava correction is active
 
     associate( &
       var    => self%block%variance(:, :, ctx%iblock), &  ! nvar x nvar
@@ -2202,22 +2267,20 @@ contains
       !----------------------------------------------------------------------
       ! Phase 1: obs-only conditional mean mu_obs(ivar).
       !----------------------------------------------------------------------
-      ! Pre-computed variable means for ISAAKS correction (co-kriging, nsim==0).
-      if (self%nsim == 0 .and. self%unbias /= 0 .and. self%nvar > 1) then
-        ck_correction = .true.
-        target_mean = 0.0
+
+      !-- Isaaks & Srivastava: pre-compute local mean of each variable's neighbours.
+      !   Used below to correct for differing local means between primary and secondary.
+      !   Skipped for standard cokriging (std_ck), simple kriging, or univariate kriging.
+      ck_isa = (.not. self%std_ck) .and. self%nsim == 0 &
+               .and. self%unbias /= 0 .and. self%nvar > 1
+      if (ck_isa) then
         do ivar = 1, self%nvar
+          target_mean(ivar) = 0.0
           do k = 1, nnear(ivar)
             target_mean(ivar) = target_mean(ivar) + self%obs(ivar)%value(1,1,inear(k, ivar))
           end do
-          !-- Guard against division by zero when a variable has no neighbours
-          !   (e.g. secondary maxdist is too small).  total_weight(ivar) will
-          !   also be zero in that case, so the correction term below is 0
-          !   regardless of the value chosen here.
           if (nnear(ivar) > 0) target_mean(ivar) = target_mean(ivar) / nnear(ivar)
         end do
-      else
-        ck_correction = .false.
       end if
 
       do jvar = 1, self%nvar  ! estiamte target variable
@@ -2226,7 +2289,9 @@ contains
         do ivar = 1, self%nvar  ! source variable [observations only]
           total_weight(ivar) = total_weight(ivar) + sum(weight(1:nnear(ivar), ivar, jvar))
           avg = avg + dot_product(self%obs(ivar)%value(1,1,inear(1:nnear(ivar), ivar)), weight(1:nnear(ivar), ivar, jvar))
-          if (ck_correction .and. ivar/=jvar .and. nnear(ivar) > 0) avg = avg + (target_mean(jvar) - target_mean(ivar)) * total_weight(ivar)
+          !-- Isaaks & Srivastava correction: shift secondary contributions to match primary local mean
+          if (ck_isa .and. ivar /= jvar .and. nnear(ivar) > 0) &
+            avg = avg + (target_mean(jvar) - target_mean(ivar)) * total_weight(ivar)
         end do
 
         !-- Simple kriging mean correction.
@@ -2313,6 +2378,7 @@ function to_str(self) result(res_str)
     write(buffer, "(A,I0)") " Number of Drifts       : ", self%ndrift                   ; res_str = res_str // trim(buffer) // NL
     write(buffer, "(A,I0)") " Number of Blocks       : ", self%block%n                  ; res_str = res_str // trim(buffer) // NL
     write(buffer, "(A,A )") " Ordinary Kriging       : ", yesno(self%unbias == 1)       ; res_str = res_str // trim(buffer) // NL
+    write(buffer, "(A,A )") " Standard CoKriging     : ", yesno(self%std_ck)            ; res_str = res_str // trim(buffer) // NL
     write(buffer, "(A,A )") " LOO-Cross Validation   : ", yesno(self%cross_validation)  ; res_str = res_str // trim(buffer) // NL
     write(buffer, "(A,A )") " Weight Correction      : ", yesno(self%weight_correction) ; res_str = res_str // trim(buffer) // NL
     write(buffer, "(A,A )") " Use Old Weights        : ", yesno(self%use_old_weight)    ; res_str = res_str // trim(buffer) // NL
@@ -2322,9 +2388,6 @@ function to_str(self) result(res_str)
     if (self%store_weight .or. self%use_old_weight) then
         write(buffer, "(A,A )") " Weight File : ", trim(self%weight_file)
         res_str = res_str // trim(buffer) // NL
-    end if
-
-    if (self%unbias == 0) then
     end if
 
     write(buffer, "(A,G0)") " Lower Bound            : ", self%bounds(1); res_str = res_str // trim(buffer) // NL
@@ -2406,7 +2469,7 @@ end subroutine update_info
     class(t_kriging_ctx) :: self
     class(t_kriging)     :: krige
 
-    integer              :: kvar, ifile, ii, jvar, isim, is, iv
+    integer              :: kvar, ifile, ii, jvar, isim, is, iv, matsize
     integer              :: idx
     character(len=20)    :: sig, idxstr
     character(len=1)     :: cname(3) = ['x', 'y', 'z']
@@ -2422,9 +2485,8 @@ end subroutine update_info
       rhsB      => self%rhsB, &
       x         => self%x, &
       npp       => self%npp, &
-      irandpath => krige%block%order, &
-      matsize   => self%matsize)
-
+      irandpath => krige%block%order)
+      matsize = sum(nnear) + krige%ndrift + krige%naug
       do isim=1, max(krige%nsim,1)
         do jvar = 1, krige%nvar
           write(idxstr, "(I0,'_var',I0,'_sim',I0)") irandpath(ib), jvar, isim
@@ -2522,7 +2584,7 @@ end subroutine update_info
   !============================================================================
   subroutine write_weight_store(self)
     class(t_kriging) :: self
-    integer          :: ib, ii, ivar, jvar, ifile, matsize
+    integer          :: ib, ii, ivar, jvar, ifile
 
     associate(ws => self%wstore)
       open(newunit=ifile, file=trim(self%weight_file), status='replace')
@@ -2555,7 +2617,6 @@ end subroutine update_info
         read(self%ifile, *) (ctx%weight(1:ctx%nnear(ii), ii, ivar), ii = 1, self%ngroups)
       end do
       ctx%npp = sum(ctx%nnear)
-      ctx%matsize = ctx%npp + self%unbias + self%ndrift
     end associate
   end subroutine read_weight
 
@@ -2893,7 +2954,6 @@ end subroutine update_info
         end if
       end do
       ctx%npp     = sum(ctx%nnear(1:self%ngroups))
-      ctx%matsize = ctx%npp + self%unbias + self%ndrift
       self%block%variance(1:self%nvar, 1:self%nvar, ib) = ws%var(1:self%nvar, 1:self%nvar, ib)
     end associate
   end subroutine load_block_weights

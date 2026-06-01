@@ -6,11 +6,11 @@ Choose the guide that matches your task:
 :maxdepth: 1
 
 ordinary_kriging
+cokriging
 ```
 
 **Coming in Phase 2:**
 
-- Co-kriging and LMC
 - Sequential Gaussian Simulation (SGSIM)
 - Space-time kriging
 - Spatially Varying Anisotropy

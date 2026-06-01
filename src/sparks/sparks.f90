@@ -568,7 +568,7 @@ contains
     end if
     call stop_if_kriging_failed('setting grid')
     if (ndrift > 0) then
-      call krig%set_grid_drift(blockdrift)
+      call krig%set_grid_drift(blockdrift, ivar=-1) ! broadcast to all variables
       call stop_if_kriging_failed('setting grid drift')
     end if
   end if
