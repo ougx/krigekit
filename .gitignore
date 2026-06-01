@@ -74,7 +74,6 @@ todo/*
 sgsim.dat
 src/sparks/00_compile_sparks.bat
 .claude/
-src/pykriging/kriging.def
 tests_py/log
 src/pykriging/kriging.exp
 src/pykriging/kriging.pdb

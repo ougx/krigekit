@@ -135,6 +135,7 @@ contains
       ndim, nvar, ndrift, unbias, nsim, &
       anisotropic_search, weight_correction, use_old_weight, &
       store_weight, cross_validation, write_mat, neglect_error, varying_vgm, std_ck, verbose, &
+      pf_cache, &
       weight_file, bounds, seed) &
       bind(C, name='krige_initialize') result(ierr)
 
@@ -144,6 +145,7 @@ contains
     integer(c_int),      intent(in), value :: use_old_weight, store_weight
     integer(c_int),      intent(in), value :: cross_validation, write_mat, neglect_error
     integer(c_int),      intent(in), value :: varying_vgm, std_ck, verbose
+    integer(c_int),      intent(in), value :: pf_cache
     character(kind=c_char), intent(in) :: weight_file(*)
     real(c_double),      intent(in) :: bounds(2)
 
@@ -178,6 +180,7 @@ contains
       varying_vgm        = l(varying_vgm), &
       std_ck             = l(std_ck), &
       verbose            = l(verbose), &
+      pf_cache           = l(pf_cache), &
       weight_file        = c2fstr(weight_file), &
       bounds             = fbounds, &
       seed               = int(seed))
@@ -667,11 +670,12 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    if (nthread > 0) then
-      call obj%solve(nthread = int(nthread))
-    else
-      call obj%solve()
-    end if
+    !-- Always pass nthread so present(nthread) is .true. inside solve().
+    !   Intel ifx can mishandle an absent optional dummy argument when the
+    !   subroutine contains an !$OMP PARALLEL region, producing a null
+    !   descriptor access violation.  Passing 0 preserves the original
+    !   semantics (solve() reads omp_get_max_threads() when nthread <= 0).
+    call obj%solve(nthread = int(nthread))
     ierr = int(kriging_ierr(), c_int)
   end function krige_solve
 
@@ -814,6 +818,62 @@ contains
     end if
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_variance_all
+
+  !=============================================================================
+  ! Persistent factorization cache API
+  !=============================================================================
+
+  !-- Query whether a valid persistent factor exists and return its dimensions.
+  !   Call this first to learn npp and p before allocating arrays for the next call.
+  !   valid_out: 1 = valid, 0 = not yet computed or invalidated.
+  integer(c_int) function krige_get_factor_info(handle, npp_out, p_out, valid_out) &
+      bind(C, name='krige_get_factor_info') result(ierr)
+    integer(c_intptr_t), intent(in),  value :: handle
+    integer(c_int),      intent(out)        :: npp_out, p_out, valid_out
+    type(t_kriging), pointer :: obj
+    integer  :: npp, p
+    logical  :: valid
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call obj%get_persistent_factor_info(npp, p, valid)
+    npp_out   = int(npp,   c_int)
+    p_out     = int(p,     c_int)
+    valid_out = merge(1_c_int, 0_c_int, valid)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_factor_info
+
+
+  !-- Copy the three persistent factor matrices into caller-allocated arrays.
+  !   npp and p must match what krige_get_factor_info returned (and valid=1).
+  !   L_out    : Cholesky factor of K             [npp × npp, column-major]
+  !   kinv_out : K^{-1} F                         [npp × max(1,p), column-major]
+  !   schur_out: Cholesky factor of F'K^{-1}F     [max(1,p) × max(1,p), column-major]
+  integer(c_int) function krige_get_factor_matrices(handle, npp, p, &
+                                                     L_out, kinv_out, schur_out) &
+      bind(C, name='krige_get_factor_matrices') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: npp, p
+    real(c_double),      intent(out)       :: L_out   (npp, npp)
+    real(c_double),      intent(out)       :: kinv_out(npp, max(1, int(p)))
+    real(c_double),      intent(out)       :: schur_out(max(1, int(p)), max(1, int(p)))
+    type(t_kriging), pointer :: obj
+    real, allocatable :: L_f(:,:), kinv_f(:,:), schur_f(:,:)
+    integer :: pg
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. obj%pf%valid) then
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    pg = max(1, int(p))
+    allocate(L_f(int(npp), int(npp)), kinv_f(int(npp), pg), schur_f(pg, pg))
+    call obj%get_persistent_factor_matrices(int(npp), int(p), L_f, kinv_f, schur_f)
+    L_out    = real(L_f,     c_double)
+    kinv_out = real(kinv_f,  c_double)
+    schur_out= real(schur_f, c_double)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_factor_matrices
 
   !=============================================================================
   ! Weight-store API

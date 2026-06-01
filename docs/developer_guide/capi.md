@@ -378,6 +378,72 @@ variance.
 
 ---
 
+## Persistent factorisation cache
+
+Between-solve factorisation caching allows the Cholesky factorisation of the
+kriging covariance matrix **K** to be reused across successive `krige_solve`
+calls when observation coordinates and the variogram have not changed.
+
+The cache is populated automatically after the first successful `krige_solve`
+and invalidated by `krige_set_obs` or `krige_set_vgm`.  These two functions
+let Python query the cached matrices for inspection or debugging.
+
+### `krige_get_factor_info`
+
+```c
+int krige_get_factor_info(int64_t handle,
+    int *npp_out,    // number of neighbours (rows/cols of K)
+    int *p_out,      // drift + unbiasedness columns (Schur size)
+    int *valid_out)  // 1 = valid; 0 = not yet computed or invalidated
+```
+
+Returns the dimensions and validity of the cached factorisation.
+Call this first to obtain `npp` and `p` before allocating buffers for
+`krige_get_factor_matrices`.
+
+### `krige_get_factor_matrices`
+
+```c
+int krige_get_factor_matrices(int64_t handle,
+    int npp, int p,
+    double *L_out,       // [npp × npp]       upper-tri Cholesky of K
+    double *kinv_out,    // [npp × max(1,p)]   K^{-1} F
+    double *schur_out)   // [max(1,p) × max(1,p)]  Cholesky of F'K^{-1}F
+```
+
+Copies the three persistent factor matrices into caller-allocated arrays.
+`npp` and `p` must match the values returned by `krige_get_factor_info`.
+
+All arrays are in Fortran column-major order.  The solver uses `uplo='U'`
+(LAPACK `spotrf`), so:
+
+- **`L_out`** — upper triangle is the Cholesky factor U; `K = U' U`.
+  The lower triangle retains the original K values and should be ignored.
+- **`kinv_out`** — `K^{-1} F` where F is the full drift matrix.
+- **`schur_out`** — upper triangle is the Cholesky factor of `F' K^{-1} F`.
+
+#### Invalidation rules
+
+| Trigger | Effect on persistent cache |
+|---|---|
+| `krige_set_obs` | `pf_valid = false` (coordinates change K) |
+| `krige_set_vgm` | `pf_valid = false` (variogram changes K) |
+| `krige_update_obs_value` | **No effect** — values do not enter K |
+
+#### Python wrapper
+
+```python
+f = kriging_object.get_factor()
+# f['valid']       bool
+# f['npp']         int — size of K
+# f['p']           int — size of Schur complement
+# f['L']           ndarray (npp, npp)       — upper-triangular factor
+# f['kinv_drift']  ndarray (npp, max(1,p))  — K^{-1} F
+# f['schur']       ndarray (max(1,p), max(1,p))
+```
+
+---
+
 ## Weight store
 
 ### `krige_free_weight_store`

@@ -188,6 +188,42 @@ module kriging
   end type t_weight_store
 
   !============================================================================
+  ! t_factor_cache — unified intra- and inter-solve factorization cache
+  !
+  ! Used in two roles:
+  !   ctx%cache  (inside t_kriging_ctx): intra-solve, one slot per thread.
+  !              "hit" is set in assemble_linear_system and consumed in
+  !              solve_linear_system to skip kriging_setup.
+  !   self%pf    (inside t_kriging):     inter-solve, shared across threads.
+  !              Protected by !$OMP CRITICAL(pf_save); enabled by pf_cache.
+  !
+  ! The match key is: npp + rangescale + localnugget + nnear(:) + inear(:,:).
+  ! The cached data is: L (Cholesky of K), kinv_drift (K^{-1}F), schur.
+  !
+  ! Both instances are pre-allocated to worst-case dimensions so that no
+  ! reallocation occurs in the hot block loop or inside the critical section.
+  !============================================================================
+  type :: t_factor_cache
+    logical  :: valid       = .false.  ! key and factors are populated
+    logical  :: hit         = .false.  ! current block is a cache hit (ctx only)
+    integer  :: npp         = 0        ! active npp at cache time
+    integer  :: p           = 0        ! active p = ndrift + naug at cache time
+    real     :: rangescale  = 1.0      ! block rangescale at cache time
+    real     :: localnugget = 0.0      ! block localnugget at cache time
+    integer, allocatable :: nnear(:)     ! neighbour counts per group  [ngroups]
+    integer, allocatable :: inear(:,:)   ! neighbour indices           [mmax, ngroups]
+    real,    allocatable :: L(:,:)          ! Cholesky factor of K      [nppmax, nppmax]
+    real,    allocatable :: kinv_drift(:,:) ! K^{-1} F                 [nppmax, max(1,p)]
+    real,    allocatable :: schur(:,:)      ! Schur complement of F'K-1F [max(1,p), max(1,p)]
+  contains
+    procedure :: alloc    => fcache_alloc    ! allocate arrays to worst-case dims
+    procedure :: matches  => fcache_matches  ! .true. if key matches ctx's current block
+    procedure :: save_key => fcache_save_key ! snapshot key from ctx + krige
+    procedure :: copy_to  => fcache_copy_to  ! copy active factor slices into another cache
+    procedure :: copy_all => fcache_copy_all ! copy matrices + key from src (no ctx/krige needed)
+  end type t_factor_cache
+
+  !============================================================================
   ! t_kriging — main kriging object
   !
   ! Holds all problem-level state and provides the full API.  Thread-local
@@ -236,6 +272,18 @@ module kriging
     type(t_grid)     , pointer :: grid       => null() ! integration nodes
     type(t_blockgrid), pointer :: block      => null() ! estimation targets
     type(vgm_struct) , pointer :: vgm(:,:,:) => null() ! variogram models [1:nvar, 1:nvar, 1]; last dim = nblock for spatially varying vgm
+
+    ! -----------------------------------------------------------------------
+    ! Persistent between-solve factorization cache
+    !
+    ! pf_cache : master switch — .false. (default) disables inter-solve reuse
+    !            entirely.  Set to .true. via krige_initialize to enable.
+    ! pf       : the cache itself (see t_factor_cache).  pf%valid is reset
+    !            to .false. by set_obs / set_vgm; pf arrays are pre-allocated
+    !            at worst-case dimensions in prepare() when pf_cache is .true.
+    ! -----------------------------------------------------------------------
+    logical              :: pf_cache = .false.
+    type(t_factor_cache) :: pf
   contains
     procedure :: initialize
     procedure :: set_obs
@@ -272,6 +320,9 @@ module kriging
     procedure :: finalize
     procedure :: to_str
     procedure :: update_info
+    ! Persistent factor cache getters (delegate to self%pf)
+    procedure :: get_persistent_factor_info
+    procedure :: get_persistent_factor_matrices
   end type
 
   !============================================================================
@@ -298,42 +349,17 @@ module kriging
     real,    allocatable :: matA(:,:)        ! covariance matrix C          [matsize, matsize]
     real,    allocatable :: rhsB(:,:)        ! right-hand-side c0           [1, matsize]
     ! ------------------------------------------------------------------
-    ! Single-slot factorization cache.
+    ! Single-slot factorization cache (see t_factor_cache for field docs).
     !
     ! The covariance matrix K depends only on the neighbour set (inear),
     ! the variogram model, rangescale, and localnugget — not on the block
     ! location.  When consecutive blocks processed by this thread share the
     ! same neighbour set, the Cholesky factorization of K can be reused:
     ! only the RHS c0 (which does depend on block location) is rebuilt.
-    !
-    ! factor_cache_hit   : set by factor_cache_matches; tells solve_linear_system
-    !                      to skip kriging_setup and call kriging_solve_prepared
-    !                      directly with the cached factors.
-    ! factor_cache_valid : .true. once a successful kriging_setup has been stored.
-    !                      Guards against using uninitialised factor arrays.
-    ! factor_cache_rangescale  : rangescale value at the block whose factors are cached.
-    ! factor_cache_localnugget : localnugget value at the block whose factors are cached.
-    ! factor_cache_nnear : neighbour counts per group at the cached block    [1:ngroups].
-    ! factor_cache_inear : sorted neighbour indices at the cached block      [nmax, 1:ngroups].
-    !                      Stored sorted so the comparison is order-independent
-    !                      (the KD-tree ranks by distance, which varies across blocks).
-    ! factor_L           : Cholesky factor of K                              [nppmax, nppmax].
-    ! factor_kinv_drift  : K^{-1} F (drift columns solved against K)         [nppmax, naug].
-    ! factor_schur       : Cholesky factor of the Schur complement F^T K^-1 F [naug, naug].
     ! ------------------------------------------------------------------
-    logical              :: factor_cache_hit   = .false.
-    logical              :: factor_cache_valid = .false.
-    real                 :: factor_cache_rangescale  = 1.0
-    real                 :: factor_cache_localnugget = 0.0
-    integer, allocatable :: factor_cache_nnear(:)
-    integer, allocatable :: factor_cache_inear(:,:)
-    real,    allocatable :: factor_L(:,:)
-    real,    allocatable :: factor_kinv_drift(:,:)
-    real,    allocatable :: factor_schur(:,:)
+    type(t_factor_cache) :: cache
   contains
     procedure :: initialize  => initialize_kriging_ctx
-    procedure :: factor_cache_matches   ! .true. if cached factors are valid for current block
-    procedure :: save_factor_cache_key  ! snapshot current neighbour set and block scalars into cache
     procedure :: assign_weight   ! split x into per-variable weight arrays
     procedure :: write_matrix    ! dump matA, rhsB, data to CSV for debugging
   end type t_kriging_ctx
@@ -358,7 +384,7 @@ contains
   !============================================================================
   subroutine initialize(self, ndim, nvar, ndrift, unbias, nsim, anisotropic_search,  &
                         weight_correction, use_old_weight, store_weight, cross_validation, &
-                        write_mat, neglect_error, varying_vgm, std_ck, verbose, &
+                        write_mat, neglect_error, varying_vgm, std_ck, verbose, pf_cache, &
                         weight_file, bounds, seed)
     class(t_kriging)                         :: self
     integer, intent(in), optional            :: ndim
@@ -366,7 +392,8 @@ contains
     real,    intent(in), optional            :: bounds(2)
     logical, intent(in), optional            :: anisotropic_search, weight_correction, &
                                                 use_old_weight, write_mat, store_weight, &
-                                                verbose, cross_validation, neglect_error, varying_vgm, std_ck
+                                                verbose, cross_validation, neglect_error, varying_vgm, std_ck, &
+                                                pf_cache
     character(len=*), intent(in), optional   :: weight_file
     character(len=*), parameter              :: subname = "t_kriging%initialize"
 
@@ -389,6 +416,7 @@ contains
     if (present(std_ck))             self%std_ck             = std_ck
     if (present(verbose))            self%verbose            = verbose
     if (present(neglect_error))      self%neglect_error      = neglect_error
+    if (present(pf_cache))           self%pf_cache           = pf_cache
 
     !-- Initialise random seed before allocation so the first draw is correct
     if (present(seed)) then
@@ -802,6 +830,7 @@ contains
         return
       end if
     end do
+    self%pf%valid = .false.   ! variogram changed → persistent factor stale
   end subroutine set_vgm
 
 
@@ -910,6 +939,7 @@ contains
       !-- Identity rotation matrix (updated by set_search for anisotropic search)
       obs%rotmat = reshape([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], [3, 3])
     end associate
+    self%pf%valid = .false.   ! observations changed → persistent factor stale
   end subroutine set_obs
 
   ! ===========================================================================
@@ -1219,13 +1249,7 @@ contains
         allocate(self%istart(ng))
         allocate(self%matA(matsize, matsize))
         allocate(self%rhsB(nv, matsize))
-        allocate(self%factor_cache_nnear(ng))
-        allocate(self%factor_cache_inear(mmax, ng))
-        allocate(self%factor_L(npp, npp))
-        allocate(self%factor_kinv_drift(npp, max(1, pmax)))
-        allocate(self%factor_schur(max(1, pmax), max(1, pmax)))
-        self%factor_cache_nnear = 0
-        self%factor_cache_inear = 0
+        call self%cache%alloc(npp, pmax, ng, mmax)
       end if
       allocate(self%nnear (ng))
       allocate(self%inear (mmax, ng))
@@ -1248,75 +1272,139 @@ contains
   end subroutine initialize_kriging_ctx
 
 
-  !============================================================================
-  ! factor_cache_matches
+  ! ============================================================================
+  ! t_factor_cache methods
   !
-  ! Returns .true. when the stored Cholesky factorization can be reused for
-  ! the current block.  The factorization of K depends on:
-  !   - the neighbour set (inear, nnear per variable)
-  !   - the variogram model (skipped entirely when varying_vgm=.true.)
-  !   - rangescale and localnugget (both affect K values)
+  ! These four routines serve both cache roles:
+  !   ctx%cache (intra-solve, one slot per thread)
+  !   self%pf   (inter-solve, shared, guarded by !$OMP CRITICAL)
   !
-  ! inear is compared after sorting (see search_neighbors), so the result is
-  ! order-independent: two blocks that share the same set of neighbours but
-  ! receive them in different distance-rank order from the KD-tree still match.
-  !
-  ! varying_vgm is short-circuited at the top: each block has its own
-  ! variogram model, so K can never be reused across blocks.
-  !============================================================================
-  logical function factor_cache_matches(self, krige)
-    class(t_kriging_ctx) :: self
-    class(t_kriging)     :: krige
+  ! inear is compared after sorting by observation index (see search_neighbors),
+  ! so matches() is order-independent: two blocks sharing the same neighbour set
+  ! but receiving them in different KD-tree distance rank still match.
+  ! ============================================================================
 
+  !----------------------------------------------------------------------------
+  ! fcache_alloc — allocate all arrays to worst-case dimensions
+  !----------------------------------------------------------------------------
+  subroutine fcache_alloc(self, npp, p, ngroups, mmax)
+    class(t_factor_cache), intent(inout) :: self
+    integer, intent(in) :: npp, p, ngroups, mmax
+    integer :: pg
+    pg = max(1, p)
+    allocate(self%nnear(ngroups))
+    allocate(self%inear(mmax, ngroups))
+    allocate(self%L(npp, npp))
+    allocate(self%kinv_drift(npp, pg))
+    allocate(self%schur(pg, pg))
+    self%nnear = 0
+    self%inear = 0
+  end subroutine fcache_alloc
+
+
+  !----------------------------------------------------------------------------
+  ! fcache_matches — .true. when the stored key matches ctx's current block
+  !
+  ! Short-circuits on varying_vgm (each block has a different K, so factors
+  ! can never be reused across blocks) and on obvious scalar mismatches before
+  ! the more expensive neighbour-index loop.
+  !----------------------------------------------------------------------------
+  logical function fcache_matches(self, ctx, krige)
+    class(t_factor_cache), intent(in) :: self
+    class(t_kriging_ctx),  intent(in) :: ctx
+    class(t_kriging),      intent(in) :: krige
     integer :: kvar
 
-    factor_cache_matches = .false.
-
-    if (.not. self%factor_cache_valid) return
-    if (krige%varying_vgm) return
-    if (self%factor_cache_rangescale /= krige%block%rangescale(self%iblock)) return
-    if (self%factor_cache_localnugget /= krige%block%localnugget(self%iblock)) return
+    fcache_matches = .false.
+    if (.not. self%valid)                                         return
+    if (krige%varying_vgm)                                        return
+    if (self%npp         /= ctx%npp)                              return
+    if (self%rangescale  /= krige%block%rangescale (ctx%iblock))  return
+    if (self%localnugget /= krige%block%localnugget(ctx%iblock))  return
 
     do kvar = 1, krige%ngroups
-      if (self%factor_cache_nnear(kvar) /= self%nnear(kvar)) return
-      if (self%nnear(kvar) > 0) then
-        if (any(self%factor_cache_inear(1:self%nnear(kvar), kvar) /= &
-                self%inear(1:self%nnear(kvar), kvar))) return
+      if (self%nnear(kvar) /= ctx%nnear(kvar)) return
+      if (ctx%nnear(kvar) > 0) then
+        if (any(self%inear(1:ctx%nnear(kvar), kvar) /= &
+                 ctx%inear(1:ctx%nnear(kvar), kvar))) return
       end if
     end do
 
-    factor_cache_matches = .true.
-  end function factor_cache_matches
+    fcache_matches = .true.
+  end function fcache_matches
 
 
-  !============================================================================
-  ! save_factor_cache_key
+  !----------------------------------------------------------------------------
+  ! fcache_save_key — snapshot ctx's current block key into this cache entry
   !
-  ! Snapshot the current block's neighbour set and block-level scalars into
-  ! the cache fields so that factor_cache_matches can detect a hit on the
-  ! next block.  Called by solve_linear_system immediately after a successful
-  ! kriging_setup (Cholesky factorization), so the cached key always
-  ! corresponds to the factors stored in factor_L / factor_kinv_drift /
-  ! factor_schur.
-  !============================================================================
-  subroutine save_factor_cache_key(self, krige)
-    class(t_kriging_ctx) :: self
-    class(t_kriging)     :: krige
-
+  ! Sets valid=.true. so the next matches() call can succeed.  Always called
+  ! after a successful kriging_setup so the key is consistent with the stored
+  ! factors (L, kinv_drift, schur).
+  !----------------------------------------------------------------------------
+  subroutine fcache_save_key(self, ctx, krige)
+    class(t_factor_cache), intent(inout) :: self
+    class(t_kriging_ctx),  intent(in)    :: ctx
+    class(t_kriging),      intent(in)    :: krige
     integer :: kvar
 
-    self%factor_cache_rangescale  = krige%block%rangescale (self%iblock)
-    self%factor_cache_localnugget = krige%block%localnugget(self%iblock)
-    self%factor_cache_nnear(1:krige%ngroups) = self%nnear(1:krige%ngroups)
-
+    self%npp         = ctx%npp
+    self%p           = krige%ndrift + krige%naug
+    self%rangescale  = krige%block%rangescale (ctx%iblock)
+    self%localnugget = krige%block%localnugget(ctx%iblock)
+    self%nnear(1:krige%ngroups) = ctx%nnear(1:krige%ngroups)
     do kvar = 1, krige%ngroups
-      if (self%nnear(kvar) > 0) then
-        self%factor_cache_inear(1:self%nnear(kvar), kvar) = &
-        self%inear(1:self%nnear(kvar), kvar)
-      end if
+      if (ctx%nnear(kvar) > 0) &
+        self%inear(1:ctx%nnear(kvar), kvar) = ctx%inear(1:ctx%nnear(kvar), kvar)
     end do
-    self%factor_cache_valid = .true.
-  end subroutine save_factor_cache_key
+    self%valid = .true.
+  end subroutine fcache_save_key
+
+
+  !----------------------------------------------------------------------------
+  ! fcache_copy_to — copy the active factor slices from self into dst
+  !
+  ! Only the live portion [1:npp, 1:pg] is transferred; both caches must be
+  ! pre-allocated to at least those dimensions.  Does NOT update the key or
+  ! valid flag of dst — call save_key() separately after copy_to().
+  !----------------------------------------------------------------------------
+  subroutine fcache_copy_to(self, dst, npp, p)
+    class(t_factor_cache), intent(in)    :: self
+    class(t_factor_cache), intent(inout) :: dst
+    integer, intent(in) :: npp, p
+    integer :: pg
+    pg = max(1, p)
+    dst%L         (1:npp, 1:npp) = self%L         (1:npp, 1:npp)
+    dst%kinv_drift(1:npp, 1:pg ) = self%kinv_drift(1:npp, 1:pg )
+    dst%schur     (1:pg,  1:pg ) = self%schur     (1:pg,  1:pg )
+  end subroutine fcache_copy_to
+
+
+  !----------------------------------------------------------------------------
+  ! fcache_copy_all — full cache copy: matrices + key metadata
+  !
+  ! Copies everything from src into self so that self becomes an exact replica
+  ! ready for cache matching, without needing a live ctx or krige argument.
+  ! Used to pre-warm a per-thread ctx%cache from self%pf before the block loop,
+  ! eliminating the need to enter the pf CRITICAL section for matching blocks.
+  !
+  ! Both caches must be pre-allocated to at least src%npp / src%p dimensions.
+  ! If src%valid is .false. this is a no-op.
+  !----------------------------------------------------------------------------
+  subroutine fcache_copy_all(self, src)
+    class(t_factor_cache), intent(inout) :: self
+    class(t_factor_cache), intent(in)    :: src
+    integer :: ngroups
+    if (.not. src%valid) return
+    call src%copy_to(self, src%npp, src%p)          ! matrices
+    self%npp         = src%npp
+    self%p           = src%p
+    self%rangescale  = src%rangescale
+    self%localnugget = src%localnugget
+    ngroups = size(src%nnear)
+    self%nnear(1:ngroups) = src%nnear(1:ngroups)
+    self%inear             = src%inear              ! whole-array; same dims guaranteed
+    self%valid = .true.
+  end subroutine fcache_copy_all
 
 
   !============================================================================
@@ -1379,6 +1467,23 @@ contains
         npp = npp + self%obs(ivar)%nmax
       end do
       matsize = npp + self%ndrift + self%naug
+
+      !-- Pre-allocate the persistent factor cache to worst-case dimensions so
+      !   no reallocation occurs inside the !$OMP CRITICAL section during solve.
+      !   Reallocate only when nppmax changes (e.g. nmax was changed via set_search).
+      if (self%pf_cache) then
+        if (allocated(self%pf%L)) then
+          if (size(self%pf%L, 1) /= npp) then
+            deallocate(self%pf%L, self%pf%kinv_drift, self%pf%schur, &
+                       self%pf%nnear, self%pf%inear)
+            self%pf%valid = .false.
+          end if
+        end if
+        if (.not. allocated(self%pf%L)) then
+          call self%pf%alloc(npp, self%ndrift + self%naug, &
+                             self%ngroups, maxval(self%obs%nmax))
+        end if
+      end if
 
       !-- Weight reuse: pre-load all blocks from the factor file into wstore so the
       !   parallel block loop can use load_block_weights without any file I/O.
@@ -1495,6 +1600,11 @@ contains
       !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ctx) IF(self%nsim==0 .and. nthread_local>1)
       allocate(ctx)                        ! each thread gets its own ctx
       call ctx%initialize(self)
+      !-- Pre-warm this thread's intra-solve cache from the persistent factor so
+      !   that matching blocks get a ctx%cache hit in assemble_linear_system
+      !   without ever entering the pf CRITICAL section.  self%pf is read-only
+      !   here (set in a prior solve()); ctx%cache is thread-private.
+      if (self%pf_cache .and. self%pf%valid) call ctx%cache%copy_all(self%pf)
 
       !$OMP DO SCHEDULE(DYNAMIC, 1)
       do ib = 1, nb
@@ -1530,6 +1640,16 @@ contains
         end if
       end do
       !$OMP END DO
+
+      !-- Save one thread's factor to the persistent cache (first valid wins).
+      !   All pf interaction is here, outside the block loop, so the hot path
+      !   inside the loop is completely free of CRITICAL sections.
+      if (self%pf_cache .and. .not. self%pf%valid .and. ctx%cache%valid) then
+        !$OMP CRITICAL(pf_save)
+        if (.not. self%pf%valid) call self%pf%copy_all(ctx%cache)
+        !$OMP END CRITICAL(pf_save)
+      end if
+
       deallocate(ctx)     ! explicit per-thread cleanup; avoids crash on runtime auto-finalization of PRIVATE allocatables
       !$OMP END PARALLEL
 
@@ -1951,7 +2071,7 @@ contains
 
     associate(nvar => self%nvar, npp => ctx%npp)
 
-      ctx%factor_cache_hit = .false.
+      ctx%cache%hit = .false.
 
       !-- Find neighbours for each variable
       do ivar = 1, nvar
@@ -1981,7 +2101,7 @@ contains
       !-- Sort obs-group neighbour indices into canonical order for the factorization
       !   cache.  The KD-tree ranks by distance; two blocks sharing the same neighbour
       !   set but at different locations receive them in different rank order.  Sorting
-      !   by observation index makes factor_cache_matches order-independent.
+      !   by observation index makes fcache_matches order-independent.
       !   Sim groups are not sorted: their nnear changes at virtually every SGSIM step
       !   so the cache never hits on them anyway.
       do ivar = 1, nvar
@@ -1990,13 +2110,13 @@ contains
 
       ctx%matsize = npp + self%ndrift + self%naug
 
-      if (ctx%factor_cache_matches(self)) then
-        ctx%factor_cache_hit = .true.
+      if (ctx%cache%matches(ctx, self)) then
+        ctx%cache%hit = .true.
         call self%assemble_rhs(ctx)
         return
       end if
 
-      ctx%factor_cache_valid = .false.
+      ctx%cache%valid = .false.
       call self%assemble_lhs(ctx)
       call self%assemble_rhs(ctx)
     end associate
@@ -2051,22 +2171,31 @@ contains
       p = self%ndrift + self%naug
 
       !-- Primary solver: Cholesky setup plus per-block RHS solve.
-      if (ctx%factor_cache_hit) then
-        call kriging_solve_prepared(npp, p, q, ctx%factor_L, ctx%factor_kinv_drift, &
-                                    ctx%factor_schur, rhsB, x, info)
+      !
+      !   Priority 1 — intra-solve ctx cache (same neighbour set as previous
+      !                block on this thread): skip kriging_setup entirely.
+      !   Priority 2 — full kriging_setup; save factor to ctx%cache for reuse
+      !                by subsequent blocks on this thread.
+      !
+      !   Inter-solve persistent factor (pf) is handled entirely outside the
+      !   block loop: pre-warmed into ctx%cache before the loop starts, and
+      !   saved back to pf after the loop ends.  No pf logic here.
+      if (ctx%cache%hit) then
+        call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
+                                    ctx%cache%schur, rhsB, x, info)
       else
-        call kriging_setup(npp, p, matA, ctx%factor_L, ctx%factor_kinv_drift, &
-                           ctx%factor_schur, info)
+        call kriging_setup(npp, p, matA, ctx%cache%L, ctx%cache%kinv_drift, &
+                           ctx%cache%schur, info)
         if (info == 0) then
-          call ctx%save_factor_cache_key(self)
-          call kriging_solve_prepared(npp, p, q, ctx%factor_L, ctx%factor_kinv_drift, &
-                                      ctx%factor_schur, rhsB, x, info)
+          call ctx%cache%save_key(ctx, self)
+          call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
+                                      ctx%cache%schur, rhsB, x, info)
         end if
       end if
 
       !-- Fallback: symmetric indefinite solver (SSYSV)
       if (info /= 0) then
-        ctx%factor_cache_valid = .false.
+        ctx%cache%valid = .false.
         call ssysv_fallback(npp, p, q, matA, rhsB, x, info)
         if (self%verbose) &
           print*, "Cholesky fails. Fallback SSYSV is used for block", iblock
@@ -2995,5 +3124,36 @@ end subroutine update_info
       stored = any(self%nnear /= 0)
     end if
   end function wstore_check_stored
+
+  ! ============================================================================
+  ! t_kriging wrappers for the persistent factor cache CAPI
+  ! ============================================================================
+
+  !-- Return scalar metadata from the persistent factor cache.
+  subroutine get_persistent_factor_info(self, npp_out, p_out, valid_out)
+    class(t_kriging), intent(in) :: self
+    integer, intent(out) :: npp_out, p_out
+    logical, intent(out) :: valid_out
+    npp_out   = self%pf%npp
+    p_out     = self%pf%p
+    valid_out = self%pf%valid
+  end subroutine get_persistent_factor_info
+
+
+  !-- Copy the three factor matrices into caller-supplied arrays.
+  !   Caller must have queried get_persistent_factor_info to size the outputs.
+  subroutine get_persistent_factor_matrices(self, npp, p, L_out, kinv_out, schur_out)
+    class(t_kriging), intent(in) :: self
+    integer, intent(in)  :: npp, p
+    real,    intent(out) :: L_out   (npp, npp)
+    real,    intent(out) :: kinv_out(npp, max(1,p))
+    real,    intent(out) :: schur_out(max(1,p), max(1,p))
+    integer :: pg
+    pg = max(1, p)
+    if (.not. self%pf%valid) return
+    L_out    (1:npp, 1:npp) = self%pf%L         (1:npp, 1:npp)
+    kinv_out (1:npp, 1:pg ) = self%pf%kinv_drift(1:npp, 1:pg )
+    schur_out(1:pg,  1:pg ) = self%pf%schur     (1:pg,  1:pg )
+  end subroutine get_persistent_factor_matrices
 
 end module kriging

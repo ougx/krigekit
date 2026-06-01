@@ -70,14 +70,14 @@ ifneq ($(origin FC),command line)
   ifeq ($(WINDOWS),1)
       ifneq ($(findstring sh,$(SHELL)),)
           # Unix-like shell on Windows (Git Bash, MSYS2, MinGW bash)
-          FIND_FC_CMD = which gfortran 2>/dev/null || which ifx 2>/dev/null || which ifort 2>/dev/null
+          FIND_FC_CMD = which ifx 2>/dev/null || which gfortran 2>/dev/null || which ifort 2>/dev/null
       else
           # Pure Windows CMD
-          FIND_FC_CMD = where gfortran 2>nul || where ifx 2>nul || where ifort 2>nul
+          FIND_FC_CMD = where ifx 2>nul || where gfortran 2>nul || where ifort 2>nul
       endif
   else
       # Linux / macOS
-      FIND_FC_CMD = which gfortran 2>/dev/null || which ifx 2>/dev/null || which ifort 2>/dev/null
+      FIND_FC_CMD = which ifx 2>/dev/null || which gfortran 2>/dev/null || which ifort 2>/dev/null
   endif
 
   # Capture the first valid path found and strip it down to just the executable name
@@ -105,28 +105,19 @@ LIB_BDIR := build/libkriging
 SPK_BDIR := build/sparks
 
 # ---------------------------------------------------------------------------
-# Windows: .def file lists every C-API export symbol
+# Windows: .def file lists every C-API export symbol.
+#
+# src/pykriging/kriging.def is maintained by hand — edit it whenever a
+# new bind(C) entry point is added to kriging_capi.F90 or
+# kriging_st_capi.f90.  Neither this Makefile nor build_lib.py generates
+# or overwrites the file.
+#
+# On Windows the file is passed directly to the linker:
+#   gfortran  — as a positional input (MinGW ld reads .def files natively)
+#   ifx/ifort — via  -link /def:$(DEF_FILE)
+# On Linux/macOS DEF_FILE is empty; -shared exports everything by default.
 # ---------------------------------------------------------------------------
-DEF_FILE  :=
-_DEF_SYMS := \
-  krige_create krige_destroy krige_initialize \
-  krige_set_obs krige_set_obs_drift krige_reset_vgm krige_set_vgm krige_set_vgm_block krige_to_str \
-  krige_set_grid krige_set_grid_block krige_set_grid_cv krige_set_grid_drift \
-  krige_set_sim krige_set_search krige_prepare \
-  krige_get_max_threads krige_get_num_threads \
-  krige_solve krige_get_nblocks krige_get_nsim \
-  krige_get_estimate krige_get_estimate_all krige_get_variance krige_get_variance_all krige_get_last_error \
-  krige_free_weight_store krige_get_weight_nnear krige_get_weight_inear krige_get_weight_data \
-  krige_get_weight_var krige_set_weights \
-  krige_st_create krige_st_destroy krige_st_initialize \
-  krige_st_set_st_model krige_update_obs_value \
-  krige_st_set_obs krige_st_set_obs_drift krige_st_set_vgm \
-  krige_st_set_vgm_temporal krige_st_set_vgm_joint_sills \
-  krige_st_set_grid krige_st_set_grid_block krige_st_set_grid_cv \
-  krige_st_set_grid_drift krige_st_set_sim krige_st_set_search \
-  krige_st_solve krige_st_get_nblocks krige_st_get_nsim \
-  krige_st_get_estimate krige_st_get_variance
-
+DEF_FILE :=
 ifeq ($(WINDOWS),1)
   DEF_FILE := src/pykriging/kriging.def
 endif
@@ -157,6 +148,8 @@ ifeq ($(FC),gfortran)
   SPK_MODF       := -J $(SPK_BDIR) -I $(SPK_BDIR)
 
   ifeq ($(WINDOWS),1)
+    # Pass kriging.def as a positional argument: MinGW ld reads .def files
+    # natively when they appear as linker inputs.
     DLL_EXTRA := $(DEF_FILE) -static -static-libgcc -static-libgfortran
   else
     DLL_EXTRA :=
@@ -172,7 +165,7 @@ else ifneq ($(filter $(FC),ifx ifort),)
     LIB_SHARED     := /dll /libs:static
     LIB_MODF       := /module:$(LIB_BDIR) /I$(LIB_BDIR)
     SPK_MODF       := /module:$(SPK_BDIR) /I$(SPK_BDIR)
-    DLL_EXTRA      := -link /def:src/pykriging/kriging.def
+    DLL_EXTRA      := -link /def:$(DEF_FILE)
   else
     FFLAGS         := -real-size:64 -traceback -fpp -nologo $(OMP_FLAGS) -heap-arrays:10
     FFLAGS_release := -O2 $(FFLAGS)
@@ -286,27 +279,21 @@ $(LIB_BDIR) $(SPK_BDIR) bin:
 	$(MKDIR) $@
 
 # ---------------------------------------------------------------------------
-# .def file
-# ---------------------------------------------------------------------------
-$(DEF_FILE):
-	python -c "syms = '$(_DEF_SYMS)'.split(); open(r'$@', 'w').write('EXPORTS\n' + ''.join('    ' + s + '\n' for s in syms))"
-
-# ---------------------------------------------------------------------------
 # clean (Uses standard CMD commands if run in pure Windows environment)
 # ---------------------------------------------------------------------------
 clean:
 ifeq ($(WINDOWS),1)
 ifneq ($(findstring cmd.exe,$(SHELL)),)
-	-del /Q /F $(subst /,\,$(DLL_FILE)) $(subst /,\,$(EXE_FILE)) $(subst /,\,$(DEF_FILE)) 2>nul
+	-del /Q /F $(subst /,\,$(DLL_FILE)) $(subst /,\,$(EXE_FILE)) 2>nul
 	-rmdir /S /Q build 2>nul
 	-del /Q /F *.mod *.obj *.o 2>nul
 else
-	-rm -f $(DLL_FILE) $(EXE_FILE) $(DEF_FILE)
+	-rm -f $(DLL_FILE) $(EXE_FILE)
 	-rm -rf build
 	-rm -f *.mod *.obj *.o
 endif
 else
-	-rm -f $(DLL_FILE) $(EXE_FILE) $(DEF_FILE)
+	-rm -f $(DLL_FILE) $(EXE_FILE)
 	-rm -rf build
 	-rm -f *.mod *.obj *.o
 endif

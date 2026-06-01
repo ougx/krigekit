@@ -138,6 +138,7 @@ _krige_initialize  = _status_cfun("krige_initialize",  [
     # flags: anisotropic_search, weight_correction, use_old_weight, store_weight,
     #        cross_validation, write_mat, neglect_error, varying_vgm, std_ck, verbose  (10 booleans as int)
     _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int, _c_int,
+    _c_int,                                      # pf_cache
     _c_char_p,                                   # weight_file
     _ptr_dbl,                                    # bounds[2]
     _c_int,                                      # seed
@@ -216,6 +217,10 @@ _krige_get_estimate    = _status_cfun("krige_get_estimate",    [ctypes.c_int64, 
 _krige_get_estimate_all= _status_cfun("krige_get_estimate_all",[ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
 _krige_get_variance    = _status_cfun("krige_get_variance",    [ctypes.c_int64, _c_int, _ptr_dbl])
 _krige_get_variance_all= _status_cfun("krige_get_variance_all",[ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_krige_get_factor_info    = _status_cfun("krige_get_factor_info",
+    [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int])
+_krige_get_factor_matrices= _status_cfun("krige_get_factor_matrices",
+    [ctypes.c_int64, _c_int, _c_int, _ptr_dbl, _ptr_dbl, _ptr_dbl])
 
 # _krige_alloc_weight_store = _optional_status_cfun("krige_alloc_weight_store", [ctypes.c_int64])
 _krige_free_weight_store  = _optional_status_cfun("krige_free_weight_store",  [ctypes.c_int64])
@@ -399,6 +404,7 @@ class Kriging:
         varying_vgm: bool = False,
         std_ck: bool = False,
         verbose: bool = False,
+        pf_cache: bool = False,
         weight_file: str = "",
         bounds: Optional[tuple] = None,
         seed: Optional[int] = None,
@@ -447,6 +453,13 @@ class Kriging:
               the gstat/ISATIS formulation.  Use this to match gstat output.
         verbose : bool
             Print progress messages.
+        pf_cache : bool
+            Enable the persistent between-solve factorization cache.  When
+            ``True``, the Cholesky factor of K is stored after the first
+            :meth:`solve` and reused on subsequent calls when the neighbour
+            set and variogram are unchanged (speeds up repeated solves on the
+            same observation grid).  Defaults to ``False``; enable only when
+            you plan to call :meth:`solve` multiple times and need the speedup.
         weight_file : str
             Path to the weight file (required when use_old_weight or store_weight).
         bounds : tuple(float, float) or None
@@ -487,6 +500,7 @@ class Kriging:
             _c_int(int(varying_vgm)),
             _c_int(int(std_ck)),
             _c_int(int(verbose)),
+            _c_int(int(pf_cache)),
             weight_file.encode("utf-8") if weight_file else b"",
             _dptr(c_bounds),
             _c_int(seed),
@@ -508,6 +522,7 @@ class Kriging:
         self.write_mat = write_mat
         self.varying_vgm = varying_vgm
         self.std_ck = std_ck
+        self.pf_cache = pf_cache
         self.weight_file = weight_file
         self.bounds = c_bounds
         self.seed = seed
@@ -1155,6 +1170,86 @@ class Kriging:
 
         return est, variance
 
+    def get_factor(self) -> dict:
+        """Return the persistent LHS factorization cached after the last :meth:`solve`.
+
+        The Cholesky factorization of the kriging covariance matrix K and the
+        related Schur-complement matrices are computed once per solve() call (or
+        reused across blocks with the same neighbour set).  Starting from the
+        second solve() call on unchanged observations and variogram, the cached
+        factors allow the Fortran engine to skip ``kriging_setup`` entirely.
+
+        This method exposes those matrices so that users can inspect or verify
+        the factorization.
+
+        Returns
+        -------
+        dict with keys:
+
+        ``valid`` : bool
+            ``True`` if a persistent factor exists (i.e. at least one solve()
+            has been completed and observations/variogram have not changed since).
+        ``npp`` : int
+            Number of neighbours in the LHS matrix (size of K).
+        ``p`` : int
+            Number of drift + unbiasedness columns (size of the Schur complement).
+        ``L`` : ndarray, shape (npp, npp)
+            Lower-triangular Cholesky factor of K  (stored column-major by Fortran,
+            returned as a C-contiguous array).
+        ``kinv_drift`` : ndarray, shape (npp, max(1, p))
+            K⁻¹ F  (K inverse applied to the drift matrix F).
+        ``schur`` : ndarray, shape (max(1, p), max(1, p))
+            Cholesky factor of the Schur complement  F' K⁻¹ F.
+
+        Example
+        -------
+        >>> k = Kriging(ndim=2, nvar=1, ndrift=1, unbias=0)
+        >>> # ... set_obs, set_vgm, set_grid, set_obs_drift, set_grid_drift ...
+        >>> k.solve()
+        >>> f = k.get_factor()
+        >>> if f['valid']:
+        ...     L = f['L']            # Cholesky factor of covariance matrix
+        ...     kinv = f['kinv_drift']  # K^{-1} F
+        ...     schur = f['schur']    # Cholesky of Schur complement
+
+        Notes
+        -----
+        The factor is invalidated (``valid = False``) whenever :meth:`set_obs`
+        or :meth:`set_vgm` is called.  Call :meth:`solve` again to repopulate.
+        """
+        c_npp   = ctypes.c_int(0)
+        c_p     = ctypes.c_int(0)
+        c_valid = ctypes.c_int(0)
+        _krige_get_factor_info(_h(self._handle),
+                               ctypes.byref(c_npp),
+                               ctypes.byref(c_p),
+                               ctypes.byref(c_valid))
+        valid = bool(c_valid.value)
+        npp   = c_npp.value
+        p     = c_p.value
+
+        if not valid:
+            return dict(valid=False, npp=0, p=0,
+                        L=None, kinv_drift=None, schur=None)
+
+        pg = max(1, p)
+        L_buf     = _fempty((npp, npp), dtype=np.float64)
+        kinv_buf  = _fempty((npp, pg),  dtype=np.float64)
+        schur_buf = _fempty((pg,  pg),  dtype=np.float64)
+
+        _krige_get_factor_matrices(
+            _h(self._handle),
+            _c_int(npp), _c_int(p),
+            _dptr(L_buf), _dptr(kinv_buf), _dptr(schur_buf),
+        )
+
+        return dict(
+            valid=True, npp=npp, p=p,
+            L         = np.asarray(L_buf,     order='C'),
+            kinv_drift= np.asarray(kinv_buf,  order='C'),
+            schur     = np.asarray(schur_buf, order='C'),
+        )
+
     def get_estimate_all(self, copy: bool = False):
         """Return multivariable estimates / simulations for all variables.
 
@@ -1459,13 +1554,14 @@ def ordinary_kriging(
     obs_value: np.ndarray,
     grid_coord: np.ndarray,
     vgm_spec: "dict | list[dict]",
-    nmax: int = 20,
+    nmax: Optional[int] = None,
     maxdist: Optional[float] = None,
     search_anis1: float = 1.0,
     search_anis2: float = 1.0,
     search_azimuth: float = 0.0,
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
+    nthread=0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     One-shot ordinary kriging with a single isotropic (or anisotropic) variogram.
@@ -1491,6 +1587,8 @@ def ordinary_kriging(
         Anisotropy ratios for search ellipse (1.0 = isotropic).
     search_azimuth : float
         Azimuth of search ellipse major axis (degrees from North).
+    nthread: int
+        max OMP threads for this call (0 or absent = OMP default)
 
     Returns
     -------
@@ -1507,6 +1605,8 @@ def ordinary_kriging(
     assert obs_coord.shape[0] == obs_value.shape[0], (
         f"obs_coord has {obs_coord.shape[0]} rows but obs_value has {obs_value.shape[0]} elements."
     )
+    if nmax is None:
+        nmax = len(obs_coord) + len(grid_coord)
     ndim = obs_coord.shape[1]   # (nobs, ndim) -> ndim is axis 1
     k = Kriging(ndim=ndim, nvar=1)
     k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
@@ -1516,7 +1616,7 @@ def ordinary_kriging(
         k.set_vgm(ivar=1, jvar=1, **spec)
     k.set_search(ivar=1, anis1=search_anis1, anis2=search_anis2,
                  azimuth=search_azimuth)
-    k.solve()
+    k.solve(nthread)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
     return est, var
 
@@ -1526,9 +1626,10 @@ def cokriging(
     obs_values: list[np.ndarray],
     grid_coord: np.ndarray,
     vgm_spec: dict,
-    nmax: int = 20,
+    nmax: Optional[int] = None,
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
+    nthread: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     One-shot ordinary co-kriging with multiple variables.
@@ -1548,6 +1649,8 @@ def cokriging(
         (j,i) will mirror it automatically (handled inside Fortran set_vgm).
     nmax : int
         Maximum neighbours per variable.
+    nthread: int
+        max OMP threads for this call (0 or absent = OMP default)
 
     Returns
     -------
@@ -1568,6 +1671,8 @@ def cokriging(
     """
     nvar = len(obs_coords)
     ndim = obs_coords[0].shape[1]   # (nobs, ndim) -> ndim is axis 1
+    if nmax is None:
+        nmax = max([len(obs_coord) for obs_coord in obs_coords]) + len(grid_coord)
     k = Kriging(ndim=ndim, nvar=nvar)
 
     for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
@@ -1582,7 +1687,7 @@ def cokriging(
     for i in range(1, nvar + 1):
         k.set_search(ivar=i)
 
-    k.solve()
+    k.solve(nthread)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
     return est, var
 
@@ -1593,12 +1698,13 @@ def sequential_gaussian_simulation(
     grid_coord: np.ndarray,
     vgm_spec: str,
     nsim: int,
-    nmax: int = 20,
+    nmax: Optional[int] = None,
     randpath: Optional[np.ndarray] = None,
     sample: Optional[np.ndarray] = None,
     seed: Optional[int] = None,
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
+    nthread: int = 0,
 ) -> np.ndarray:
     """
     Sequential Gaussian Simulation.
@@ -1620,6 +1726,8 @@ def sequential_gaussian_simulation(
         Maximum neighbours (includes previously simulated nodes).
     seed : int, optional
         Random seed for reproducibility.
+    nthread: int
+        max OMP threads for this call (0 or absent = OMP default)
 
     Returns
     -------
@@ -1628,6 +1736,8 @@ def sequential_gaussian_simulation(
     """
 
     ndim = obs_coord.shape[1]   # (nobs, ndim) -> ndim is axis 1
+    if nmax is None:
+        nmax = len(obs_coord) + len(grid_coord)
 
     k = Kriging(ndim=ndim, nvar=1, nsim=nsim, seed=seed)
     k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=nmax)
@@ -1637,7 +1747,7 @@ def sequential_gaussian_simulation(
     # set_sim with no args: Python generates random path and N(0,1) samples
     k.set_sim(randpath, sample)
     k.set_search(ivar=1)
-    k.solve()
+    k.solve(nthread)
 
     sims, _ = k.get_results()   # shape (nsim, ngrid)
     return sims
