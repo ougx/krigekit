@@ -7,6 +7,7 @@ Choose the guide that matches your task:
 
 ordinary_kriging
 cokriging
+universal_kriging
 ```
 
 **Coming in Phase 2:**
