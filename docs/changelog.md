@@ -19,21 +19,34 @@ Initial release.
 
 ### Persistent between-solve factorisation cache (Fortran)
 
-The Cholesky factorisation of the kriging covariance matrix **K** is now
-preserved on the `t_kriging` object after each `solve()` call (`pf_L`,
-`pf_kinv_drift`, `pf_schur`).  On subsequent `solve()` calls with unchanged
-observations and variogram, `kriging_setup` is skipped and the cached factors
-are copied into the thread-private context — saving the $O(N^3)$
-factorisation for the cost of an $O(N^2 p)$ array copy.
+The Cholesky factorisation of the kriging covariance matrix **K** can now be
+preserved across successive `solve()` calls via an opt-in flag `pf_cache=True`
+passed to the constructor (or `krige_initialize`).  When enabled, the factored
+matrices (`L`, `K⁻¹F`, Schur complement) are stored after the first solve and
+reused on subsequent calls with unchanged observations and variogram — saving
+the $O(N^3)$ factorisation for the cost of an $O(N^2 p)$ array copy.
+
+**Architecture** — all persistent-factor interaction is outside the parallel
+block loop:
+
+- *Before the loop* — each thread pre-warms its private `ctx%cache` from
+  `self%pf` via `copy_all`.  Matching blocks then hit the existing intra-solve
+  cache in `assemble_linear_system` and never enter a CRITICAL section.
+- *Inside the loop* — no pf logic; the hot path is completely free of locks.
+- *After the loop* — the first thread with a valid `ctx%cache` writes it to
+  `self%pf` inside a single `!$OMP CRITICAL(pf_save)`.
+
+The persistent factor (`self%pf`) and the per-thread intra-solve cache
+(`ctx%cache`) are both instances of the same `t_factor_cache` derived type,
+sharing `alloc`, `matches`, `save_key`, `copy_to`, and `copy_all` methods.
 
 Cache invalidation is automatic:
-- `set_obs` — coordinates may change K; sets `pf_valid = .false.`
-- `set_vgm` — variogram changes K; sets `pf_valid = .false.`
+- `set_obs` — coordinates may change K; sets `pf%valid = .false.`
+- `set_vgm` — variogram changes K; sets `pf%valid = .false.`
 - `update_obs_value` — values affect only the RHS, not K; cache preserved
 
-Within a single `solve()` call, the existing intra-solve block-to-block cache
-(same neighbour set → skip `kriging_setup`) remains highest priority.  The new
-between-call cache is used as a fallback when the intra-solve cache is cold.
+The cache is **disabled by default** (`pf_cache=False`).  Enable it only when
+you plan to call `solve()` multiple times on the same observation grid.
 
 New C API functions:
 - `krige_get_factor_info(handle, npp, p, valid)` — query dimensions and validity
@@ -42,6 +55,33 @@ New C API functions:
 New Python method:
 - `Kriging.get_factor()` — returns a dict with keys `valid`, `npp`, `p`,
   `L`, `kinv_drift`, `schur` (all as NumPy arrays when `valid=True`)
+
+### Structured result array (`get_result_array`)
+
+`Kriging.get_result_array()` returns a NumPy structured array (one row per
+block) combining block coordinates, estimates/simulations, and variances in a
+single object.
+
+| Scenario | Fields |
+|---|---|
+| Kriging, `nvar=1` | `x, y [,z], estimate, variance` |
+| Kriging, `nvar>1` | `x, y, est_v1, …, est_v{nvar}, var_v1, …` |
+| SGSIM, `nvar=1` | `x, y, sim_1, …, sim_{nsim}, variance` |
+| SGSIM, `nvar>1` | `x, y, v1_s1, …, v{nvar}_s{nsim}, var_v1, …` |
+
+```python
+k.solve()
+ra = k.get_result_array()
+ra.dtype.names          # ('x', 'y', 'estimate', 'variance')
+ra['estimate']          # 1-D array, shape (nblocks,)
+
+import pandas as pd
+df = pd.DataFrame(ra)   # convert to DataFrame directly
+```
+
+New C API function:
+- `krige_get_block_coord(handle, ndim_c, nblocks, out)` — copies
+  `block%coord(1:ndim, 1:nblocks)` into a caller-allocated buffer
 
 ### Internal / correctness changes
 

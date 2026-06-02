@@ -211,8 +211,9 @@ _krige_set_search  = _status_cfun("krige_set_search", [
 ])
 _krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64, ctypes.c_int])
 # _krige_print       = _cfun("krige_print",       [ctypes.c_int64])
-_krige_get_nblocks = _status_cfun("krige_get_nblocks", [ctypes.c_int64, _ptr_int])
-_krige_get_nsim    = _status_cfun("krige_get_nsim",    [ctypes.c_int64, _ptr_int])
+_krige_get_nblocks     = _status_cfun("krige_get_nblocks",     [ctypes.c_int64, _ptr_int])
+_krige_get_nsim        = _status_cfun("krige_get_nsim",        [ctypes.c_int64, _ptr_int])
+_krige_get_block_coord = _status_cfun("krige_get_block_coord", [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
 _krige_get_estimate    = _status_cfun("krige_get_estimate",    [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
 _krige_get_estimate_all= _status_cfun("krige_get_estimate_all",[ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
 _krige_get_variance    = _status_cfun("krige_get_variance",    [ctypes.c_int64, _c_int, _ptr_dbl])
@@ -1169,6 +1170,123 @@ class Kriging:
             variance = np.array(variance, order="C", copy=True)
 
         return est, variance
+
+    def get_result_array(self) -> np.ndarray:
+        """
+        Return all results as a NumPy structured (record) array — one row per block.
+
+        The array contains block centroid coordinates alongside every estimate,
+        simulation realization, and variance produced by the last :meth:`solve`.
+
+        Fields
+        ------
+        Coordinates (always present):
+          ``x``, ``y`` [, ``z``]  — block centroid coordinates.
+
+        Estimates / simulations:
+          Kriging (``nsim == 0``), ``nvar == 1``:  ``estimate``
+          Kriging (``nsim == 0``), ``nvar > 1``:   ``est_v1``, ``est_v2``, …
+          SGSIM  (``nsim > 0``),  ``nvar == 1``:  ``sim_1``, ``sim_2``, …, ``sim_{nsim}``
+          SGSIM  (``nsim > 0``),  ``nvar > 1``:   ``v1_s1``, ``v1_s2``, …, ``v{nvar}_s{nsim}``
+
+        Variances (always present, diagonal of conditional covariance):
+          ``nvar == 1``:  ``variance``
+          ``nvar > 1``:   ``var_v1``, ``var_v2``, …
+
+        Returns
+        -------
+        np.ndarray with named fields (structured array / record array)
+            Shape ``(nblocks,)``.  Access a column with ``arr['estimate']``,
+            convert to a plain 2-D array with ``np.column_stack([arr[f] for f in arr.dtype.names])``.
+
+        Example
+        -------
+        >>> k.solve()
+        >>> ra = k.get_result_array()
+        >>> ra.dtype.names
+        ('x', 'y', 'estimate', 'variance')
+        >>> ra['estimate']          # 1-D array, shape (nblocks,)
+        >>> import pandas as pd
+        >>> df = pd.DataFrame(ra)   # direct conversion to DataFrame
+        """
+        nb_c = ctypes.c_int(0)
+        ns_c = ctypes.c_int(0)
+        _krige_get_nblocks(_h(self._handle), ctypes.byref(nb_c))
+        _krige_get_nsim   (_h(self._handle), ctypes.byref(ns_c))
+
+        nblocks = nb_c.value
+        nsim    = ns_c.value          # 0 for plain kriging
+        ns      = max(1, nsim)        # always at least 1 for Fortran call
+        nv      = self.nvar
+        nd      = self.ndim
+
+        # --- coordinates: Fortran fills (ndim, nblocks), Python reads (nblocks, ndim) ---
+        coord_f = _fempty((nd, nblocks))
+        _krige_get_block_coord(_h(self._handle), _c_int(nd), _c_int(nblocks), _dptr(coord_f))
+        coord = np.ascontiguousarray(coord_f.T)        # (nblocks, ndim)
+
+        # --- estimates / simulations: (nblocks, nvar, ns) Fortran-order ---
+        est_f = _fempty((nblocks, nv, ns))
+        _krige_get_estimate_all(_h(self._handle), _c_int(nblocks), _c_int(nv), _c_int(ns), _dptr(est_f))
+        est = np.ascontiguousarray(est_f)              # (nblocks, nvar, ns)
+
+        # --- variance: (nblocks, nvar, nvar), take diagonal → (nblocks, nvar) ---
+        var_f = _fempty((nblocks, nv, nv))
+        _krige_get_variance_all(_h(self._handle), _c_int(nblocks), _c_int(nv), _dptr(var_f))
+        var_arr = np.ascontiguousarray(var_f)          # (nblocks, nvar, nvar)
+        var_diag = np.stack([var_arr[:, i, i] for i in range(nv)], axis=1)  # (nblocks, nvar)
+
+        # --- build dtype ---
+        coord_names = ['x', 'y', 'z'][:nd]
+        dtype_fields = [(name, np.float64) for name in coord_names]
+
+        is_sgsim = nsim > 0
+        if is_sgsim:
+            if nv == 1:
+                sim_fields = [f'sim_{i+1}' for i in range(nsim)]
+            else:
+                sim_fields = [f'v{iv+1}_s{isim+1}' for iv in range(nv) for isim in range(nsim)]
+        else:
+            if nv == 1:
+                sim_fields = ['estimate']
+            else:
+                sim_fields = [f'est_v{iv+1}' for iv in range(nv)]
+        dtype_fields += [(name, np.float64) for name in sim_fields]
+
+        if nv == 1:
+            var_fields = ['variance']
+        else:
+            var_fields = [f'var_v{iv+1}' for iv in range(nv)]
+        dtype_fields += [(name, np.float64) for name in var_fields]
+
+        # --- populate record array ---
+        out = np.empty(nblocks, dtype=dtype_fields)
+
+        for i, name in enumerate(coord_names):
+            out[name] = coord[:, i]
+
+        if is_sgsim:
+            if nv == 1:
+                for isim in range(nsim):
+                    out[f'sim_{isim+1}'] = est[:, 0, isim]
+            else:
+                for iv in range(nv):
+                    for isim in range(nsim):
+                        out[f'v{iv+1}_s{isim+1}'] = est[:, iv, isim]
+        else:
+            if nv == 1:
+                out['estimate'] = est[:, 0, 0]
+            else:
+                for iv in range(nv):
+                    out[f'est_v{iv+1}'] = est[:, iv, 0]
+
+        if nv == 1:
+            out['variance'] = var_diag[:, 0]
+        else:
+            for iv in range(nv):
+                out[f'var_v{iv+1}'] = var_diag[:, iv]
+
+        return out
 
     def get_factor(self) -> dict:
         """Return the persistent LHS factorization cached after the last :meth:`solve`.

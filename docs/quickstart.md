@@ -45,7 +45,8 @@ k.set_grid(coord=grid_coord)
 k.set_search(ivar=1)
 k.solve()
 
-est, var = k.get_results()
+est, var = k.get_results()          # separate arrays
+ra = k.get_result_array()           # structured array: x, y, estimate, variance
 ```
 
 ### Workflow order
@@ -57,7 +58,8 @@ Kriging(ndim, nvar)
   └─ set_grid(coord)                        # define estimation targets
   └─ set_search(ivar)                       # build spatial search index
   └─ solve()                                # run kriging
-  └─ get_results()                          # retrieve est, var
+  └─ get_results()                          # retrieve est, var as separate arrays
+  └─ get_result_array()                     # retrieve as a structured NumPy array
 ```
 
 :::{note}

@@ -715,6 +715,23 @@ contains
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_nsim
 
+  !-- Copy block%coord(1:ndim_c, 1:nblocks) into the caller-allocated array.
+  !   out is filled as out(ndim_c, nblocks) in Fortran column-major order so
+  !   that Python can read it as a (ndim_c, nblocks) Fortran-order array and
+  !   transpose to (nblocks, ndim_c) for standard Python row-major convention.
+  integer(c_int) function krige_get_block_coord(handle, ndim_c, nblocks, out) &
+      bind(C, name='krige_get_block_coord') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ndim_c, nblocks
+    real(c_double),      intent(out)       :: out(ndim_c, nblocks)
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    out = real(obj%block%coord(1:ndim_c, 1:nblocks), c_double)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_block_coord
+
   !-- Copy primary estimate(1:nblocks, 1:nsim_c, 1) into the caller-allocated out array.
   integer(c_int) function krige_get_estimate(handle, nsim_c, nblocks, out) &
       bind(C, name='krige_get_estimate') result(ierr)

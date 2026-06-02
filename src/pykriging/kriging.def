@@ -33,6 +33,7 @@ EXPORTS
     ; --- Results ---
     krige_get_nblocks
     krige_get_nsim
+    krige_get_block_coord
     krige_get_estimate
     krige_get_estimate_all
     krige_get_variance
