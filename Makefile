@@ -61,6 +61,10 @@ endif
 # `make` works reliably on Windows with GNU Make and gfortran from %PATH%.
 .NOTPARALLEL:
 
+# Detect whether Make is using a POSIX-like shell
+SHELL_NAME := $(notdir $(basename $(SHELL)))
+POSIX_SHELL := $(filter sh bash zsh dash ksh,$(SHELL_NAME))
+
 # ---------------------------------------------------------------------------
 # Compiler — auto-detect unless the user passed FC=... on the make command line.
 # Some Windows developer shells set environment variables such as FC=Microsoft;
@@ -68,27 +72,29 @@ endif
 # ---------------------------------------------------------------------------
 ifneq ($(origin FC),command line)
   ifeq ($(WINDOWS),1)
-      ifneq ($(findstring sh,$(SHELL)),)
+      ifneq ($(POSIX_SHELL),)
           # Unix-like shell on Windows (Git Bash, MSYS2, MinGW bash)
-          FIND_FC_CMD = which ifx 2>/dev/null || which gfortran 2>/dev/null || which ifort 2>/dev/null
+          FIND_FC_CMD = for c in ifx gfortran ifort; do command -v $$c >/dev/null 2>&1 && echo $$c; done
       else
           # Pure Windows CMD
-          FIND_FC_CMD = where ifx 2>nul || where gfortran 2>nul || where ifort 2>nul
+          FIND_FC_CMD = for %%c in (ifx gfortran ifort) do @where %%c >nul 2>nul && @echo %%c
       endif
   else
       # Linux / macOS
-      FIND_FC_CMD = which ifx 2>/dev/null || which gfortran 2>/dev/null || which ifort 2>/dev/null
+      FIND_FC_CMD = for c in ifx gfortran ifort; do command -v $$c >/dev/null 2>&1 && echo $$c; done
   endif
 
   # Capture the first valid path found and strip it down to just the executable name
   _FC_FOUND := $(subst \,/,$(firstword $(shell $(FIND_FC_CMD))))
-  FC := $(notdir $(basename $(_FC_FOUND)))
+  FC := $(basename $(notdir $(_FC_FOUND)))
 #   $(info [DEBUG] Current FIND_FC_CMD is: $(FIND_FC_CMD))
 #   $(info [DEBUG] Discovered compiler path: $(_FC_FOUND))
 endif
 
 ifeq ($(FC),)
   $(error No Fortran compiler found. Set FC=gfortran, FC=ifx, or FC=ifort)
+else
+  $(info Using Fortran compiler: $(FC))
 endif
 
 # ---------------------------------------------------------------------------
