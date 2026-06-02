@@ -46,6 +46,7 @@ program sparks
   integer         :: nobs1, nmax1
   integer         :: nobs2, nmax2
   integer         :: nblock
+  integer         :: nthread
   real            :: sk_mean, maxdist1, maxdist2, vmin, vmax, blocksize(3)
 
   ! inputs — allocatable arrays
@@ -86,7 +87,7 @@ program sparks
     ndim, ndrift, nobs1, nobs2, ngrid, nblock, nsim
 
   namelist /krige_opt/ &
-    nmax1, nmax2, unbias, maxdist1, maxdist2, sk_mean, vmin, vmax, block_type, blocksize, seed
+    nmax1, nmax2, unbias, maxdist1, maxdist2, sk_mean, vmin, vmax, block_type, blocksize, seed, nthread
 
   namelist /variograms/ &
     vgm_spec1, vgm_spec2, vgm_specc
@@ -135,6 +136,7 @@ program sparks
     option_s("writexy",         "xy", 0, "include id and coordinates in output. default: values only."), &
     option_s("continue",        "cc", 0, "set failed blocks to NaN instead of aborting."), &
     option_s("verbose",         "v",  0, "print progress messages during solving."), &
+    option_s("nthread",         "nt", 1, "number of OpenMP threads for the solve loop. 0 (default) uses the OMP runtime setting (OMP_NUM_THREADS)."), &
     option_s("loocv",           "cv", 0, "leave-one-out cross-validation: grid equals observations."), &
     option_s("writemat",        "wm", 0, "write kriging matrix and rhs to files for debugging."), &
     option_s("showargs",        "sa", 0, "print full configuration summary before solving."), &
@@ -151,7 +153,7 @@ program sparks
   ndrift = 0; unbias = 0; seed = 0
   ang1 = zero; ang2 = zero; ang3 = zero
   anis1 = one; anis2 = one
-  nsim = 0; block_type = 0
+  nsim = 0; block_type = 0; nthread = 0
   correct_weight = .false.
   ndim = 2; nobs1 = 0; nobs2 = 0; ngrid = 0; nblock = 0; nvar = 1
   vmin = -large; vmax = large
@@ -243,6 +245,7 @@ program sparks
       case ("fm"); read (optarg, *) fomt
       case ("oe"); obserror = .true.
       case ("cc"); neglect_error = .true.
+      case ("nt"); read (optarg, *) nthread
       case ("xy"); writexy = .true.
       case ("v"); verbose = .true.
       case ("cv"); loocv = .true.
@@ -405,7 +408,7 @@ program sparks
   ! ---- show options after krig setup -------------------
   if (showargs) call showoptions()
   ! ---- hand data to t_kriging and solve -------------------------------------
-  call krig%solve()
+  call krig%solve(nthread)
   call stop_if_kriging_failed('solving kriging system')
   call write_output()
   call krig%finalize()
