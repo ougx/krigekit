@@ -51,6 +51,28 @@ def pc2d_obs():
 
 
 @pytest.fixture(scope="session")
+def aem2d():
+    """AEM data (aem2d.csv)."""
+    df = pd.read_csv(data_path("aem2d.csv"))
+    return df[["x", "y"]].values, df["logRho"].values
+
+
+@pytest.fixture(scope="session")
+def aem2d_small(aem2d):
+    """Reproducible 80-point subset of AEM data (aem2d.csv).
+
+    Uses a fixed-seed Generator so the selected indices are identical
+    regardless of the global numpy random state (which depends on test
+    execution order).  Changing this seed may require updating tolerances
+    in TestCoKrigingButte if the new subset is numerically less well-conditioned.
+    """
+    coord, value = aem2d
+    rng = np.random.default_rng(seed=42)
+    iloc = rng.choice(len(value), 80, replace=False)
+    return coord[iloc], value[iloc]
+
+
+@pytest.fixture(scope="session")
 def pc2d_grid():
     """4800 grid nodes in 2D with reference kriging results (grid2d.csv)."""
     df = pd.read_csv(data_path("grid2d.csv"))

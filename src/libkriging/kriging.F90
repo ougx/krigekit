@@ -137,11 +137,28 @@ module kriging
   end type t_obsgrid
 
   !============================================================================
+  ! t_grad — gradient constraint pair group
+  !
+  ! Extends t_data where each entry t represents one finite-difference pair:
+  !   coord    [ndim, n] — positive-side fictitious point xs1
+  !   coord2   [ndim, n] — negative-side fictitious point xs2
+  !   value    [1, 1, n] — known delta Z = Z(xs1) - Z(xs2)
+  !   variance [1,1,n] — gradient observation variance (0 = exact constraint)
+  !   drift    [ndrift+naug, 1, n] — drift-function differences f(xs1)-f(xs2)
+  !
+  ! Indexed as self%grad(ivar): one group per co-kriging variable.
+  !============================================================================
+  type, extends(t_data) :: t_grad
+    real, allocatable :: coord2(:,:)   ! [ndim, n] negative-side fictitious point
+  end type t_grad
+
+  !============================================================================
   ! Neighbour-group layout convention
   !
   ! Group arrays (nnear, inear, weight) use a sequential layout:
-  !   Groups 1:nvar         = real observations, variable ig        (always present)
-  !   Groups nvar+1:ngroups = previously simulated blocks, variable ig-nvar  (SGSIM only)
+  !   Groups 1:nvar               = real observations, variable ig     (always present)
+  !   Groups nvar+1:ngroups_base  = previously simulated blocks, ig-nvar (SGSIM only)
+  !   Groups ngroups_base+1:ngroups = gradient pair groups, variable ig-ngroups_base
   !
   ! Matrix layout (ctx%istart)
   ! --------------------------
@@ -154,8 +171,11 @@ module kriging
   ! instead of a running accumulation, so both routines loop over groups in any
   ! order and index the matrix directly.
   !
-  ! Group type checks:  kvar > nvar  — .true. when kvar is a simulated-block group
+  ! Group type checks:
+  !   kvar > nvar           — simulated-block group (ivar = kvar - nvar)
+  !   kvar > ngroups_base   — gradient pair group   (givar = kvar - ngroups_base)
   ! Variable index:     obs kvar → ivar = kvar;  sim kvar → ivar = kvar - nvar
+  !                     grad kvar → givar = kvar - ngroups_base
   !============================================================================
 
   !============================================================================
@@ -284,6 +304,17 @@ module kriging
     ! -----------------------------------------------------------------------
     logical              :: pf_cache = .false.
     type(t_factor_cache) :: pf
+    ! -----------------------------------------------------------------------
+    ! Gradient constraint pairs (Delhomme 1979: "Kriging in hydrology")
+    !
+    ! self%grad(ivar) holds the gradient pair group for variable ivar.
+    ! ngroups_base is the group count without grad (nvar obs + nvar sim).
+    ! ngroups = ngroups_base + nvar (grad group slots appended at the end).
+    ! ngrad = sum(grad(:)%n) is the total gradient pairs across all variables.
+    ! -----------------------------------------------------------------------
+    integer              :: ngroups_base = 0     ! groups without grad (nvar + nvar_sim)
+    integer              :: ngrad = 0            ! total gradient pairs = sum(grad(:)%n)
+    type(t_grad), pointer :: grad(:) => null()  ! [1:nvar] one grad group per variable
   contains
     procedure :: initialize
     procedure :: set_obs
@@ -323,6 +354,9 @@ module kriging
     ! Persistent factor cache getters (delegate to self%pf)
     procedure :: get_persistent_factor_info
     procedure :: get_persistent_factor_matrices
+    ! Boundary condition pairs
+    procedure :: set_grad
+    procedure :: reset_grad
   end type
 
   !============================================================================
@@ -333,9 +367,10 @@ module kriging
   !
   ! Index convention for nnear / inear / weight
   ! -------------------------------------------
-  ! These arrays are indexed 1:ngroups (see group layout convention above).
-  !   Groups 1:nvar        = real observation neighbours for each variable.
-  !   Groups nvar+1:ngroups = previously simulated block neighbours (SGSIM only).
+  ! These arrays are indexed 1:ngroups (full extended count, includes grad groups).
+  !   Groups 1:nvar                  = real observation neighbours for each variable.
+  !   Groups nvar+1:ngroups_base     = previously simulated block neighbours (SGSIM only).
+  !   Groups ngroups_base+1:ngroups  = gradient pair groups, variable ig-ngroups_base.
   !============================================================================
   type :: t_kriging_ctx
     integer              :: iblock           ! current block index
@@ -426,14 +461,20 @@ contains
     end if
 
     !-- Build neighbour-group descriptors.
-    !   Groups 1:nvar         = real obs for each variable (always present).
-    !   Groups nvar+1:2*nvar  = previously simulated blocks (SGSIM only).
+    !   Groups 1:nvar                 = real obs for each variable (always present).
+    !   Groups nvar+1:ngroups_base    = previously simulated blocks (SGSIM only).
+    !   Groups ngroups_base+1:ngroups = gradient pair groups, one per variable.
     if (self%nsim > 0) then
-      self%ngroups = 2 * self%nvar
+      self%ngroups_base = self%nvar * 2
     else
-      self%ngroups = self%nvar
+      self%ngroups_base = self%nvar
     end if
+    ! ngroups starts equal to ngroups_base; prepare() expands it to
+    ! ngroups_base + nvar when grad pairs are actually present.
+    self%ngroups = self%ngroups_base
+
     allocate(self%obs  (self%nvar))
+    allocate(self%grad (self%nvar))
     allocate(self%grid)
     allocate(self%block)
     !-- vgm is always indexed 1:nvar; vgm_real_idx() maps simulated-block ivar<=0
@@ -1237,19 +1278,22 @@ contains
     class(t_kriging_ctx) :: self
     class(t_kriging)     :: krige
 
-    integer :: ivar, kvar, mmax, pmax
+    integer :: ivar, kvar, kgrad, mmax, mmax_obs, mmax_grad, pmax
     logical :: need_rhs
-    mmax = maxval(krige%obs%nmax)   ! max neighbours across all variables
+    mmax_obs  = maxval(krige%obs%nmax)
+    mmax_grad = maxval(krige%grad%n)
+    mmax = max(mmax_obs, mmax_grad)
     pmax = krige%ndrift + krige%naug
 
     associate(npp => krige%nppmax, matsize => krige%matsize_max, &
-              ng  => krige%ngroups, nv => krige%nvar)
+              ng  => krige%ngroups, nb => krige%ngroups_base, nv => krige%nvar)
 
       if (.not. krige%use_old_weight) then
         allocate(self%istart(ng))
         allocate(self%matA(matsize, matsize))
         allocate(self%rhsB(nv, matsize))
-        call self%cache%alloc(npp, pmax, ng, mmax)
+        ! fcache covers only obs+sim groups (ngroups_base); grad pairs are fixed
+        call self%cache%alloc(npp, pmax, nb, mmax_obs)
       end if
       allocate(self%nnear (ng))
       allocate(self%inear (mmax, ng))
@@ -1259,15 +1303,25 @@ contains
       self%x      = 0.0
 
       !-- Obs groups (1:nvar): start with all obs as candidate neighbours.
-      !   Sim groups (nvar+1:ngroups): start empty; filled by search_neighbors.
+      !   Sim groups (nvar+1:ngroups_base): start empty; filled by search_neighbors.
       call set_seq(self%inear(1:mmax, 1), mmax)
       do ivar = 1, nv
         self%nnear(ivar)    = krige%obs(ivar)%nmax
         self%inear(:, ivar) = self%inear(:, 1)
       end do
-      do kvar = nv + 1, ng   ! sim groups only
+      do kvar = nv + 1, nb   ! sim groups only
         self%nnear(kvar) = 0
       end do
+      ! Grad groups (ngroups_base+1:ngroups): fixed sequential inear = 1:n.
+      ! Only present when prepare() expanded ngroups > ngroups_base.
+      if (krige%ngroups > krige%ngroups_base) then
+        do ivar = 1, nv
+          kgrad = nb + ivar
+          self%nnear(kgrad) = krige%grad(ivar)%n
+          if (krige%grad(ivar)%n > 0) &
+            call set_seq(self%inear(1:krige%grad(ivar)%n, kgrad), krige%grad(ivar)%n)
+        end do
+      end if
     end associate
   end subroutine initialize_kriging_ctx
 
@@ -1322,7 +1376,8 @@ contains
     if (self%rangescale  /= krige%block%rangescale (ctx%iblock))  return
     if (self%localnugget /= krige%block%localnugget(ctx%iblock))  return
 
-    do kvar = 1, krige%ngroups
+    ! Compare only obs+sim groups; grad groups are fixed (inear is always sequential)
+    do kvar = 1, krige%ngroups_base
       if (self%nnear(kvar) /= ctx%nnear(kvar)) return
       if (ctx%nnear(kvar) > 0) then
         if (any(self%inear(1:ctx%nnear(kvar), kvar) /= &
@@ -1351,8 +1406,9 @@ contains
     self%p           = krige%ndrift + krige%naug
     self%rangescale  = krige%block%rangescale (ctx%iblock)
     self%localnugget = krige%block%localnugget(ctx%iblock)
-    self%nnear(1:krige%ngroups) = ctx%nnear(1:krige%ngroups)
-    do kvar = 1, krige%ngroups
+    ! Save key only for obs+sim groups; grad groups are fixed across all blocks
+    self%nnear(1:krige%ngroups_base) = ctx%nnear(1:krige%ngroups_base)
+    do kvar = 1, krige%ngroups_base
       if (ctx%nnear(kvar) > 0) &
         self%inear(1:ctx%nnear(kvar), kvar) = ctx%inear(1:ctx%nnear(kvar), kvar)
     end do
@@ -1461,16 +1517,29 @@ contains
 
     associate(npp => self%nppmax, matsize => self%matsize_max, ifile => self%ifile)
 
-      !-- Total neighbours and matrix size for worst-case allocation
+      !-- Total neighbours and matrix size for worst-case allocation.
+      !   Grad pairs are always fully included, so add their counts to npp.
       npp = 0
+      self%ngrad = 0
       do ivar = 1, self%nvar
         npp = npp + self%obs(ivar)%nmax
+        npp = npp + self%grad(ivar)%n
+        self%ngrad = self%ngrad + self%grad(ivar)%n
       end do
       matsize = npp + self%ndrift + self%naug
 
+      !-- ngroups: expand to include grad-group slots only when grad is present.
+      !   This keeps the weight-store dimensions equal to ngroups_base when no
+      !   gradient data has been supplied, preserving backward compatibility.
+      if (self%ngrad > 0) then
+        self%ngroups = self%ngroups_base + self%nvar
+      else
+        self%ngroups = self%ngroups_base
+      end if
+
       !-- Pre-allocate the persistent factor cache to worst-case dimensions so
       !   no reallocation occurs inside the !$OMP CRITICAL section during solve.
-      !   Reallocate only when nppmax changes (e.g. nmax was changed via set_search).
+      !   Reallocate only when nppmax changes (includes any grad pairs).
       if (self%pf_cache) then
         if (allocated(self%pf%L)) then
           if (size(self%pf%L, 1) /= npp) then
@@ -1481,7 +1550,7 @@ contains
         end if
         if (.not. allocated(self%pf%L)) then
           call self%pf%alloc(npp, self%ndrift + self%naug, &
-                             self%ngroups, maxval(self%obs%nmax))
+                             self%ngroups_base, maxval(self%obs%nmax))
         end if
       end if
 
@@ -1877,21 +1946,21 @@ contains
     class(t_kriging)     :: self
     class(t_kriging_ctx) :: ctx
     ! local
-    integer                :: ivar, kvar, i, k, nn, jvar, ivgm
-    real                   :: lag(3), tmp, rs
+    integer                :: ivar, givar, kvar, kgrad, i, k, nn, jvar, ivgm, igrad
+    real                   :: lag(3), tmp, tmp2, rs
     class(t_data), pointer :: obs
 
     associate( &
-      iblock  => ctx%iblock, &
-      rhsB    => ctx%rhsB, &
-      nnear   => ctx%nnear, &
-      inear   => ctx%inear, &
-      istart  => ctx%istart, &
-      npp     => ctx%npp, &
-      matsize => ctx%matsize, &
-      ndrift  => self%ndrift, &
-      naug    => self%naug, &
-      ndim    => self%ndim)
+      iblock    => ctx%iblock, &
+      rhsB      => ctx%rhsB, &
+      nnear     => ctx%nnear, &
+      inear     => ctx%inear, &
+      istart    => ctx%istart, &
+      npp       => ctx%npp, &
+      matsize   => ctx%matsize, &
+      ndrift    => self%ndrift, &
+      naug      => self%naug, &
+      ndim      => self%ndim)
 
       rs   = self%block%rangescale(ctx%iblock)
 
@@ -1899,10 +1968,10 @@ contains
       ivgm = merge(iblock, 1, self%varying_vgm)
 
       do ivar = 1, self%nvar                  ! target variable; set the columns
-        do kvar = 1, self%ngroups             ! neighbour group; set the rows
+        do kvar = 1, self%ngroups_base        ! neighbour group; set the rows
           nn = nnear(kvar)
           if (nn == 0) cycle
-          !-- Data source and variogram index (old layout: 1:nvar=obs, nvar+1:end=sim)
+          !-- Data source and variogram index (1:nvar=obs, nvar+1:ngroups_base=sim)
           if (kvar > self%nvar) then
             jvar = kvar - self%nvar
             obs => self%block
@@ -1921,7 +1990,28 @@ contains
             end do
           end associate
         end do
-        !-- Augmented RHS (external drift + unbiasedness) in positions npp+1:matsize.
+
+        !-- Gradient RHS: C(xs1,x0) - C(xs2,x0) for each grad group ivar.
+        !   vgm(givar, ivar): cross-covariance between gradient variable and estimation target.
+        do givar = 1, self%nvar
+          if (self%grad(givar)%n == 0) cycle
+          kgrad = self%ngroups_base + givar
+          associate(vgm => self%vgm(givar, ivar, ivgm))
+            do igrad = 1, self%grad(givar)%n
+              tmp  = 0.0
+              tmp2 = 0.0
+              do k = self%block%iblockpnt(iblock), self%block%iblockpnt(iblock)+self%block%nblockpnt(iblock)-1
+                lag(1:ndim) = (self%grad(givar)%coord(:,igrad) - self%grid%coord(:,k)) / rs
+                tmp  = tmp  + vgm%cov_lag(lag) * self%grid%weight(k)
+                lag(1:ndim) = (self%grad(givar)%coord2(:,igrad) - self%grid%coord(:,k)) / rs
+                tmp2 = tmp2 + vgm%cov_lag(lag) * self%grid%weight(k)
+              end do
+              rhsB(ivar, istart(kgrad)+igrad) = tmp - tmp2
+            end do
+          end associate
+        end do
+
+        !-- Augmented RHS (external drift + unbiasedness) at npp+1:matsize.
         !   block%drift(:, ivar, :) carries both rows, varying correctly per target variable.
         if (ndrift + naug > 0) &
           rhsB(ivar, npp+1:matsize) = self%block%drift(:, ivar, iblock)
@@ -1936,48 +2026,74 @@ contains
   ! Fill the left-hand-side covariance matrix matA for the current block.
   ! Called by assemble_linear_system on a factorization cache miss.
   !
-  ! Matrix layout (ordinary kriging, two variables, npp = n1 + n2)
-  ! ---------------------------------------------------------------
-  !   [ C₁₁  C₁₂  1   0 ] [ w₁ ]   [ c₀₁ ]
-  !   [ C₂₁  C₂₂  0   1 ] [ w₂ ] = [ c₀₂ ]
-  !   [  1ᵀ   0ᵀ  0   0 ] [ μ₁ ]   [  1  ]   npp+1
-  !   [  0ᵀ   1ᵀ  0   0 ] [ μ₂ ]   [  0  ]   npp+2  (for estimating var1)
+  ! Matrix layout: nvar=2, ndrift=1 external drift, naug=2 unbiasedness, ng grad pairs
+  ! npp = n1 + n2 + ng,   p = ndrift + naug = 3
   !
-  ! For each row group kvar and column group lvar (lvar >= kvar, upper triangle):
-  !   Diagonal block (kvar == lvar): C(0) + obs_variance + localnugget
-  !   Off-diagonal: C(lag) between obs i of kvar and obs j of lvar
-  ! The lower triangle is mirrored afterward.  Drift and unbiasedness
-  ! columns are appended explicitly.
+  !           ←────── npp ──────→  ←──── p = ndrift+naug ────→
+  !            n1     n2     ng      d₁      u₁      u₂
+  !         ┌───────────────────────────────────────────┐
+  !   n1    │  C₁₁    C₁₂   Cg₁ᵀ  │  fo₁₁   1ᵀ     0ᵀ   │  [ w₁ ]   [ c₀₁ ]
+  !   n2    │  C₂₁    C₂₂   Cg₂ᵀ  │  fo₁₂   0ᵀ     1ᵀ   │  [ w₂ ] = [ c₀₂ ]
+  !   ng    │  Cg₁    Cg₂   Cgg   │  fg₁    0      0    │  [ θg ]   [ cg₀ ]
+  !         │─────────────────────│─────────────────────│──────────────│
+  !   d₁    │  fo₁₁ᵀ fo₁₂ᵀ  fg₁ᵀ  │   0     0      0    │  [ β₁ ]   [ f₀₁ ]
+  !   u₁    │   1ᵀ    0ᵀ    0ᵀ    │   0     0      0    │  [ μ₁ ]   [  1  ]
+  !   u₂    │   0ᵀ    1ᵀ    0ᵀ    │   0     0      0    │  [ μ₂ ]   [  0  ]
+  !         └───────────────────────────────────────────┘
+  !
+  ! Notation
+  ! --------
+  ! C₁₁, C₁₂   : obs-obs covariance blocks between variables
+  ! Cg₁, Cg₂   : obs-grad cross blocks — C(obs_i, xs1_t) - C(obs_i, xs2_t)
+  ! Cgg        : grad-grad block — C(xs1_t,xs1_s) - C(xs1_t,xs2_s)
+  !                                               - C(xs2_t,xs1_s) + C(xs2_t,xs2_s)
+  !               diagonal: 2C(0) - 2C(xs1-xs2) + grad_variance
+  ! fo₁₁, fo₁₂ : external drift values at obs var1 / var2 locations
+  ! fg₁        : external drift differences d(xs1_t) - d(xs2_t) at grad pair t
+  !               (zero for constant drift, only nonzero when ndrift > 0)
+  ! u₁, u₂     : unbiasedness rows — indicator 1 for own variable, 0 otherwise;
+  !               all-zero for grad pairs (constant f=1 → difference = 0)
+  ! β₁         : external drift coefficient(s); μ₁,μ₂ Lagrange multipliers
+  ! θg         : grad pair kriging weights (solved alongside obs weights w₁,w₂)
+  ! f₀₁        : external drift value at estimation point (for estimating var1)
+  !
+  ! Assembly strategy
+  ! -----------------
+  ! Obs groups (kvar <= ngroups_base): filled by rowloop/columnloop (upper triangle).
+  ! Grad groups (kvar > ngroups_base): filled separately — obs-grad cross (lower
+  !   triangle), grad-grad (both triangles), grad-drift (both triangles).
+  ! Full mirror pass at the end copies lower → upper for the obs rows.
+  ! Drift and unbiasedness columns are appended explicitly for both obs and grad.
   !============================================================================
   subroutine assemble_lhs(self, ctx)
     class(t_kriging)     :: self
     class(t_kriging_ctx) :: ctx
 
     integer                :: kvar, lvar, i, j, jstart, irow1, icol1
-    integer                :: ivgm, ivar, jvar
-    real                   :: lag(3), ln, rs
+    integer                :: ivgm, ivar, jvar, givar, kgrad, igrad, jgrad
+    real                   :: lag(3), ln, rs, cov_g, c11, c12, c21, c22
     class(t_data), pointer :: obs1, obs2
 
     associate( &
-      matA    => ctx%matA, &
-      inear   => ctx%inear, &
-      nnear   => ctx%nnear, &
-      istart  => ctx%istart, &
-      npp     => ctx%npp, &
-      matsize => ctx%matsize, &
-      ndrift  => self%ndrift, &
-      naug    => self%naug, &
-      ndim    => self%ndim)
+      matA      => ctx%matA, &
+      inear     => ctx%inear, &
+      nnear     => ctx%nnear, &
+      istart    => ctx%istart, &
+      npp       => ctx%npp, &
+      matsize   => ctx%matsize, &
+      ndrift    => self%ndrift, &
+      naug      => self%naug, &
+      ndim      => self%ndim)
 
       lag  = 0.0
       ivgm = merge(ctx%iblock, 1, self%varying_vgm)
       rs   = self%block%rangescale(ctx%iblock)
       ln   = self%block%localnugget(ctx%iblock)
 
-      rowloop: do kvar = 1, self%ngroups
+      rowloop: do kvar = 1, self%ngroups_base
         if (nnear(kvar) == 0) cycle
 
-        !-- Row-group data source and variogram index (old layout: 1:nvar=obs, nvar+1:end=sim)
+        !-- Row-group data source and variogram index (1:nvar=obs, nvar+1:ngroups_base=sim)
         if (kvar > self%nvar) then
           ivar = kvar - self%nvar
           obs1 => self%block
@@ -1987,9 +2103,9 @@ contains
         end if
 
         !-- Fill upper triangle in matrix position: lvar groups whose istart >= kvar's istart.
-        !   The loop iterates all groups; the istart(lvar) < istart(kvar) guard skips the lower triangle.
+        !   The loop iterates obs+sim groups; the istart(lvar) < istart(kvar) guard skips lower.
         !   The lower triangle is filled by the mirror pass at the end.
-        columnloop: do lvar = 1, self%ngroups
+        columnloop: do lvar = 1, self%ngroups_base
           if (nnear(lvar) == 0) cycle
           if (istart(lvar) < istart(kvar)) cycle   ! below the diagonal in matrix position — skip
 
@@ -2024,16 +2140,63 @@ contains
           end associate
         end do columnloop
 
-        !-- Augmented rows (external drift + unbiasedness) in columns npp+1:matsize.
-        !   obs%drift(:,1,:) carries both: rows 1:ndrift = external drift values;
-        !   rows ndrift+1:ndrift+naug = unbiasedness indicators (pre-filled by set_obs).
+        !-- Drift/unbiasedness rows at npp+1:matsize for obs+sim columns.
+        !   obs%drift(:,1,:): rows 1:ndrift = external drift; ndrift+1:end = unbiasedness indicators.
         if (ndrift + naug > 0) then
           matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
             obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
         end if
+
+        !-- Gradient pair augmentation: one group per variable, appended after obs+sim columns.
+        !   Only attempted when prepare() expanded ngroups > ngroups_base.
+        gradidentloop: do lvar = self%ngroups_base+1, self%ngroups
+          if (nnear(lvar) == 0) cycle
+          givar = lvar - self%ngroups_base
+
+          !-- grad-obs cross block: upper triangle (rows kgrad, cols obs+sim).
+          associate(vgm => self%vgm(givar, ivar, ivgm))
+            do i = 1, nnear(kvar)
+              do j = 1, nnear(lvar)
+                lag(1:ndim) = (self%grad(givar)%coord(:,j)  - obs1%coord(:,inear(i,kvar))) / rs
+                cov_g = vgm%cov_lag(lag)
+                lag(1:ndim) = (self%grad(givar)%coord2(:,j) - obs1%coord(:,inear(i,kvar))) / rs
+                matA(istart(lvar)+j, istart(kvar)+i) = cov_g - vgm%cov_lag(lag)
+              end do
+            end do
+          end associate
+        end do gradidentloop
+
       end do rowloop
 
-      !-- Mirror lower triangle from upper (C is symmetric)
+      !-- grad-grad covariance (diagonal and both off-diagonal triangles explicit).
+      do ivar = 1, self%nvar
+        kvar = self%ngroups_base + ivar
+        if (self%grad(ivar)%n == 0) cycle
+        associate(vgm => self%vgm(ivar, ivar, ivgm), grad=>self%grad(ivar), is=>istart(kvar))
+          do i = 1, grad%n
+            !-- Diagonal: 2*C(0) - 2*C(xs1-xs2) + grad variance
+            lag(1:ndim) = (grad%coord(:,i) - grad%coord2(:,i)) / rs
+            matA(is+i, is+i) = &
+              2.0 * vgm%cov0 - 2.0 * vgm%cov_lag(lag) + grad%variance(1,1,i)
+            do j = i+1, grad%n
+              lag(1:ndim) = (grad%coord (:,i) - grad%coord (:,j)) / rs; c11 = vgm%cov_lag(lag)
+              lag(1:ndim) = (grad%coord (:,i) - grad%coord2(:,j)) / rs; c12 = vgm%cov_lag(lag)
+              lag(1:ndim) = (grad%coord2(:,i) - grad%coord (:,j)) / rs; c21 = vgm%cov_lag(lag)
+              lag(1:ndim) = (grad%coord2(:,i) - grad%coord2(:,j)) / rs; c22 = vgm%cov_lag(lag)
+              matA(is+j, is+i) = c11 - c12 - c21 + c22
+            end do
+          end do
+          !-- grad-drift columns at npp+1:matsize (both triangles).
+          if (ndrift + naug > 0) then
+            do i = 1, grad%n
+              matA(npp+1:matsize, is+i)   = self%grad(givar)%drift(:, 1, i)
+            end do
+          end if
+        end associate
+      end do
+
+      !-- Mirror lower triangle to upper: copies matA(col, row) → matA(row, col) for col > row.
+      !   Covers: obs-obs and grad-grad upper triangle, obs-grad cross, grad-drift.
       do irow1 = 1, npp
         do icol1 = irow1+1, matsize
           matA(irow1, icol1) = matA(icol1, irow1)
@@ -2078,8 +2241,9 @@ contains
         call self%search_neighbors(ivar, ctx)
       end do
 
-      !-- calcualte the starting index of each group in the matrix
-      !   sim groups follow their respective obs groups immediately: obs1, sim1, obs2, sim2 ...
+      !-- Calculate the starting index of each group in the matrix.
+      !   obs+sim groups: obs1, sim1, obs2, sim2 ... (interleaved by variable)
+      !   grad groups: follow all obs+sim groups, one slot per variable
       istart = 0
       do ivar = 1, nvar
         ctx%istart(ivar) = istart
@@ -2089,11 +2253,18 @@ contains
           istart = istart + ctx%nnear(ivar+self%nvar)
         end if
       end do
+      ! Grad groups occupy the tail (only when ngroups was expanded by prepare)
+      if (self%ngrad > 0) then
+        do ivar = 1, nvar
+          ctx%istart(self%ngroups_base + ivar) = istart
+          istart = istart + self%grad(ivar)%n
+        end do
+      end if
 
-      npp = sum(ctx%nnear)
+      npp = sum(ctx%nnear)   ! includes obs + sim + grad pairs
 
-      !-- Degenerate: no neighbours found at all
-      if (npp == 0) then
+      !-- Degenerate: no obs neighbours found at all
+      if (sum(ctx%nnear(1:self%ngroups_base)) == 0) then
         call kriging_error(subname, 'not enough neighbors for kriging at block', iblock=ctx%iblock)
         return
       end if
@@ -2157,7 +2328,7 @@ contains
     class(t_kriging)     :: self
     class(t_kriging_ctx) :: ctx
 
-    integer            :: info, p, q
+    integer            :: info, p, q, npp_obs
     character(len=*), parameter :: subname = "t_kriging%solve_linear_system"
 
     associate( &
@@ -2167,8 +2338,9 @@ contains
       npp       => ctx%npp, &
       x         => ctx%x)
 
-      q = self%nvar
-      p = self%ndrift + self%naug
+      q   = self%nvar
+      p   = self%ndrift + self%naug
+      ! ctx%npp now includes obs + grad pairs — the full positive-definite K block
 
       !-- Primary solver: Cholesky setup plus per-block RHS solve.
       !
@@ -2217,10 +2389,15 @@ contains
         end if
       end if
 
-      !-- Optional: clip negative weights and renormalise
-      if (self%weight_correction .and. q == 1) then
-        x(1, 1:npp) = merge(x(1, 1:npp), 0.0, x(1, 1:npp) > 0)
-        x(1, 1:npp) = x(1, 1:npp) / sum(x(1, 1:npp))
+      !-- Optional: clip negative obs weights and renormalise.
+      !   Only obs+sim weights are clipped; grad pair weights are left unchanged.
+      !   Disabled for cokriging (nvar > 1): secondary weights legitimately sum to 0
+      !   (per-variable unbiasedness Σλ_U = 0), so clipping them would destroy the
+      !   CK unbiasedness constraint.
+      if (self%weight_correction .and. self%nvar == 1) then
+        npp_obs = sum(ctx%nnear(1:self%ngroups_base))
+        x(1, 1:npp_obs) = merge(x(1, 1:npp_obs), 0.0, x(1, 1:npp_obs) > 0)
+        x(1, 1:npp_obs) = x(1, 1:npp_obs) / sum(x(1, 1:npp_obs))
       end if
 
       call self%calc_variance(ctx)
@@ -2377,7 +2554,7 @@ contains
     class(t_kriging)     :: self
     class(t_kriging_ctx) :: ctx
 
-    integer           :: ivar, jvar, kvar, k, k1, j, jb, nn, isim, real_ivar, info
+    integer           :: ivar, jvar, kvar, givar, kgrad, k, k1, j, jb, nn, isim, real_ivar, info
     real              :: total_weight(self%nvar)
     real              :: target_mean(self%nvar)   ! local mean per variable for Isaaks correction
     real              :: L_chol(self%nvar, self%nvar)
@@ -2389,6 +2566,7 @@ contains
       var    => self%block%variance(:, :, ctx%iblock), &  ! nvar x nvar
       val    => self%block%value(:, :, ctx%iblock), &  ! nsim x nvar
       iblock => ctx%iblock, &
+      npp    => ctx%npp, &
       nnear  => ctx%nnear, &
       inear  => ctx%inear, &
       weight => ctx%weight)
@@ -2422,6 +2600,17 @@ contains
           if (ck_isa .and. ivar /= jvar .and. nnear(ivar) > 0) &
             avg = avg + (target_mean(jvar) - target_mean(ivar)) * total_weight(ivar)
         end do
+
+        !-- Grad pair contributions (only when grad groups were allocated).
+        if (self%ngrad>0) then
+          do givar = 1, self%nvar
+            kgrad = self%ngroups_base + givar
+            if (nnear(kgrad) == 0) cycle
+            do k = 1, nnear(kgrad)
+              avg = avg + weight(k, kgrad, jvar) * self%grad(givar)%value(1, 1, k)
+            end do
+          end do
+        end if
 
         !-- Simple kriging mean correction.
         if (self%unbias == 0 .and. self%obs(jvar)%sk_mean /= 0.0) &
@@ -2912,6 +3101,7 @@ end subroutine update_info
     if (associated(self%vgm))        deallocate(self%vgm)
     if (associated(self%krige_info)) deallocate(self%krige_info)
     if (allocated(self%wstore))      deallocate(self%wstore)
+    if (associated(self%grad))       deallocate(self%grad)
   end subroutine finalize
 
 
@@ -2937,12 +3127,15 @@ end subroutine update_info
     end if
     nv = self%nvar
     nb = self%block%n
-    ng = self%ngroups
+    ng = self%ngroups   ! obs + sim + grad slots; grad nnear = 0 when not set
     nm = maxval(self%obs(1:self%nvar)%nmax)
     if (nm <= 0) then
       call kriging_error(subname, 'call set_obs() before alloc_weight_store() so nmax is set')
       return
     end if
+    ! Extend nm to cover grad groups (their inear is sequential up to grad%n)
+    if (associated(self%grad)) &
+      nm = max(nm, maxval([(self%grad(q)%n, q=1,self%nvar)]))
 
     if (allocated(self%wstore)) deallocate(self%wstore)
     allocate(self%wstore)
@@ -2979,7 +3172,7 @@ end subroutine update_info
     end if
     nv = self%nvar
     nb = self%block%n
-    ng = self%ngroups
+    ng = self%ngroups   ! must match alloc_weight_store
     nm = maxval(self%obs(1:self%nvar)%nmax)
     if (nm <= 0) then
       call kriging_error(subname, 'call set_obs() before alloc_weight_store() so nmax is set')
@@ -3044,6 +3237,7 @@ end subroutine update_info
     integer :: ivar, kvar, nn
 
     associate(ib => ctx%iblock, ws => self%wstore)
+      ! Save all groups including grad; grad nnear=0 when not set.
       do kvar = 1, self%ngroups
         nn = ctx%nnear(kvar)
         ws%nnear(kvar, ib) = nn
@@ -3082,7 +3276,7 @@ end subroutine update_info
           end do
         end if
       end do
-      ctx%npp     = sum(ctx%nnear(1:self%ngroups))
+      ctx%npp = sum(ctx%nnear(1:self%ngroups))
       self%block%variance(1:self%nvar, 1:self%nvar, ib) = ws%var(1:self%nvar, 1:self%nvar, ib)
     end associate
   end subroutine load_block_weights
@@ -3155,5 +3349,134 @@ end subroutine update_info
     kinv_out (1:npp, 1:pg ) = self%pf%kinv_drift(1:npp, 1:pg )
     schur_out(1:pg,  1:pg ) = self%pf%schur     (1:pg,  1:pg )
   end subroutine get_persistent_factor_matrices
+
+
+  !============================================================================
+  ! set_grad
+  !
+  ! Register gradient observation pairs for variable ivar.  Each pair
+  ! (coord(k,:), coord2(k,:)) straddles a boundary; the constraint is
+  ! Z(xs1_k) - Z(xs2_k) = value(k).  Mirrors set_obs in style.
+  !
+  ! Arguments
+  ! ---------
+  !   ivar       : variable index (1:nvar) that these grad pairs constrain
+  !   coord      : [ndim, ngrad] positive-side fictitious node coordinates
+  !   coord2     : [ndim, ngrad] negative-side fictitious node coordinates
+  !   value      : [ngrad] known gradient delta Z = Z(xs1) - Z(xs2)
+  !   variance   : [ngrad] gradient obs variance (default 0 = exact constraint)
+  !   drift_ext  : [ndrift, ngrad] external drift differences f(xs1)-f(xs2)
+  !                Required when ndrift > 0; omit for ordinary kriging.
+  !
+  ! Call with size(coord,2) == 0 to clear the grad group for this ivar.
+  !============================================================================
+  subroutine set_grad(self, ivar, coord, coord2, value, variance, drift_ext)
+    class(t_kriging) :: self
+    integer, intent(in) :: ivar
+    real,    intent(in) :: coord(:,:), coord2(:,:), value(:)
+    real, intent(in), optional :: variance(:)
+    real, intent(in), optional :: drift_ext(:,:)   ! [ndrift, n]
+    character(len=*), parameter :: subname = 't_kriging%set_grad'
+    integer :: ngrad_in
+
+    call self%reset_grad(ivar)   ! clear any previous pairs for this ivar
+
+    if (ivar < 1 .or. ivar > self%nvar) then
+      call kriging_error(subname, 'ivar out of range 1..nvar')
+      return
+    end if
+    ! check size of coord, coord2 are consistent
+    if (size(coord, 1) /= self%ndim .or. size(coord2, 1) /= self%ndim) then
+      call kriging_error(subname, 'size(coord,1) /= ndim or size(coord2,1) /= ndim')
+      return
+    end if
+
+    !-- check size of value, variance, drift_ext
+    if (size(value) /= size(coord, 2) .or. size(value) /= size(coord2, 2)) then
+      call kriging_error(subname, 'size(value) /= size(coord,2) or size(value) /= size(coord2,2)')
+      return
+    end if
+    if (present(variance)) then
+      if (size(variance) /= size(value)) then
+        call kriging_error(subname, 'size(variance) /= size(value)')
+        return
+      end if
+    end if
+    if (present(drift_ext)) then
+      if (size(drift_ext, 1) /= self%ndrift .or. size(drift_ext, 2) /= size(coord, 2)) then
+        call kriging_error(subname, 'size(drift_ext,1) /= ndrift or size(drift_ext,2) /= size(coord,2)')
+        return
+      end if
+    end if
+
+    ngrad_in = size(value)
+    if (ngrad_in == 0) return
+
+    associate(g => self%grad(ivar))
+      g%n = ngrad_in
+      allocate(g%coord,  source = coord)
+      allocate(g%coord2, source = coord2)
+
+      allocate(g%value(1, 1, ngrad_in))
+      g%value(1, 1, :) = value
+
+      allocate(g%variance(1, 1, ngrad_in))
+      if (present(variance)) then
+        g%variance(1, 1, :) = variance
+      else
+        g%variance = 0.0
+      end if
+
+      !-- drift [ndrift+naug, 1, n]: differences f(xs1)-f(xs2).
+      !   Unbiasedness rows (constant f=1) have diff=0 — initialised to zero.
+      !   External drift rows supplied via drift_ext.
+      if (self%ndrift + self%naug > 0) then
+        allocate(g%drift(self%ndrift + self%naug, 1, ngrad_in))
+        g%drift = 0.0
+        if (self%ndrift > 0) then
+          if (.not. present(drift_ext)) then
+            call kriging_error(subname, 'drift_ext must be provided when ndrift > 0')
+            call self%reset_grad(ivar)
+            return
+          end if
+          g%drift(1:self%ndrift, 1, :) = drift_ext
+        end if
+      end if
+    end associate
+
+    self%pf%valid = .false.
+  end subroutine set_grad
+
+
+  !============================================================================
+  ! reset_grad — clear gradient pair group(s)
+  !
+  ! reset_grad(ivar) — clear the grad group for variable ivar only.
+  ! reset_grad()     — clear all grad groups.
+  !============================================================================
+  subroutine reset_grad(self, ivar)
+    class(t_kriging) :: self
+    integer, intent(in), optional :: ivar
+    integer :: iv, iv1, iv2
+
+    if (associated(self%grad)) then
+      if (present(ivar)) then
+        iv1 = ivar; iv2 = ivar
+      else
+        iv1 = 1; iv2 = self%nvar
+      end if
+      do iv = iv1, iv2
+        associate(g => self%grad(iv))
+          g%n = 0
+          if (allocated(g%coord))    deallocate(g%coord)
+          if (allocated(g%coord2))   deallocate(g%coord2)
+          if (allocated(g%value))    deallocate(g%value)
+          if (allocated(g%variance)) deallocate(g%variance)
+          if (allocated(g%drift))    deallocate(g%drift)
+        end associate
+      end do
+    end if
+    self%pf%valid = .false.
+  end subroutine reset_grad
 
 end module kriging

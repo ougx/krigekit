@@ -636,6 +636,58 @@ contains
   end function krige_set_search
 
   !=============================================================================
+  ! krige_set_grad
+  !
+  ! Register gradient observation pairs (Delhomme 1979: "Kriging in hydrology").
+  !
+  ! Parameters
+  !   ivar       : variable index (1-based) the gradient constrains
+  !   ngrad      : number of gradient pairs (0 = clear pairs for this ivar)
+  !   ndim_c     : spatial dimension
+  !   coord1     : [ndim, ngrad] positive-side virtual node coordinates
+  !   coord2     : [ndim, ngrad] negative-side virtual node coordinates
+  !   grad_val   : [ngrad] constraint values; 0 = no-flow boundary
+  !   variance   : [ngrad] gradient obs variance (0 = exact constraint)
+  !   ndrift_c   : number of external drift functions (0 = ordinary / simple kriging)
+  !   drift_ext  : [ndrift, ngrad] drift differences f(xs1)-f(xs2); ignored when ndrift=0
+  !=============================================================================
+  integer(c_int) function krige_set_grad(handle, ivar, ngrad, ndim_c, coord1, coord2, &
+                                          grad_val, variance, ndrift_c, drift_ext) &
+      bind(C, name='krige_set_grad') result(ierr)
+
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, ngrad, ndim_c, ndrift_c
+    real(c_double),      intent(in) :: coord1(ndim_c, max(ngrad,1))
+    real(c_double),      intent(in) :: coord2(ndim_c, max(ngrad,1))
+    real(c_double),      intent(in) :: grad_val(max(ngrad,1))
+    real(c_double),      intent(in) :: variance(max(ngrad,1))
+    real(c_double),      intent(in) :: drift_ext(max(ndrift_c,1), max(ngrad,1))
+
+    type(t_kriging), pointer :: obj
+    real :: c1(ndim_c, max(ngrad,1)), c2(ndim_c, max(ngrad,1))
+    real :: gv(max(ngrad,1)), gvar(max(ngrad,1))
+    c1   = real(coord1);   c2   = real(coord2)
+    gv   = real(grad_val); gvar = real(variance)
+
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then
+      ierr = int(kriging_ierr(), c_int)
+      return
+    end if
+
+    if (ngrad == 0) then
+      call obj%reset_grad(int(ivar))
+    else if (ndrift_c > 0) then
+      call obj%set_grad(int(ivar), c1, c2, gv, variance=gvar, &
+                        drift_ext = real(drift_ext))
+    else
+      call obj%set_grad(int(ivar), c1, c2, gv, variance=gvar)
+    end if
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_set_grad
+
+  !=============================================================================
   ! krige_prepare
   !
   ! Prepare the kriging or SGSIM block loop.
@@ -907,6 +959,26 @@ contains
     call obj%free_weight_store()
     ierr = int(kriging_ierr(), c_int)
   end function krige_free_weight_store
+
+  !-- Query weight-store dimensions: nmax, ngroups, nblock.
+  !   ngroups == ngroups_base (no grad) or ngroups_base+nvar (grad present).
+  integer(c_int) function krige_get_weight_dims(handle, nm_out, ng_out, nb_out) &
+      bind(C, name='krige_get_weight_dims') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(out)       :: nm_out, ng_out, nb_out
+    type(t_kriging), pointer :: obj
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. allocated(obj%wstore)) then
+      call kriging_error('krige_get_weight_dims', 'Weight store not allocated')
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    nm_out = int(obj%wstore%nmax,    c_int)
+    ng_out = int(obj%wstore%ngroups, c_int)
+    nb_out = int(obj%wstore%nblock,  c_int)
+    ierr   = int(kriging_ierr(), c_int)
+  end function krige_get_weight_dims
 
   !-- Copy nnear[ngroups, nblock] into the caller-allocated integer buffer.
   integer(c_int) function krige_get_weight_nnear(handle, ngroups_c, nblock_c, out) &

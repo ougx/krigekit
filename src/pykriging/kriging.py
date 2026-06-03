@@ -209,6 +209,14 @@ _krige_set_search  = _status_cfun("krige_set_search", [
     ctypes.c_int64, _c_int,                      # handle, ivar
     _c_double, _c_double, _c_double, _c_double, _c_double,  # anis1, anis2, az, dip, plunge
 ])
+_krige_set_grad    = _status_cfun("krige_set_grad", [
+    ctypes.c_int64,                              # handle
+    _c_int, _c_int, _c_int,                      # ivar, ngrad, ndim_c
+    _ptr_dbl, _ptr_dbl,                          # coord1[ndim,ngrad], coord2[ndim,ngrad]
+    _ptr_dbl,                                    # grad_val[ngrad]
+    _ptr_dbl,                                    # variance[ngrad]
+    _c_int, _ptr_dbl,                            # ndrift_c, drift_ext[ndrift,ngrad]
+])
 _krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64, ctypes.c_int])
 # _krige_print       = _cfun("krige_print",       [ctypes.c_int64])
 _krige_get_nblocks     = _status_cfun("krige_get_nblocks",     [ctypes.c_int64, _ptr_int])
@@ -225,8 +233,8 @@ _krige_get_factor_matrices= _status_cfun("krige_get_factor_matrices",
 
 # _krige_alloc_weight_store = _optional_status_cfun("krige_alloc_weight_store", [ctypes.c_int64])
 _krige_free_weight_store  = _optional_status_cfun("krige_free_weight_store",  [ctypes.c_int64])
-# _krige_get_weight_dims    = _optional_status_cfun("krige_get_weight_dims",
-#     [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int, _ptr_int])
+_krige_get_weight_dims    = _optional_status_cfun("krige_get_weight_dims",
+    [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int])   # nm, ng, nb
 _krige_get_weight_nnear   = _optional_status_cfun("krige_get_weight_nnear",
     [ctypes.c_int64, _c_int, _c_int, _ptr_int])
 _krige_get_weight_inear   = _optional_status_cfun("krige_get_weight_inear",
@@ -546,7 +554,10 @@ class Kriging:
         self._set_sim    = False
         self._nobsdrift = np.zeros(self.nvar, dtype=np.uint32)
         self._nvgm_struct = np.zeros([self.nvar, self.nvar], dtype=np.uint32) # does not fully track nvgm_struct with varying vgm mode
-        self._ngroups = self.nvar if nsim==0 else self.nvar*2
+        # Python-side default for ngroups (= ngroups_base, no grad).
+        # get_weights() calls krige_get_weight_dims to read the actual value
+        # from the weight store after solve(), so this only affects set_weights().
+        self._ngroups = self.nvar if nsim == 0 else self.nvar * 2
     # ------------------------------------------------------------------
     def set_obs(
         self,
@@ -1092,6 +1103,73 @@ class Kriging:
         self._set_search[ivar-1] = True
 
     # ------------------------------------------------------------------
+    def set_grad(
+        self,
+        coord1: np.ndarray,
+        coord2: np.ndarray,
+        grad_value: np.ndarray,
+        ivar: int = 1,
+        variance: Optional[np.ndarray] = None,
+        drift_ext: Optional[np.ndarray] = None,
+    ):
+        """
+        Set gradient observation pairs (Delhomme 1979: "Kriging in hydrology").
+
+        Each pair ``(coord1[i], coord2[i])`` approximates the directional
+        gradient at a boundary as a finite difference.  The constraint
+        ``Z(xs1) - Z(xs2) = grad_value[i]`` is enforced as a hard equality.
+        For a no-flow (zero normal gradient) boundary use ``grad_value = 0``.
+
+        Call :meth:`set_grad` **after** :meth:`set_search` and **before**
+        :meth:`solve`.
+
+        Parameters
+        ----------
+        coord1 : ndarray, shape **(ngrad, ndim)**
+            Positive-side virtual node coordinates.
+        coord2 : ndarray, shape **(ngrad, ndim)**
+            Negative-side virtual node coordinates.
+        grad_value : ndarray, shape **(ngrad,)**
+            Known gradient values.  Use 0 for no-flow boundaries.
+        ivar : int, default 1
+            Variable index (1-based) the gradient pairs constrain.
+            For cokriging, specifies which variable's gradient is observed.
+        variance : ndarray, shape **(ngrad,)**, optional
+            Gradient observation variance (default 0 = exact constraint).
+            A non-zero value relaxes the constraint, analogous to obs nugget.
+        drift_ext : ndarray, shape **(ngrad, ndrift)**, optional
+            External drift differences ``f_ext(xs1) - f_ext(xs2)`` for each
+            pair.  Required when ``ndrift > 0``; omit for ordinary kriging.
+        """
+        # _coord_to_fortran: (ngrad, ndim) → (ndim, ngrad), Fortran-contiguous
+        c1_f   = _coord_to_fortran(coord1)
+        c2_f   = _coord_to_fortran(coord2)
+        ngrad  = c1_f.shape[1]
+        ndim_c = c1_f.shape[0]
+        gval   = _farray(np.asarray(grad_value, dtype=np.float64).ravel())
+
+        if variance is not None:
+            gvar = _farray(np.asarray(variance, dtype=np.float64).ravel())
+        else:
+            gvar = _farray(np.zeros(max(ngrad, 1), dtype=np.float64))
+
+        if drift_ext is not None:
+            # _drift_to_fortran: (ngrad, ndrift) → (ndrift, ngrad), Fortran-contiguous
+            de_f     = _drift_to_fortran(np.atleast_2d(drift_ext))
+            ndrift_c = de_f.shape[0]
+        else:
+            de_f     = np.zeros((1, max(ngrad, 1)), dtype=np.float64, order='F')
+            ndrift_c = 0
+
+        _krige_set_grad(_h(self._handle),
+            _c_int(ivar), _c_int(ngrad), _c_int(ndim_c),
+            _dptr(c1_f), _dptr(c2_f),
+            _dptr(gval),
+            _dptr(gvar),
+            _c_int(ndrift_c), _dptr(de_f),
+        )
+
+    # ------------------------------------------------------------------
     def solve(self, nthread: int = 0):
         """
         Run the kriging or SGSIM loop over all blocks.
@@ -1578,9 +1656,13 @@ class Kriging:
 
         ``nnear`` : ndarray, shape ``(nblock, ngroups)``, dtype int32
             Number of active neighbours for each block and group.
-            Group indices 0..nvar-1 are real-observation groups (variable
-            1..nvar); groups nvar..ngroups-1 are simulated-block groups
-            (SGSIM only, nvar=1 → one extra group).
+            ngroups = ngroups_base when set_grad has not been called, or
+            ngroups_base + nvar when gradient data is present.
+            ngroups_base = nvar (kriging) or 2*nvar (SGSIM).
+            Group layout:
+              indices 0..nvar-1          — obs groups (variable 1..nvar)
+              indices nvar..2*nvar-1     — sim groups (SGSIM only)
+              indices ngroups_base..ngroups-1 — grad groups (present only when set_grad called)
 
         ``inear`` : ndarray, shape ``(nblock, ngroups, nmax)``, dtype int32
             1-based neighbour indices.  Entries beyond ``nnear[ib, ig]``
@@ -1597,7 +1679,18 @@ class Kriging:
             dict directly to :meth:`set_weights` to get a full round-trip.
         """
 
-        nb, ng, nm, nv = self._nblock, self._ngroups, max(self._nmax), self.nvar
+        # Query actual weight-store dimensions from Fortran.
+        # ngroups = ngroups_base (no grad) or ngroups_base+nvar (grad present).
+        _nm = np.zeros(1, dtype=np.int32)
+        _ng = np.zeros(1, dtype=np.int32)
+        _nb = np.zeros(1, dtype=np.int32)
+        _krige_get_weight_dims(
+            _h(self._handle),
+            _nm.ctypes.data_as(_ptr_int),
+            _ng.ctypes.data_as(_ptr_int),
+            _nb.ctypes.data_as(_ptr_int),
+        )
+        nb, ng, nm, nv = int(_nb[0]), int(_ng[0]), int(_nm[0]), self.nvar
 
         # Allocate Fortran-order buffers matching the CAPI layout
         nnear_f  = np.zeros((ng, nb),     dtype=np.int32,   order='F')
@@ -1748,6 +1841,7 @@ def cokriging(
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
     nthread: int = 0,
+    std_ck: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     One-shot ordinary co-kriging with multiple variables.
@@ -1769,6 +1863,8 @@ def cokriging(
         Maximum neighbours per variable.
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
+    std_ck: bool
+        Use standard Ordinary Kriging.
 
     Returns
     -------
@@ -1791,7 +1887,7 @@ def cokriging(
     ndim = obs_coords[0].shape[1]   # (nobs, ndim) -> ndim is axis 1
     if nmax is None:
         nmax = max([len(obs_coord) for obs_coord in obs_coords]) + len(grid_coord)
-    k = Kriging(ndim=ndim, nvar=nvar)
+    k = Kriging(ndim=ndim, nvar=nvar, std_ck=std_ck)
 
     for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
         k.set_obs(ivar=i, coord=coord, value=value, nmax=nmax)

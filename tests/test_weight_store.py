@@ -8,6 +8,7 @@ Coverage
 Shapes / dtypes
     nnear, inear, weight arrays have the expected shapes and dtypes.
     ngroups == nvar for kriging; ngroups == 2*nvar for SGSIM.
+    (When set_grad is called, ngroups grows to ngroups_base + nvar.)
 
 Weight values
     nnear values are in [0, nmax].
@@ -76,7 +77,7 @@ class TestWeightStoreShapes:
         k = _build_kriging(coord, value, simple_grid, store_weight=True)
         w = k.get_weights()
         nb = simple_grid.shape[0]
-        assert w["nnear"].shape == (nb, 1)      # ngroups=1 for kriging nvar=1
+        assert w["nnear"].shape == (nb, 1)      # ngroups=nvar=1 (no grad set)
 
     def test_inear_shape(self, simple_obs, simple_grid):
         coord, value = simple_obs
@@ -101,14 +102,14 @@ class TestWeightStoreShapes:
         assert w["weight"].dtype == np.float64
 
     def test_ngroups_kriging(self, simple_obs, simple_grid):
-        """ngroups == nvar for ordinary kriging (nsim=0)."""
+        """ngroups == nvar for ordinary kriging (nsim=0, no grad)."""
         coord, value = simple_obs
         k = _build_kriging(coord, value, simple_grid, store_weight=True)
         w = k.get_weights()
-        assert w["nnear"].shape[1] == 1      # nvar=1 → ngroups=1
+        assert w["nnear"].shape[1] == 1      # nvar=1, no grad → ngroups=1
 
     def test_ngroups_sgsim(self, simple_obs, simple_grid):
-        """ngroups == 2*nvar for SGSIM (one obs group + one sim group)."""
+        """ngroups == 2*nvar for SGSIM (obs group + sim group; no grad)."""
         coord, value = simple_obs
         nb = simple_grid.shape[0]
         k = Kriging(ndim=2, nvar=1, nsim=1, store_weight=True, seed=42)
@@ -119,7 +120,7 @@ class TestWeightStoreShapes:
         k.set_search(ivar=1)
         k.solve()
         w = k.get_weights()
-        # ngroups = 2: group 0 = obs, group 1 = previously-simulated blocks
+        # ngroups = 2: group 0=obs, group 1=sim (no grad set)
         assert w["nnear"].shape == (nb, 2)
         assert w["inear"].shape == (nb, 2, _NMAX)
         assert w["weight"].shape == (nb, 2, _NMAX)
@@ -282,7 +283,7 @@ class TestWeightStoreFile:
         )
         est1, var1 = k1.get_results()
         w = k1.get_weights()
-        assert w["nnear"].shape[1] == 2
+        assert w["nnear"].shape[1] == 2   # nvar=2, nsim=0, no grad → ngroups=2
 
         k2 = _build_cokriging(
             coord, value1, value2, simple_grid,
