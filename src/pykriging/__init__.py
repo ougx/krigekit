@@ -31,8 +31,8 @@ from pykriging.kriging_st import (   # noqa: F401
     spacetime_cokriging,
 )
 
-# from pykriging.meuk import MEUK                    # noqa: F401
-# from pykriging.meuk_fortran import MEUKFortran     # noqa: F401
+from pykriging.meuk import MEUK                    # noqa: F401
+from pykriging.meuk_fortran import MEUKFortran     # noqa: F401
 
 __version__ = "0.1.0"
 __all__ = [
