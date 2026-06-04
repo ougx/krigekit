@@ -8,6 +8,7 @@ Choose the guide that matches your task:
 ordinary_kriging
 cokriging
 universal_kriging
+multi_event_universl_kriging
 ```
 
 **Coming in Phase 2:**
@@ -18,3 +19,14 @@ universal_kriging
 - Kriging weight reuse
 - Cross-validation
 - OpenMP and reproducibility
+
+---
+
+## Quick-reference: which MEUK backend?
+
+| Situation | Use |
+|---|---|
+| Production use, large grids, OpenMP | `MEUKFortran` |
+| No compiled library available | `MEUK` (pure Python) |
+| Debugging / verifying numerics | Both — results should match to ≤ 10⁻¹² |
+| Inspecting K's factorisation | `MEUKFortran.kriging.get_factor()` |

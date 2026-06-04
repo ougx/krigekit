@@ -17,6 +17,38 @@ Initial release.
 - OpenMP parallelism with per-`solve()` thread count control
 - `set_vgm(append=False)` to replace variogram model on a reused object
 
+### Multi-event universal kriging (MEUK)
+
+New classes for MEUK (Tonkin et al. 2016, *Advances in Water Resources* 87:92–105):
+
+- **`MEUKFortran`** — Fortran-backed implementation.  Wraps the existing
+  co-kriging engine with `unbias=0` and an augmented drift matrix that
+  reproduces MEUK's block design matrix (Eq. 11 of the paper).  One
+  `solve()` call handles all *m* events simultaneously.  Includes a
+  two-level result cache (Python dict + between-solve Fortran factorisation
+  reuse) so that repeated predictions on the same grid require zero
+  additional Fortran work.
+
+- **`MEUK`** — Pure Python/NumPy backend.  Implements the block-structured
+  solver of Eq. 13–16 directly via `scipy.linalg`.  Numerically identical to
+  `MEUKFortran` (differences ≤ 10⁻¹²); no compiled library required.
+
+Both backends:
+- Accept per-event `local_drift` (event-specific coefficients) and
+  `global_drift` (shared coefficient) arrays.
+- Cache results keyed on `(event_id, pred_coords, local_drift, global_drift)`.
+- Expose `predict(target_event, ...)` (single-event) and
+  `predict_all(pred_coords, pred_local_drifts, pred_global_drifts)` (all
+  events in one call).
+- Invalidate the cache automatically when `set_variogram` or `add_event` is
+  called; `clear_cache()` resets manually.
+
+The `pred_global_drifts` argument of `predict_all` accepts:
+- `None` — no global drift
+- `ndarray (ngrid, r)` — same values broadcast to all events
+- `dict {event_id: ndarray}` — per-event values (needed when the global
+  covariate magnitude varies per event, e.g. pumping rates)
+
 ### Persistent between-solve factorisation cache (Fortran)
 
 The Cholesky factorisation of the kriging covariance matrix **K** can now be
