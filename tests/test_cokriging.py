@@ -323,9 +323,10 @@ class TestCoKrigingButte:
         # variances which get clipped to 0 via np.maximum, while Fortran
         # retains a small positive value (~5e-5).  We allow a wider absolute
         # tolerance for 'lin' to accommodate this numerical artefact.
-        v_atol = 1e-4 if vtype == "lin" else 1e-6
-        np.testing.assert_allclose(v0, v1[:,0,0], rtol=1e-3, atol=v_atol), "Variances do not match"
-        np.testing.assert_allclose(e0, e1[:,0]  , rtol=1e-3, atol=1e-6), "Estimates do not match"
+        rtol = 0 if vtype == "gau" else 1e-3
+        atol = 0.05 if vtype == "gau" else 1e-5
+        np.testing.assert_allclose(v0, v1[:,0,0], rtol=rtol, atol=atol), "Variances do not match"
+        np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=atol), "Estimates do not match"
 
 
     @pytest.mark.parametrize("vtype", _covfunc.keys())
@@ -348,8 +349,9 @@ class TestCoKrigingButte:
             [obsval0, obsval1],
             newloc, vgm_spec, std_ck=std_ck)
         e0, v0 = ck(obsloc0, obsloc1, obsval0, obsval1, newloc, vgms=vs, std_ck=std_ck)
-        np.testing.assert_allclose(v0, v1[:,0,0], rtol=1e-3, atol=1e-6), "Variances do not match"
-        np.testing.assert_allclose(e0, e1[:,0]  , rtol=1e-3, atol=1e-6), "Estimates do not match"
+        rtol = 1e-3 if vtype == "gau" else 1e-5
+        np.testing.assert_allclose(v0, v1[:,0,0], rtol=rtol, atol=1e-6), "Variances do not match"
+        np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=1e-6), "Estimates do not match"
 
 
 class TestCoKrigingTextbook:

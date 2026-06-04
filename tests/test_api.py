@@ -29,6 +29,43 @@ _SMALL_GRID = np.array([
 _INTERIOR_GRID = np.array([[580000.0, 4395000.0],
                             [578000.0, 4400000.0]])
 
+
+# ---------------------------------------------------------------------------
+# Persistent factor cache
+# ---------------------------------------------------------------------------
+
+class TestPersistentFactorCache:
+
+    def test_get_factor_includes_assembled_linear_system(self):
+        coord = np.array([[0.0], [2.0]])
+        value = np.array([1.0, 3.0])
+        grid = np.array([[1.0]])
+        spec = dict(vtype="sph", nugget=0.0, sill=4.0,
+                    a_major=2.0, a_minor1=2.0, a_minor2=2.0,
+                    azimuth=0.0)
+
+        k = Kriging(ndim=1, nvar=1, pf_cache=True)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=2)
+        k.set_vgm(ivar=1, jvar=1, **spec)
+        k.set_grid(coord=grid)
+        k.set_search(ivar=1)
+        k.solve()
+
+        f = k.get_factor()
+        assert f["valid"]
+        assert f["matA"].shape == (3, 3)
+        assert f["rhsB"].shape == (1, 3)
+
+        expected_matA = np.array([
+            [4.0, 0.0, 1.0],
+            [0.0, 4.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ])
+        expected_rhsB = np.array([[1.25, 1.25, 1.0]])
+        np.testing.assert_allclose(f["matA"], expected_matA, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(f["rhsB"], expected_rhsB, rtol=1e-6, atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
@@ -40,7 +77,7 @@ class TestInputValidation:
         value = np.random.rand(10)
         grid  = np.random.rand(5, 2)
         # obs ndim=3 is inferred correctly; grid has ndim=2 which mismatches
-        with pytest.raises(RuntimeError, match="ndim"):
+        with pytest.raises(RuntimeError, match="nlag"):
             ordinary_kriging(coord, value, grid, _VGM, nmax=5)
 
     def test_coord_transposed_raises(self):
@@ -65,7 +102,7 @@ class TestInputValidation:
         assert "Dimension              : 2" in str(k)
         assert "Number of Variables    : 1" in str(k)
         assert "Number of data         : 5" in str(k)
-        assert "Number of structures = 0" in str(k)
+        assert "nstruct=0" in str(k)
 
     def test_set_obs_value_wrong_length_raises(self):
         """Python checks value length before passing a raw pointer to Fortran."""

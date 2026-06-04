@@ -12,13 +12,15 @@ gfortran -cpp -fbacktrace -ffree-line-length-none -O2 -fdefault-real-8 -fPIC  -s
    utils.F90 ^
    progress_bar.F90 ^
    rotation.f90 ^
-   variogram.f90 ^
-   variogram_st.f90 ^
    kdtree2_maxidx.f90 ^
    gaussian_quadrature.f90 ^
    lapack.f ^
    solver.f90 ^
+   kriging_base.F90 ^
+   variogram.f90 ^
+   variogram_st.f90 ^
    kriging.F90 ^
+   kriging_capi_common.F90 ^
    kriging_capi.F90 ^
    kriging_st.F90 ^
    kriging_st_capi.f90 ^

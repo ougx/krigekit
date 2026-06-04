@@ -31,6 +31,7 @@ SOURCES = [
     "common.f90",
     "kriging_err.f90",
     "utils.F90",
+    "vgmfunc.f90",
     "progress_bar.F90",
     "rotation.f90",
     "variogram.f90",

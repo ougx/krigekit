@@ -48,20 +48,13 @@
 module kriging_capi
   use, intrinsic :: ieee_arithmetic
   use iso_c_binding
-  use kriging, only: t_kriging
-  use kriging_err, only: kriging_clear_error, kriging_ierr, kriging_copy_error, &
-                         kriging_error, kriging_failed
+  use kriging,              only: t_kriging
+  use kriging_base,         only: t_kriging_base
+  use kriging_capi_common,  only: get_obj_base, store_obj_base, release_obj_base, c2fstr, l
+  use kriging_err,          only: kriging_clear_error, kriging_ierr, &
+                                  kriging_error, kriging_failed
   implicit none
   private
-
-  ! Registry-backed handles avoid passing raw addresses of non-C-interoperable
-  ! Fortran objects through ctypes.  Python receives a 1-based slot index and
-  ! every C entry point resolves that index back to the live Fortran pointer.
-  type kriging_handle_slot
-    type(t_kriging), pointer :: obj => null()
-  end type kriging_handle_slot
-
-  type(kriging_handle_slot), allocatable, save :: kriging_registry(:)
 
 contains
 
@@ -446,9 +439,9 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    call obj%set_grid(coord       = real(coord), &
-                      rangescale  = real(rangescale), &
-                      localnugget = real(localnugget))
+    call obj%set_grid_point(coord       = real(coord), &
+                            rangescale  = real(rangescale), &
+                            localnugget = real(localnugget))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_grid
 
@@ -497,14 +490,20 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    npw = sum(nblockpnt)   ! derive length instead of receiving it as an argument
-    call obj%set_grid(coord       = real(coord), &
-                      block_type  = int(block_type), &
-                      nblockpnt   = int(nblockpnt), &
-                      pointweight = real(pointweight(1:npw)), &
-                      blocksize   = real(blocksize), &
-                      rangescale  = real(rangescale), &
-                      localnugget = real(localnugget))
+    if (block_type == -4_c_int) then
+      call obj%set_grid_gq(coord       = real(coord), &
+                           blocksize   = real(blocksize), &
+                           rangescale  = real(rangescale), &
+                           localnugget = real(localnugget))
+    else
+      npw = sum(nblockpnt)   ! derive length instead of receiving it as an argument
+      call obj%set_grid_user_block(coord       = real(coord), &
+                                   nblockpnt   = int(nblockpnt), &
+                                   pointweight = real(pointweight(1:npw)), &
+                                   rangescale  = real(rangescale), &
+                                   localnugget = real(localnugget), &
+                                   block_type  = int(block_type))
+    end if
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_grid_block
 
@@ -524,8 +523,7 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    obj%cross_validation = .true.
-    call obj%set_grid()
+    call obj%set_grid_cv()
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_grid_cv
 
@@ -944,6 +942,33 @@ contains
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_factor_matrices
 
+  !-- Copy the raw persistent linear system into caller-allocated arrays.
+  !   matA_out: assembled LHS before factorization [npp+p x npp+p]
+  !   rhsB_out: assembled RHS before solving        [nvar x npp+p]
+  integer(c_int) function krige_get_factor_system(handle, npp, p, nvar, &
+                                                  matA_out, rhsB_out) &
+      bind(C, name='krige_get_factor_system') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: npp, p, nvar
+    real(c_double),      intent(out)       :: matA_out(npp + p, npp + p)
+    real(c_double),      intent(out)       :: rhsB_out(nvar, npp + p)
+    type(t_kriging), pointer :: obj
+    real, allocatable :: matA_f(:,:), rhsB_f(:,:)
+    integer :: matsize
+    call kriging_clear_error()
+    call get_obj(handle, obj)
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (.not. obj%pf%valid) then
+      ierr = int(kriging_ierr(), c_int); return
+    end if
+    matsize = int(npp) + int(p)
+    allocate(matA_f(matsize, matsize), rhsB_f(int(nvar), matsize))
+    call obj%get_persistent_factor_system(int(npp), int(p), int(nvar), matA_f, rhsB_f)
+    matA_out = real(matA_f, c_double)
+    rhsB_out = real(rhsB_f, c_double)
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_get_factor_system
+
   !=============================================================================
   ! Weight-store API
   !=============================================================================
@@ -1080,14 +1105,6 @@ contains
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_weights
 
-  integer(c_int) function krige_get_last_error(buffer, nbuf) &
-      bind(C, name='krige_get_last_error') result(ierr)
-    character(kind=c_char), intent(out) :: buffer(*)
-    integer(c_int), intent(in), value :: nbuf
-    call kriging_copy_error(buffer, int(nbuf))
-    ierr = int(kriging_ierr(), c_int)
-  end function krige_get_last_error
-
   !-- Return a string representation of the kriging object.
   integer(c_intptr_t) function krige_to_str(handle) result(ptr) bind(C, name='krige_to_str')
     integer(c_intptr_t), intent(in), value :: handle
@@ -1106,101 +1123,37 @@ contains
   ! Internal helpers (private to this module)
   !=============================================================================
 
-  !-- Recover a typed Fortran pointer from the opaque handle.  Invalid or stale
-  !   handles record a normal kriging error instead of dereferencing garbage.
+  !-- Recover a typed t_kriging pointer from the unified registry.
+  !   Calls get_obj_base then downcasts via select type.
   subroutine get_obj(handle, obj)
     integer(c_intptr_t), intent(in), value :: handle
-    type(t_kriging),     pointer    :: obj
-    integer :: idx
+    type(t_kriging),     pointer           :: obj
+    class(t_kriging_base), pointer :: base
     nullify(obj)
-    if (handle == 0_c_intptr_t) then
-      call kriging_error('kriging_capi', 'Null kriging object handle')
-      return
-    end if
-    idx = int(handle)
-    if (.not. allocated(kriging_registry) .or. idx < 1 .or. idx > size(kriging_registry)) then
-      call kriging_error('kriging_capi', 'Invalid kriging object handle')
-      return
-    end if
-    if (associated(kriging_registry(idx)%obj)) obj => kriging_registry(idx)%obj
-    if (.not. associated(obj)) &
-      call kriging_error('kriging_capi', 'Invalid kriging object handle')
+    call get_obj_base(handle, base)
+    if (kriging_failed()) return
+    select type(base)
+    type is (t_kriging)
+      obj => base
+    class default
+      call kriging_error('kriging_capi', 'Handle is not a spatial kriging object')
+    end select
   end subroutine get_obj
 
+  !-- Store a t_kriging pointer as a base pointer in the unified registry.
   subroutine store_obj(obj, handle)
-    ! Store a newly allocated object in the first free slot.  Growing the
-    ! registry keeps old slot numbers stable for existing Python objects.
     type(t_kriging), pointer, intent(in) :: obj
-    integer(c_intptr_t), intent(out) :: handle
-    integer :: i
-
-    if (.not. allocated(kriging_registry)) allocate(kriging_registry(16))
-
-    do i = 1, size(kriging_registry)
-      if (.not. associated(kriging_registry(i)%obj)) then
-        kriging_registry(i)%obj => obj
-        handle = int(i, c_intptr_t)
-        return
-      end if
-    end do
-
-    call grow_registry()
-    do i = 1, size(kriging_registry)
-      if (.not. associated(kriging_registry(i)%obj)) then
-        kriging_registry(i)%obj => obj
-        handle = int(i, c_intptr_t)
-        return
-      end if
-    end do
-
-    handle = 0_c_intptr_t
-    call kriging_error('krige_create', 'Failed to allocate a kriging handle slot')
+    integer(c_intptr_t),      intent(out) :: handle
+    class(t_kriging_base), pointer :: base
+    base => obj
+    call store_obj_base(base, handle)
   end subroutine store_obj
 
+  !-- Release the registry slot (delegates to common).
   subroutine release_obj(handle)
-    ! Destroy leaves the slot reusable but does not compact the registry because
-    ! compacting would change handles held by other Python objects.
     integer(c_intptr_t), intent(in), value :: handle
-    integer :: idx
-    idx = int(handle)
-    if (allocated(kriging_registry) .and. idx >= 1 .and. idx <= size(kriging_registry)) &
-      nullify(kriging_registry(idx)%obj)
+    call release_obj_base(handle)
   end subroutine release_obj
-
-  subroutine grow_registry()
-    ! Double the slot array and preserve pointer associations manually; ordinary
-    ! assignment would copy the slot values but move_alloc makes ownership clear.
-    type(kriging_handle_slot), allocatable :: tmp(:)
-    integer :: i, old_n, new_n
-
-    old_n = size(kriging_registry)
-    new_n = max(1, old_n * 2)
-    allocate(tmp(new_n))
-    do i = 1, old_n
-      if (associated(kriging_registry(i)%obj)) tmp(i)%obj => kriging_registry(i)%obj
-    end do
-    call move_alloc(tmp, kriging_registry)
-  end subroutine grow_registry
-
-  !-- Convert a null-terminated C string to a Fortran character(len=1024).
-  function c2fstr(cstr) result(fstr)
-    character(kind=c_char), intent(in) :: cstr(*)
-    character(len=1024) :: fstr
-    integer :: i
-    fstr = ''
-    do i = 1, 1024
-      if (cstr(i) == c_null_char) exit
-      fstr(i:i) = cstr(i)
-    end do
-  end function c2fstr
-
-  !-- Convert integer(c_int) flag (0/1) to Fortran logical.
-  !   Only 1 maps to .true.; 0 (and any other value) maps to .false.
-  elemental function l(v) result(r)
-    integer(c_int), intent(in), value :: v
-    logical :: r
-    r = (v == 1_c_int)
-  end function l
 
   !=============================================================================
   ! krige_get_max_threads / krige_get_num_threads

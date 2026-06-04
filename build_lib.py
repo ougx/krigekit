@@ -33,6 +33,7 @@ SOURCES = [
     "common.f90",
     "kriging_err.f90",           # must precede variogram (uses kriging_error)
     "utils.F90",
+    "vgmfunc.f90",
     "progress_bar.F90",
     "rotation.f90",
     "variogram.f90",
@@ -42,6 +43,7 @@ SOURCES = [
     "lapack.f",
     "solver.f90",
     "kriging.F90",
+    "kriging_capi_common.F90",
     "kriging_capi.F90",          # uppercase F — preprocessed by cpp
     "kriging_st.F90",            # t_kriging_st — space-time kriging type
     "kriging_st_capi.f90",       # C API for ST types

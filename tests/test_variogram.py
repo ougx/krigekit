@@ -79,7 +79,7 @@ class TestVariogramTypes:
         k = Kriging(ndim=2, nvar=1, verbose=0)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=3)
 
-        with pytest.raises(RuntimeError, match="unknown variogram type"):
+        with pytest.raises(RuntimeError, match="unknown vtype"):
             k.set_vgm(ivar=1, jvar=1, vtype="bad", nugget=0.0, sill=0.2, a_major=10.0)
 
 
@@ -399,7 +399,7 @@ class TestExactMatch:
 
     def test_exact_match_with_nugget_variogram(self, pc2d_obs):
         """
-        Even with a nugget variogram, an exact-match node does not return the obs value.
+        Even with a nugget variogram, an exact-match node returns the obs value.
         """
         coord, value = pc2d_obs
         k = Kriging(ndim=2, nvar=1, verbose=0)
@@ -410,7 +410,8 @@ class TestExactMatch:
         k.set_search(ivar=1)
         k.solve()
         est, var = k.get_results()
-        assert est[0] != pytest.approx(value[7], rel=1e-4)
+        assert est[0] == pytest.approx(value[7], rel=1e-4)
+        assert var[0] == pytest.approx(0.0, abs=1e-8)
 
     def test_synthetic_exact_match_all_obs(self):
         """Using obs coords as the estimation grid reproduces every observed value."""

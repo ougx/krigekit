@@ -40,7 +40,8 @@ def obs_data_1var(rng):
              np.cos(coord[:, 1] / 300) +
              0.01 * time +
              rng.normal(0, 0.1, nobs))
-    return coord, value, time
+    coord4 = np.column_stack([coord, time])   # (nobs, 4): x,y,z,t
+    return coord4, value
 
 
 @pytest.fixture(scope="module")
@@ -64,7 +65,7 @@ def obs_data_2var(rng):
     t2 = rng.uniform(0, 50, size=nobs)
     v2 = 0.7 * np.sin(c2[:, 0] / 200) + 0.1 * rng.normal(size=nobs)
 
-    return (c1, v1, t1), (c2, v2, t2)
+    return (np.column_stack([c1, t1]), v1), (np.column_stack([c2, t2]), v2)
 
 
 # ---------------------------------------------------------------------------
@@ -78,18 +79,49 @@ def _basic_st_vgm(k, ivar=1, jvar=1):
     k.set_vgm_joint_sills(ivar, jvar, 0.3)
 
 
+def _build_search_transform_probe(obs_coord, obs_value, maxdist=None, nmax=1):
+    """Build a tiny ST problem where small nmax exposes chosen neighbours."""
+    k = SpaceTimeKriging(nvar=1, neglect_error=True)
+    k.set_st_model("sum_metric", "linear", at=100.0, time_sill=10.0)
+    k.set_obs(1, obs_coord, obs_value, nmax=nmax, maxdist=maxdist)
+    _basic_st_vgm(k)
+    k.set_grid(np.array([[0.0, 0.0, 0.0]]), np.array([0.0]))
+    return k
+
+
+def _estimate_with_search_transform(time_transform, *, time_at=100.0, time_sill=10.0):
+    # The first pair is spatially colocated but temporally distant. The second
+    # pair is spatially offset but contemporaneous. With nmax=2 and equal values
+    # inside each pair, the estimate reveals which pair was selected.
+    obs_coord = np.array([
+        [0.0, 0.0, 0.0, 20.0],
+        [0.0, 0.0, 0.0, 21.0],
+        [3.0, 0.0, 0.0, 0.0],
+        [3.1, 0.0, 0.0, 0.0],
+        [100.0, 0.0, 0.0, 0.0],
+        [0.0, 100.0, 0.0, 0.0],
+        [0.0, 0.0, 100.0, 0.0],
+    ])
+    obs_value = np.array([10.0, 10.0, 20.0, 20.0, -1.0, -2.0, -3.0])
+    k = _build_search_transform_probe(obs_coord, obs_value, nmax=2)
+    k.set_search(1, time_transform=time_transform, time_at=time_at, time_sill=time_sill)
+    k.solve()
+    est, _ = k.get_results()
+    return est[0]
+
+
 # ===========================================================================
 # 1. sum-metric, linear transform
 # ===========================================================================
 class TestSumMetricLinear:
 
     def test_basic_shape(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model(model="sum_metric", transform="linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20, maxdist=800, maxtlag=15)
+        k.set_obs(1, coord, value, nmax=20, maxdist=800)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_search(1)
@@ -100,12 +132,12 @@ class TestSumMetricLinear:
         assert var.shape == (len(gtime),), "variance shape mismatch"
 
     def test_variance_non_negative(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_search(1)
@@ -114,12 +146,12 @@ class TestSumMetricLinear:
         assert np.all(var >= 0), f"negative variance encountered: min={var.min():.6f}"
 
     def test_estimate_finite(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_search(1)
@@ -129,14 +161,14 @@ class TestSumMetricLinear:
 
     def test_exact_match(self, obs_data_1var):
         """Predict at an observation location — estimate should equal observed value."""
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         idx = 5
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
-        k.set_grid(coord[[idx]], time[[idx]])
+        k.set_grid(coord[[idx], :3], coord[[idx], 3])
         k.set_search(1)
         k.solve()
         est, var = k.get_results()
@@ -151,12 +183,12 @@ class TestSumMetricLinear:
 class TestSumMetricBounded:
 
     def test_bounded_transform(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "bounded", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_search(1)
@@ -166,49 +198,112 @@ class TestSumMetricBounded:
         assert np.all(var >= 0)
         assert np.all(np.isfinite(est))
 
-    def test_maxtlag_reduces_neighbours(self, obs_data_1var, grid_data):
-        """Tight maxtlag → more no-neighbour (NaN) blocks than wide maxtlag."""
-        coord, value, time = obs_data_1var
+    def test_maxdist_reduces_neighbours(self, obs_data_1var, grid_data):
+        """Tight 4D maxdist → more no-neighbour (NaN) blocks than unlimited."""
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
-        # Wide lag: all obs are temporal neighbours → no NaN blocks
+        # Unlimited: all obs within reach → no NaN blocks
         k_wide = SpaceTimeKriging(nvar=1, neglect_error=True)
         k_wide.set_st_model("sum_metric", "bounded", at=10.0)
-        k_wide.set_obs(1, coord, value, time, nmax=20, maxtlag=100.0)
+        k_wide.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k_wide)
         k_wide.set_grid(gcoord, gtime)
         k_wide.set_search(1)
         k_wide.solve()
         est_wide, _ = k_wide.get_results()
 
-        # Tight lag: spatial KD-tree neighbors often miss the temporal window
+        # Very tight 4D radius: most blocks will have no neighbours
         k_tight = SpaceTimeKriging(nvar=1, neglect_error=True)
         k_tight.set_st_model("sum_metric", "bounded", at=10.0)
-        k_tight.set_obs(1, coord, value, time, nmax=20, maxtlag=1.0)
+        k_tight.set_obs(1, coord, value, nmax=20, maxdist=1.0)
         _basic_st_vgm(k_tight)
         k_tight.set_grid(gcoord, gtime)
         k_tight.set_search(1)
         k_tight.solve()
         est_tight, _ = k_tight.get_results()
 
-        # Wide should have no NaN; tight may have some (gracefully handled)
-        assert np.sum(np.isnan(est_wide)) == 0, "wide maxtlag should find neighbours for all blocks"
+        # Unlimited should find neighbours; tight radius should produce more NaN blocks
+        assert np.sum(np.isnan(est_wide)) == 0, "unlimited maxdist should find neighbours for all blocks"
         assert np.sum(np.isnan(est_tight)) >= np.sum(np.isnan(est_wide)), \
-            "tight maxtlag should produce at least as many NaN blocks as wide"
+            "tight maxdist should produce at least as many NaN blocks as unlimited"
 
 
 # ===========================================================================
-# 3. product-sum model
+# 3. set_search temporal transform
+# ===========================================================================
+class TestSearchTimeTransform:
+
+    def test_time_transform_changes_nearest_neighbour(self):
+        """
+        set_search() has its own temporal transform. Holding the ST variogram
+        fixed, changing only the search transform must be able to change the
+        nmax=2 neighbourhood selected in transformed 4-D search space.
+        """
+        est_linear = _estimate_with_search_transform("linear")
+        est_bounded = _estimate_with_search_transform("bounded")
+
+        assert est_linear == pytest.approx(10.0)
+        assert est_bounded == pytest.approx(20.0)
+
+    def test_time_at_controls_search_temporal_radius(self):
+        """
+        time_at is also search-specific. A larger time_at should bring a
+        temporally distant but spatially colocated observation inside maxdist.
+        """
+        obs_coord = np.array([
+            [0.0, 0.0, 0.0, 20.0],
+            [0.0, 0.0, 0.0, 21.0],
+        ])
+        obs_value = np.array([10.0, 10.0])
+
+        k_inside = _build_search_transform_probe(obs_coord, obs_value, maxdist=5.0, nmax=2)
+        k_inside.set_search(1, time_transform="linear", time_at=100.0, time_sill=10.0)
+        k_inside.solve()
+        est_inside, _ = k_inside.get_results()
+
+        k_outside = _build_search_transform_probe(obs_coord, obs_value, maxdist=5.0, nmax=2)
+        k_outside.set_search(1, time_transform="linear", time_at=10.0, time_sill=10.0)
+        k_outside.solve()
+        est_outside, _ = k_outside.get_results()
+
+        assert est_inside[0] == pytest.approx(10.0)
+        assert np.isnan(est_outside[0])
+
+    def test_get_factor_includes_assembled_linear_system(self):
+        obs_coord = np.array([
+            [0.0, 0.0, 0.0, 20.0],
+            [0.0, 0.0, 0.0, 21.0],
+        ])
+        obs_value = np.array([10.0, 10.0])
+
+        k = _build_search_transform_probe(obs_coord, obs_value, nmax=2)
+        k.set_search(1, time_transform="linear", time_at=100.0, time_sill=10.0)
+        k.solve()
+
+        f = k.get_factor()
+        assert f["valid"]
+        assert f["matA"].shape == (f["npp"] + f["p"], f["npp"] + f["p"])
+        assert f["rhsB"].shape == (1, f["npp"] + f["p"])
+        np.testing.assert_allclose(f["matA"], f["matA"].T, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(f["matA"][-1, :-1], 1.0, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(f["rhsB"][0, -1], 1.0, rtol=1e-6, atol=1e-6)
+        assert np.isfinite(f["matA"]).all()
+        assert np.isfinite(f["rhsB"]).all()
+
+
+# ===========================================================================
+# 4. product-sum model
 # ===========================================================================
 class TestProductSum:
 
     def test_product_sum(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("product_sum", "linear", at=10.0, k_ps=0.5)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
         k.set_vgm_temporal(1, 1, vtype="exp", nugget=0, sill=0.5, at_k=10.0)
         k.set_grid(gcoord, gtime)
@@ -222,18 +317,17 @@ class TestProductSum:
 
 
 # ===========================================================================
-# 4. Convenience function spacetime_kriging()
+# 5. Convenience function spacetime_kriging()
 # ===========================================================================
 class TestConvenienceFunction:
 
     def test_spacetime_kriging_sum_metric(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         est, var = spacetime_kriging(
             obs_coord=coord,
             obs_value=value,
-            obs_time=time,
             grid_coord=gcoord,
             grid_time=gtime,
             spatial_spec=dict(vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100),
@@ -248,13 +342,12 @@ class TestConvenienceFunction:
         assert np.all(var >= 0)
 
     def test_spacetime_kriging_product_sum(self, obs_data_1var, grid_data):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         est, var = spacetime_kriging(
             obs_coord=coord,
             obs_value=value,
-            obs_time=time,
             grid_coord=gcoord,
             grid_time=gtime,
             spatial_spec=dict(vtype="exp", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100),
@@ -263,7 +356,6 @@ class TestConvenienceFunction:
             model="product_sum",
             transform="linear",
             at=10.0,
-            alpha=1.0,
             k_ps=0.3,
             nmax=20,
         )
@@ -277,11 +369,11 @@ class TestConvenienceFunction:
 class TestCrossValidation:
 
     def test_cv_shape(self, obs_data_1var):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
 
         k = SpaceTimeKriging(nvar=1, cross_validation=True)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
         k.set_grid_cv()
         k.set_search(1)
@@ -299,13 +391,13 @@ class TestCrossValidation:
 class TestCokriging:
 
     def test_cokriging_shape(self, obs_data_2var, grid_data):
-        (c1, v1, t1), (c2, v2, t2) = obs_data_2var
+        (c1, v1), (c2, v2) = obs_data_2var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=2)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, c1, v1, t1, nmax=20)
-        k.set_obs(2, c2, v2, t2, nmax=20)
+        k.set_obs(1, c1, v1, nmax=20)
+        k.set_obs(2, c2, v2, nmax=20)
 
         # Auto-variograms
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
@@ -332,13 +424,12 @@ class TestCokriging:
         assert np.all(np.isfinite(est))
 
     def test_cokriging_convenience(self, obs_data_2var, grid_data):
-        (c1, v1, t1), (c2, v2, t2) = obs_data_2var
+        (c1, v1), (c2, v2) = obs_data_2var
         gcoord, gtime = grid_data
 
         est, var = spacetime_cokriging(
             obs_coords=[c1, c2],
             obs_values=[v1, v2],
-            obs_times=[t1, t2],
             grid_coord=gcoord,
             grid_time=gtime,
             spatial_specs={
@@ -371,12 +462,12 @@ class TestNestedStructures:
 
     def test_nested_spatial(self, obs_data_1var, grid_data):
         """Nugget + spherical spatial, single exponential temporal."""
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         # Two spatial structures
         k.set_vgm(1, 1, vtype="nug", nugget=0.1, sill=0.0, a_major=1.0)
         k.set_vgm(1, 1, vtype="sph", nugget=0.0, sill=0.7, a_major=500, a_minor1=300, a_minor2=100)
@@ -391,12 +482,12 @@ class TestNestedStructures:
 
     def test_nested_temporal(self, obs_data_1var, grid_data):
         """Single spherical spatial, nugget + exponential temporal."""
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
         k.set_vgm_temporal(1, 1, vtype="nug", nugget=0.05, sill=0.0, at_k=1.0)
         k.set_vgm_temporal(1, 1, vtype="exp", nugget=0.0, sill=0.45, at_k=10.0)
@@ -415,13 +506,13 @@ class TestNestedStructures:
 class TestSGSIM:
 
     def test_sgsim_shape(self, obs_data_1var, grid_data, rng):
-        coord, value, time = obs_data_1var
+        coord, value = obs_data_1var
         gcoord, gtime = grid_data
         nsim = 3
 
         k = SpaceTimeKriging(nvar=1, nsim=nsim, seed=123)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, time, nmax=20)
+        k.set_obs(1, coord, value, nmax=20)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_sim()

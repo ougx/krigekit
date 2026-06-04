@@ -235,11 +235,13 @@ class TestMaxDist:
 
     def test_maxdist_no_obs_in_range_raises(self):
         """When every observation is beyond maxdist the solver has no
-        neighbours and must raise an error."""
+        neighbours and must raise an error.
+        neglect_error=False is required: the Python default is True (silent NaN),
+        but this test specifically validates the error-raising path."""
         coord  = np.array([[0.0, 0.0], [1.0, 0.0]])
         value  = np.array([1.0, 2.0])
         target = np.array([[100.0, 0.0]])   # far from all obs
-        k = Kriging(ndim=2, nvar=1)
+        k = Kriging(ndim=2, nvar=1, neglect_error=False)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=2, maxdist=1.0)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=5.0)
         k.set_grid(coord=target)

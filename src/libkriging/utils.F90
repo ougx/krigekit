@@ -307,5 +307,56 @@ subroutine r8vec_normal_01 ( n, x )
     end if
   end function yesno
 
+  pure function to_lower(str) result(lower_str)
+    character(len=*), intent(in) :: str
+    character(len=len(str))      :: lower_str
+    integer                      :: i
+    integer                      :: code
+
+    do i = 1, len(str)
+      code = iachar(str(i:i))
+      ! Check if the character is an uppercase letter (A-Z)
+      if (code >= iachar('A') .and. code <= iachar('Z')) then
+        ! Convert to lowercase by offsetting the ASCII value
+        lower_str(i:i) = achar(code + (iachar('a') - iachar('A')))
+      else
+        lower_str(i:i) = str(i:i)
+      endif
+    end do
+  end function to_lower
+
+  ! --- Main Function: Starts_with check ---
+  pure function starts_with_ignore_case(str, prefix) result(is_match)
+    character(len=*), intent(in) :: str
+    character(len=*), intent(in) :: prefix
+    logical                      :: is_match
+
+    character(len=len(str))      :: clean_str
+    character(len=len(str))      :: lower_str
+    character(len=len(prefix))   :: lower_prefix
+    integer                      :: prefix_len
+
+    ! 1. Clear leading spaces and establish lengths
+    clean_str = adjustl(str)
+    prefix_len = len(prefix)
+
+    ! 2. Guard clause: if the prefix is longer than the cleaned text, it's a mismatch
+    if (prefix_len > len_trim(clean_str)) then
+      is_match = .false.
+      return
+    end if
+
+    ! 3. Normalize both inputs using the to_lower function
+    lower_str    = to_lower(clean_str)
+    lower_prefix = to_lower(prefix)
+
+    ! 4. Check if the start of the lowercase string matches the lowercase prefix
+    if (lower_str(1:prefix_len) == lower_prefix) then
+      is_match = .true.
+    else
+      is_match = .false.
+    end if
+
+  end function starts_with_ignore_case
 end module
 

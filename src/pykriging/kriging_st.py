@@ -18,9 +18,10 @@ Variogram spec formats:
 
 ST model parameters (set once via set_st_model):
   model     : 'sum_metric' or 'product_sum'
-  transform : 'linear', 'bounded', or 'power'
+  transform : 'nug', 'sph', 'exp', 'gau', 'pow', 'bsq', 'cir', or 'lin'
   at        : joint temporal scale (same time units as input)
-  alpha     : power exponent (only for transform='power')
+  time_nugget, time_sill
+            : f(dt) scale for the joint temporal distance
   k_ps      : product-sum coefficient k (only for model='product_sum')
 """
 
@@ -74,6 +75,7 @@ _ptr_char = ctypes.POINTER(ctypes.c_char)
 _ptr_dbl  = ctypes.POINTER(ctypes.c_double)
 _ptr_int  = ctypes.POINTER(ctypes.c_int)
 _ptr_int64 = ctypes.POINTER(ctypes.c_int64)
+_ptr_void = ctypes.c_void_p
 
 def _cfun(name, argtypes, restype=None):
     fn = getattr(_lib, name)
@@ -109,27 +111,39 @@ _st_initialize = _status_cfun("krige_st_initialize", [
     _c_int, _c_int, _c_int, _c_int,        # cross_val write_mat neglect_err verbose
     ctypes.c_char_p,                        # weight_file
     _ptr_dbl,                               # bounds[2]
-    _c_double,                              # sk_mean
     _c_int,                                 # seed
 ])
 _st_set_st_model = _status_cfun("krige_st_set_st_model", [
-    ctypes.c_int64, _c_int, _c_int, _c_double, _c_double, _c_double,
+    ctypes.c_int64, ctypes.c_char_p, ctypes.c_char_p,
+    _c_double, _c_double, _c_double, _c_double,
 ])
 _st_set_obs = _status_cfun("krige_st_set_obs", [
     ctypes.c_int64,
-    _c_int, _c_int,          # ivar, nobs
-    _ptr_dbl, _ptr_dbl,      # coord[3,nobs], value[nobs]
-    _ptr_dbl, _ptr_dbl,      # time[nobs], variance[nobs]
-    _c_int, _c_double, _c_double,  # nmax, maxdist, maxtlag
+    _c_int, _c_int,                # ivar, nobs
+    _ptr_dbl, _ptr_dbl, _ptr_dbl,  # coord[4,nobs], value[nobs], variance[nobs]
+    _c_int, _c_double, _c_double,  # nmax, maxdist, sk_mean
+])
+_st_update_obs_value = _status_cfun("krige_st_update_obs_value", [
+    ctypes.c_int64, _c_int, _c_int, _ptr_dbl,
 ])
 _st_set_obs_drift = _status_cfun("krige_st_set_obs_drift", [
     ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl,
 ])
+_st_set_grad = _status_cfun("krige_st_set_grad", [
+    ctypes.c_int64,
+    _c_int, _c_int,                      # ivar, ngrad
+    _ptr_dbl, _ptr_dbl,                  # coord1[4,ngrad], coord2[4,ngrad]
+    _ptr_dbl, _ptr_dbl,                  # grad_val[ngrad], variance[ngrad]
+    _c_int, _ptr_dbl,                    # ndrift_c, drift_ext[ndrift,ngrad]
+])
 _st_set_vgm = _status_cfun("krige_st_set_vgm", [
     ctypes.c_int64, _c_int, _c_int, ctypes.c_char_p,
+    _c_double, _c_double, _c_double, _c_double, _c_double,
+    _c_double, _c_double, _c_double,
 ])
 _st_set_vgm_temporal = _status_cfun("krige_st_set_vgm_temporal", [
     ctypes.c_int64, _c_int, _c_int, ctypes.c_char_p,
+    _c_double, _c_double, _c_double,
 ])
 _st_set_vgm_joint_sills = _status_cfun("krige_st_set_vgm_joint_sills", [
     ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl,
@@ -153,24 +167,57 @@ _st_set_sim = _status_cfun("krige_st_set_sim", [
 ])
 _st_set_search = _status_cfun("krige_st_set_search", [
     ctypes.c_int64, _c_int,
+    ctypes.c_char_p, _c_double, _c_double, _c_double,
     _c_double, _c_double, _c_double, _c_double, _c_double,
 ])
-_st_solve         = _status_cfun("krige_st_solve",         [ctypes.c_int64])
+_st_prepare       = _status_cfun("krige_st_prepare",        [ctypes.c_int64])
+_st_reset_vgm     = _status_cfun("krige_st_reset_vgm",     [ctypes.c_int64, _c_int, _c_int])
+_st_solve         = _status_cfun("krige_st_solve",          [ctypes.c_int64, _c_int])
 _st_get_nblocks   = _status_cfun("krige_st_get_nblocks",   [ctypes.c_int64, _ptr_int])
 _st_get_nsim      = _status_cfun("krige_st_get_nsim",      [ctypes.c_int64, _ptr_int])
-_st_get_estimate  = _status_cfun("krige_st_get_estimate",  [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
-_st_get_variance  = _status_cfun("krige_st_get_variance",  [ctypes.c_int64, _c_int, _ptr_dbl])
-_get_last_error   = _cfun("krige_get_last_error", [_ptr_char, _c_int], _c_int)
-
-# ---------------------------------------------------------------------------
-# String constants for the Python API
-# ---------------------------------------------------------------------------
-_MODEL_MAP = {"sum_metric": 0, "product_sum": 1}
-_TRANSFORM_MAP = {"linear": 0, "bounded": 1, "power": 2}
+_st_get_block_coord = _status_cfun("krige_st_get_block_coord", [
+    ctypes.c_int64, _c_int, _c_int, _ptr_dbl,
+])
+_st_get_estimate     = _status_cfun("krige_st_get_estimate",      [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_get_estimate_all = _status_cfun("krige_st_get_estimate_all",  [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
+_st_get_variance     = _status_cfun("krige_st_get_variance",      [ctypes.c_int64, _c_int, _ptr_dbl])
+_st_get_variance_all = _status_cfun("krige_st_get_variance_all",  [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_to_str           = _cfun("krige_st_to_str",                   [ctypes.c_int64], _ptr_void)
+_st_get_factor_info  = _status_cfun("krige_st_get_factor_info",   [
+    ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int,
+])
+_st_get_factor_matrices = _status_cfun("krige_st_get_factor_matrices", [
+    ctypes.c_int64, _c_int, _c_int, _ptr_dbl, _ptr_dbl, _ptr_dbl,
+])
+_st_get_factor_system = _status_cfun("krige_st_get_factor_system", [
+    ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl, _ptr_dbl,
+])
+_st_free_weight_store  = _status_cfun("krige_st_free_weight_store",  [ctypes.c_int64])
+_st_get_weight_dims    = _status_cfun("krige_st_get_weight_dims",    [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int])
+_st_get_weight_nnear   = _status_cfun("krige_st_get_weight_nnear",   [ctypes.c_int64, _c_int, _c_int, _ptr_int])
+_st_get_weight_inear   = _status_cfun("krige_st_get_weight_inear",   [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_int])
+_st_get_weight_data    = _status_cfun("krige_st_get_weight_data",    [ctypes.c_int64, _c_int, _c_int, _c_int, _c_int, _ptr_dbl])
+_st_get_weight_var     = _status_cfun("krige_st_get_weight_var",     [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_set_weights        = _status_cfun("krige_st_set_weights",        [
+    ctypes.c_int64, _c_int, _c_int, _c_int, _c_int,
+    _ptr_int, _ptr_int, _ptr_dbl, _ptr_int, _ptr_dbl,
+])
+_st_get_max_threads  = _cfun("krige_st_get_max_threads", [_ptr_int])
+_st_get_num_threads  = _cfun("krige_st_get_num_threads", [_ptr_int])
+_get_last_error      = _cfun("krige_get_last_error", [_ptr_char, _c_int], _c_int)
 
 # ---------------------------------------------------------------------------
 # Helpers (same pattern as _kriging.py)
 # ---------------------------------------------------------------------------
+
+# Legacy aliases used by older user code — map to the canonical 3-char prefix
+# that vtype_from_str recognises.
+_VTYPE_ALIASES = {'linear': 'lin', 'bounded': 'exp', 'power': 'pow'}
+
+def _normalize_vtype(s: str) -> str:
+    """Normalise a variogram type name to the 3-char code expected by Fortran."""
+    return _VTYPE_ALIASES.get(s.lower(), s.lower())
+
 def _farray(a, dtype=np.float64):
     return np.asfortranarray(a, dtype=dtype)
 
@@ -182,6 +229,13 @@ def _coord3_to_fortran(coord: np.ndarray) -> np.ndarray:
     a = np.asarray(coord, dtype=np.float64)
     assert a.ndim == 2 and a.shape[1] == 3, \
         f"coord must be (nobs, 3), got {a.shape}"
+    return np.asfortranarray(a.T)
+
+def _coord4_to_fortran(coord: np.ndarray) -> np.ndarray:
+    """(n, 4) -> Fortran (4, n), with column 3 as native time."""
+    a = np.asarray(coord, dtype=np.float64)
+    if a.ndim != 2 or a.shape[1] != 4:
+        raise ValueError(f"coord must be (n, 4) [x,y,z,t], got {a.shape}")
     return np.asfortranarray(a.T)
 
 def _dptr(a):
@@ -214,20 +268,22 @@ class SpaceTimeKriging:
     Python interface to the Fortran t_kriging_st space-time kriging engine.
 
     Supports 3D spatial + 1D temporal data, sum-metric and product-sum
-    covariance models, ordinary/simple kriging, co-kriging, and SGSIM
+    covariance models, ordinary/simple kriging, co-kriging, ST gradient
+    constraints, and SGSIM
     (primary variable only, conditioned on secondary observations).
 
     Coordinate convention
     ---------------------
-    All spatial coord arrays use **(nobs, 3)** shape — rows are points,
-    columns are x, y, z.  Time arrays are 1-D, shape (nobs,).
+    Observation coord arrays use **(nobs, 4)** shape — columns 0:3 are x,y,z
+    and column 3 is time.  Grid/block arrays still use (ngrid, 3) + time separately
+    until set_grid is updated.
 
     Typical workflow (single variable, sum-metric)
     -----------------------------------------------
     >>> k = SpaceTimeKriging(nvar=1)
     >>> k.set_st_model(model='sum_metric', transform='bounded', at=5.0)
-    >>> k.set_obs(ivar=1, coord=obs_coord, value=obs_value, time=obs_time,
-    ...           nmax=30, maxdist=5000, maxtlag=20.0)
+    >>> k.set_obs(ivar=1, coord=obs_coord4, value=obs_value,
+    ...           nmax=30, maxdist=5000)
     >>> k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0, sill=0.8, a_major=1000, a_minor1=500, a_minor2=200)
     >>> k.set_vgm_temporal(ivar=1, jvar=1, spec="exp 0 0.6 10.0")
     >>> k.set_vgm_joint_sills(ivar=1, jvar=1, sills=[0.4])
@@ -254,7 +310,6 @@ class SpaceTimeKriging:
         verbose: bool = False,
         weight_file: str = "",
         bounds: Optional[tuple] = None,
-        sk_mean: float = 0.0,
         seed: Optional[int] = None,
     ):
         import random as _random
@@ -276,7 +331,6 @@ class SpaceTimeKriging:
             _c_int(int(neglect_error)),      _c_int(int(verbose)),
             weight_file.encode("utf-8") if weight_file else b"",
             _dptr(c_bounds),
-            _c_double(sk_mean),
             _c_int(seed),
         )
 
@@ -284,6 +338,7 @@ class SpaceTimeKriging:
         self.ndrift = ndrift
         self.nsim   = nsim
         self.verbose = verbose
+        self._nobs = [0 for _ in range(nvar)]
 
     # ------------------------------------------------------------------
     def set_st_model(
@@ -291,32 +346,28 @@ class SpaceTimeKriging:
         model: str = "sum_metric",
         transform: str = "linear",
         at: float = 1.0,
-        alpha: float = 1.0,
+        time_nugget: float = 0.0,
+        time_sill: float = 1.0,
         k_ps: float = 0.0,
     ):
-        """
+        r"""
         Set global space-time model parameters.  Must be called before set_vgm.
 
         Parameters
         ----------
         model     : 'sum_metric' or 'product_sum'
-        transform : 'linear' | 'bounded' | 'power'
-                    Controls f(dt) used in the joint ST distance:
-                      linear  → dw = \|dt\| / at
-                      bounded → dw = 1 - exp(-\|dt\| / at)
-                      power   → dw = (\|dt\| / at)^alpha
+        transform : 'nug' | 'sph' | 'exp' | 'gau' | 'pow' | 'bsq' | 'cir' | 'lin'
+                    Controls f(dt) used in the joint ST distance.  Aliases:
+                    'linear' -> 'lin', 'bounded' -> 'exp', 'power' -> 'pow'.
         at        : joint temporal scale (same time units as observations)
-        alpha     : power exponent (transform='power' only)
+        time_nugget, time_sill
+                  : f(dt) = nugget + sill * (1 - corefunc(|dt| / at)) for
+                    nonzero dt; f(0) is always 0.
         k_ps      : product-sum coefficient k (model='product_sum' only)
         """
-        m = _MODEL_MAP.get(model)
-        if m is None:
-            raise ValueError(f"model must be 'sum_metric' or 'product_sum', got {model!r}")
-        t = _TRANSFORM_MAP.get(transform)
-        if t is None:
-            raise ValueError(f"transform must be 'linear', 'bounded', or 'power', got {transform!r}")
         _st_set_st_model(_h(self._handle),
-            _c_int(m), _c_int(t), _c_double(at), _c_double(alpha), _c_double(k_ps))
+            str(model).encode(), _normalize_vtype(str(transform)).encode(), _c_double(at),
+            _c_double(time_nugget), _c_double(time_sill), _c_double(k_ps))
 
     # ------------------------------------------------------------------
     def set_obs(
@@ -324,11 +375,10 @@ class SpaceTimeKriging:
         ivar: int,
         coord: np.ndarray,
         value: np.ndarray,
-        time: np.ndarray,
         variance: Optional[np.ndarray] = None,
         nmax: Optional[int] = None,
         maxdist: Optional[float] = None,
-        maxtlag: Optional[float] = None,
+        sk_mean: float = 0.0,
     ):
         """
         Load observations for variable ivar.
@@ -336,32 +386,53 @@ class SpaceTimeKriging:
         Parameters
         ----------
         ivar     : variable index, 1-based
-        coord    : (nobs, 3) spatial coordinates
+        coord    : (nobs, 4) — columns 0:3 spatial (x,y,z), column 3 = time
         value    : (nobs,)   observed values
-        time     : (nobs,)   observation times
         variance : (nobs,)   measurement error variance (default: zeros)
-        nmax     : max spatial neighbours
-        maxdist  : max spatial search distance
-        maxtlag  : max temporal lag (same units as time)
+        nmax     : max neighbours
+        maxdist  : max 4D search radius in transformed space
+        sk_mean  : global mean for simple kriging (unbias=0); default 0
         """
         import sys as _sys
-        coord_f = _coord3_to_fortran(coord)
+        a = np.asarray(coord, dtype=np.float64)
+        assert a.ndim == 2 and a.shape[1] == 4, \
+            f"coord must be (nobs, 4) [x,y,z,t], got {a.shape}"
+        coord_f = np.asfortranarray(a.T)   # Fortran (4, nobs)
         nobs    = coord_f.shape[1]
         assert len(value) == nobs, "value length != nobs"
-        assert len(time)  == nobs, "time length != nobs"
 
         value_f = _farray(np.asarray(value).ravel())
-        time_f  = _farray(np.asarray(time).ravel())
         var_f   = _farray(variance) if variance is not None else _farray(np.zeros(nobs))
 
-        c_nmax    = _c_int(nmax    if nmax    is not None else np.iinfo(np.int32).max)
+        c_nmax    = _c_int(nmax if nmax is not None else np.iinfo(np.int32).max)
         c_maxdist = _c_double(maxdist if maxdist is not None else _sys.float_info.max)
-        c_maxtlag = _c_double(maxtlag if maxtlag is not None else _sys.float_info.max)
 
         _st_set_obs(_h(self._handle),
             _c_int(ivar), _c_int(nobs),
-            _dptr(coord_f), _dptr(value_f), _dptr(time_f), _dptr(var_f),
-            c_nmax, c_maxdist, c_maxtlag)
+            _dptr(coord_f), _dptr(value_f), _dptr(var_f),
+            c_nmax, c_maxdist, _c_double(sk_mean))
+        self._nobs[ivar - 1] = nobs
+
+    # ------------------------------------------------------------------
+    def update_obs_value(self, ivar: int, value: np.ndarray):
+        """
+        Replace observation values for variable ``ivar`` in-place.
+
+        Coordinates and the KD-tree are unchanged.  After solving once with
+        stored weights, call this method with new observed values and solve
+        again to reuse the existing neighbourhoods and weights.
+        """
+        if ivar < 1 or ivar > self.nvar:
+            raise ValueError(f"ivar must be in [1, {self.nvar}], got {ivar}")
+        nobs = self._nobs[ivar - 1]
+        value_f = _farray(np.asarray(value, dtype=np.float64).ravel())
+        if value_f.size != nobs:
+            raise ValueError(
+                f"value length ({value_f.size}) must match nobs ({nobs}) "
+                f"set by the previous set_obs call for ivar={ivar}"
+            )
+        _st_update_obs_value(_h(self._handle),
+            _c_int(ivar), _c_int(nobs), _dptr(value_f))
 
     # ------------------------------------------------------------------
     def set_obs_drift(self, ivar: int, drift: np.ndarray):
@@ -373,6 +444,77 @@ class SpaceTimeKriging:
         _st_set_obs_drift(_h(self._handle),
             _c_int(ivar), _c_int(drift_f.shape[0]), _c_int(drift_f.shape[1]),
             _dptr(drift_f))
+
+    # ------------------------------------------------------------------
+    def set_grad(
+        self,
+        coord1: np.ndarray,
+        coord2: np.ndarray,
+        grad_value: np.ndarray,
+        ivar: int = 1,
+        variance: Optional[np.ndarray] = None,
+        drift_ext: Optional[np.ndarray] = None,
+    ):
+        """
+        Set time-aware ST gradient observation pairs.
+
+        ``coord1`` and ``coord2`` must both have shape ``(ngrad, 4)`` with
+        columns ``x, y, z, t``.  The constraint is
+        ``Z(coord1[i]) - Z(coord2[i]) = grad_value[i]``.  Because time is part
+        of each endpoint coordinate, targets at other times are penalized by
+        the temporal covariance model.
+        """
+        if ivar < 1 or ivar > self.nvar:
+            raise ValueError(f"ivar must be in [1, {self.nvar}], got {ivar}")
+
+        c1_f = _coord4_to_fortran(coord1)
+        c2_f = _coord4_to_fortran(coord2)
+        if c1_f.shape != c2_f.shape:
+            raise ValueError(f"coord1 and coord2 shapes differ: {c1_f.T.shape} vs {c2_f.T.shape}")
+
+        ngrad = c1_f.shape[1]
+        if ngrad == 0:
+            c1_arg = np.zeros((4, 1), dtype=np.float64, order="F")
+            c2_arg = np.zeros((4, 1), dtype=np.float64, order="F")
+            gval = _farray(np.zeros(1, dtype=np.float64))
+            gvar = _farray(np.zeros(1, dtype=np.float64))
+            de_f = np.zeros((1, 1), dtype=np.float64, order="F")
+            ndrift_c = 0
+        else:
+            c1_arg = c1_f
+            c2_arg = c2_f
+            gval = _farray(np.asarray(grad_value, dtype=np.float64).ravel())
+            if gval.size != ngrad:
+                raise ValueError(f"grad_value length ({gval.size}) must match ngrad ({ngrad})")
+
+            if variance is not None:
+                gvar = _farray(np.asarray(variance, dtype=np.float64).ravel())
+                if gvar.size != ngrad:
+                    raise ValueError(f"variance length ({gvar.size}) must match ngrad ({ngrad})")
+            else:
+                gvar = _farray(np.zeros(ngrad, dtype=np.float64))
+
+            if drift_ext is not None:
+                de = np.asarray(drift_ext, dtype=np.float64)
+                if de.ndim == 1:
+                    de = de.reshape(ngrad, 1)
+                if de.ndim != 2 or de.shape[0] != ngrad:
+                    raise ValueError(
+                        f"drift_ext must be (ngrad, ndrift), got {de.shape} for ngrad={ngrad}"
+                    )
+                de_f = np.asfortranarray(de.T)
+                ndrift_c = de_f.shape[0]
+            else:
+                de_f = np.zeros((1, max(ngrad, 1)), dtype=np.float64, order="F")
+                ndrift_c = 0
+
+        _st_set_grad(
+            _h(self._handle),
+            _c_int(ivar), _c_int(ngrad),
+            _dptr(c1_arg), _dptr(c2_arg),
+            _dptr(gval), _dptr(gvar),
+            _c_int(ndrift_c), _dptr(de_f),
+        )
 
     # ------------------------------------------------------------------
     def set_vgm(
@@ -393,9 +535,11 @@ class SpaceTimeKriging:
             a_minor1 = a_major
         if a_minor2 is None:
             a_minor2 = a_minor1
-        spec = (f"{vtype} {nugget} {sill} {a_major} {a_minor1} {a_minor2}"
-                f" {azimuth} {dip} {plunge}")
-        _st_set_vgm(_h(self._handle), _c_int(ivar), _c_int(jvar), spec.encode("utf-8"))
+        _st_set_vgm(_h(self._handle), _c_int(ivar), _c_int(jvar),
+                    str(vtype).encode(),
+                    _c_double(nugget), _c_double(sill), _c_double(a_major),
+                    _c_double(a_minor1), _c_double(a_minor2),
+                    _c_double(azimuth), _c_double(dip), _c_double(plunge))
 
     # ------------------------------------------------------------------
     def set_vgm_temporal(
@@ -411,9 +555,9 @@ class SpaceTimeKriging:
         sill   : partial sill of this structure
         at_k   : temporal practical range (same time units as observations)
         """
-        spec = f"{vtype} {nugget} {sill} {at_k}"
         _st_set_vgm_temporal(_h(self._handle), _c_int(ivar), _c_int(jvar),
-                              spec.encode("utf-8"))
+                              str(vtype).encode(),
+                              _c_double(nugget), _c_double(sill), _c_double(at_k))
 
     # ------------------------------------------------------------------
     def set_vgm_joint_sills(self, ivar: int, jvar: int, *sills: float):
@@ -507,6 +651,10 @@ class SpaceTimeKriging:
     def set_search(
         self,
         ivar: int,
+        time_transform: str = "linear",
+        time_nugget: float = 0.0,
+        time_sill: float = 1.0,
+        time_at: float = 1.0,
         anis1: float = 1.0,
         anis2: float = 1.0,
         azimuth: float = 0.0,
@@ -514,17 +662,83 @@ class SpaceTimeKriging:
         plunge: float = 0.0,
     ):
         """
-        Build spatial KD-tree for variable ivar.
+        Build ST KD-tree for variable ivar.
+
+        ``time_transform``, ``time_nugget``, ``time_sill``, and ``time_at``
+        control the search time coordinate independently from the variogram
+        model.  Use the same values as ``set_st_model`` when the
+        search neighbourhood should follow the variogram's temporal scale; use
+        different values for a broader or tighter search anisotropy.
+
         Call after set_obs (and after set_sim for ivar=1 in SGSIM).
         """
         _st_set_search(_h(self._handle), _c_int(ivar),
+                       _normalize_vtype(str(time_transform)).encode(),
+                       _c_double(time_nugget), _c_double(time_sill),
+                       _c_double(time_at),
                        _c_double(anis1), _c_double(anis2),
                        _c_double(azimuth), _c_double(dip), _c_double(plunge))
 
     # ------------------------------------------------------------------
-    def solve(self):
-        """Run the ST kriging or SGSIM loop."""
-        _st_solve(_h(self._handle))
+    def solve(self, nthread: int = 0):
+        """Run the ST kriging or SGSIM loop.
+
+        Parameters
+        ----------
+        nthread : int, optional
+            Maximum number of OpenMP threads.  0 (default) lets the OpenMP
+            runtime choose (respects ``OMP_NUM_THREADS``).
+        """
+        _st_solve(_h(self._handle), _c_int(nthread))
+
+    # ------------------------------------------------------------------
+    def get_factor(self) -> dict:
+        """Return cached factor matrices and the assembled linear system."""
+        c_npp = ctypes.c_int(0)
+        c_p = ctypes.c_int(0)
+        c_valid = ctypes.c_int(0)
+        _st_get_factor_info(
+            _h(self._handle),
+            ctypes.byref(c_npp),
+            ctypes.byref(c_p),
+            ctypes.byref(c_valid),
+        )
+        valid = bool(c_valid.value)
+        npp = c_npp.value
+        p = c_p.value
+
+        if not valid:
+            return dict(valid=False, npp=0, p=0,
+                        L=None, kinv_drift=None, schur=None,
+                        matA=None, rhsB=None)
+
+        pg = max(1, p)
+        matsize = npp + p
+        L_buf = _fempty((npp, npp), dtype=np.float64)
+        kinv_buf = _fempty((npp, pg), dtype=np.float64)
+        schur_buf = _fempty((pg, pg), dtype=np.float64)
+        matA_buf = _fempty((matsize, matsize), dtype=np.float64)
+        rhsB_buf = _fempty((self.nvar, matsize), dtype=np.float64)
+
+        _st_get_factor_matrices(
+            _h(self._handle),
+            _c_int(npp), _c_int(p),
+            _dptr(L_buf), _dptr(kinv_buf), _dptr(schur_buf),
+        )
+        _st_get_factor_system(
+            _h(self._handle),
+            _c_int(npp), _c_int(p), _c_int(self.nvar),
+            _dptr(matA_buf), _dptr(rhsB_buf),
+        )
+
+        return dict(
+            valid=True, npp=npp, p=p,
+            L=np.asarray(L_buf, order="C"),
+            kinv_drift=np.asarray(kinv_buf, order="C"),
+            schur=np.asarray(schur_buf, order="C"),
+            matA=np.asarray(matA_buf, order="C"),
+            rhsB=np.asarray(rhsB_buf, order="C"),
+        )
 
     # ------------------------------------------------------------------
     def get_results(self, copy: bool = False, squeeze: bool = True) -> "tuple[np.ndarray, np.ndarray]":
@@ -584,7 +798,10 @@ class SpaceTimeKriging:
             self._handle = 0
 
     def __repr__(self):
-        return f"SpaceTimeKriging(nvar={self.nvar}, ndrift={self.ndrift}, nsim={self.nsim})"
+        ptr = _st_to_str(_h(self._handle))
+        if ptr:
+            return ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8", errors="ignore")
+        return f"<SpaceTimeKriging nvar={self.nvar} at {self._handle}>"
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +811,6 @@ class SpaceTimeKriging:
 def spacetime_kriging(
     obs_coord: np.ndarray,
     obs_value: np.ndarray,
-    obs_time: np.ndarray,
     grid_coord: np.ndarray,
     grid_time: np.ndarray,
     spatial_spec: "dict | list[dict]",
@@ -603,10 +819,10 @@ def spacetime_kriging(
     model: str = "sum_metric",
     transform: str = "linear",
     at: float = 1.0,
-    alpha: float = 1.0,
+    time_nugget: float = 0.0,
+    time_sill: float = 1.0,
     nmax: int = 20,
     maxdist: Optional[float] = None,
-    maxtlag: Optional[float] = None,
     search_anis1: float = 1.0,
     search_anis2: float = 1.0,
     search_azimuth: float = 0.0,
@@ -617,21 +833,19 @@ def spacetime_kriging(
 
     Parameters
     ----------
-    obs_coord    : (nobs, 3)   observation spatial coordinates
+    obs_coord    : (nobs, 4)   observation coordinates — columns 0:3 spatial, column 3 time
     obs_value    : (nobs,)     observed values
-    obs_time     : (nobs,)     observation times
     grid_coord   : (ngrid, 3)  prediction spatial coordinates
     grid_time    : (ngrid,)    prediction times
     spatial_spec : dict or list[dict]  spatial variogram structure(s)
     temporal_spec: dict or list[dict]  temporal variogram structure(s)
     joint_sills  : list[float]         joint sills (sum-metric only)
     model        : 'sum_metric' or 'product_sum'
-    transform    : 'linear', 'bounded', or 'power'
+    transform    : 'nug', 'sph', 'exp', 'gau', 'pow', 'bsq', 'cir', or 'lin'
     at           : joint temporal scale
-    alpha        : power exponent (transform='power')
-    nmax         : max spatial neighbours
-    maxdist      : max spatial search distance
-    maxtlag      : max temporal lag
+    time_nugget, time_sill : f(dt) scale for the joint temporal distance
+    nmax         : max neighbours
+    maxdist      : max 4D search radius in transformed space
 
     Returns
     -------
@@ -639,9 +853,10 @@ def spacetime_kriging(
     variance : (ngrid,)
     """
     k = SpaceTimeKriging(nvar=1)
-    k.set_st_model(model=model, transform=transform, at=at, alpha=alpha, k_ps=k_ps)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, time=obs_time,
-              nmax=nmax, maxdist=maxdist, maxtlag=maxtlag)
+    k.set_st_model(model=model, transform=transform, at=at,
+                   time_nugget=time_nugget, time_sill=time_sill, k_ps=k_ps)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
+              nmax=nmax, maxdist=maxdist)
     for spec in ([spatial_spec] if isinstance(spatial_spec, dict) else list(spatial_spec)):
         k.set_vgm(1, 1, **spec)
     for spec in ([temporal_spec] if isinstance(temporal_spec, dict) else list(temporal_spec)):
@@ -649,7 +864,10 @@ def spacetime_kriging(
     if model == "sum_metric":
         k.set_vgm_joint_sills(1, 1, *joint_sills)
     k.set_grid(coord=grid_coord, time=grid_time)
-    k.set_search(ivar=1, anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth)
+    k.set_search(ivar=1, time_transform=transform,
+                 time_nugget=time_nugget, time_sill=time_sill,
+                 time_at=at,
+                 anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth)
     k.solve()
     return k.get_results()
 
@@ -657,7 +875,6 @@ def spacetime_kriging(
 def spacetime_cokriging(
     obs_coords: "list[np.ndarray]",
     obs_values: "list[np.ndarray]",
-    obs_times:  "list[np.ndarray]",
     grid_coord: np.ndarray,
     grid_time:  np.ndarray,
     spatial_specs: dict,
@@ -666,19 +883,18 @@ def spacetime_cokriging(
     model: str = "sum_metric",
     transform: str = "linear",
     at: float = 1.0,
-    alpha: float = 1.0,
+    time_nugget: float = 0.0,
+    time_sill: float = 1.0,
     nmax: int = 20,
     maxdist: Optional[float] = None,
-    maxtlag: Optional[float] = None,
 ) -> "tuple[np.ndarray, np.ndarray]":
     """
     One-shot ordinary space-time co-kriging.
 
     Parameters
     ----------
-    obs_coords   : list of (nobs_i, 3) arrays, one per variable
+    obs_coords   : list of (nobs_i, 4) arrays, one per variable — columns 0:3 spatial, column 3 time
     obs_values   : list of (nobs_i,)   arrays
-    obs_times    : list of (nobs_i,)   arrays
     grid_coord   : (ngrid, 3)
     grid_time    : (ngrid,)
     spatial_specs : dict (ivar,jvar) -> dict or list[dict]
@@ -692,11 +908,12 @@ def spacetime_cokriging(
     """
     nvar = len(obs_coords)
     k = SpaceTimeKriging(nvar=nvar)
-    k.set_st_model(model=model, transform=transform, at=at, alpha=alpha)
+    k.set_st_model(model=model, transform=transform, at=at,
+                   time_nugget=time_nugget, time_sill=time_sill)
 
-    for i, (coord, value, time) in enumerate(zip(obs_coords, obs_values, obs_times), start=1):
-        k.set_obs(ivar=i, coord=coord, value=value, time=time,
-                  nmax=nmax, maxdist=maxdist, maxtlag=maxtlag)
+    for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
+        k.set_obs(ivar=i, coord=coord, value=value,
+                  nmax=nmax, maxdist=maxdist)
 
     for (iv, jv), spec in spatial_specs.items():
         for s in ([spec] if isinstance(spec, dict) else list(spec)):
@@ -713,7 +930,9 @@ def spacetime_cokriging(
     k.set_grid(coord=grid_coord, time=grid_time)
 
     for i in range(1, nvar + 1):
-        k.set_search(ivar=i)
+        k.set_search(ivar=i, time_transform=transform,
+                     time_nugget=time_nugget, time_sill=time_sill,
+                     time_at=at)
 
     k.solve()
     return k.get_results()

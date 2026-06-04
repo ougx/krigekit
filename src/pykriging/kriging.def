@@ -23,6 +23,9 @@ EXPORTS
     ; --- Simulation (SGSIM) ---
     krige_set_sim
 
+    ; --- Gradient constraints ---
+    krige_set_grad
+
     ; --- Search ---
     krige_set_search
 
@@ -42,6 +45,7 @@ EXPORTS
 
     ; --- Kriging weights ---
     krige_free_weight_store
+    krige_get_weight_dims
     krige_get_weight_nnear
     krige_get_weight_inear
     krige_get_weight_data
@@ -51,6 +55,7 @@ EXPORTS
     ; --- Persistent between-solve factorisation cache ---
     krige_get_factor_info
     krige_get_factor_matrices
+    krige_get_factor_system
 
     ; --- Utilities ---
     krige_to_str
@@ -61,20 +66,49 @@ EXPORTS
     krige_st_create
     krige_st_destroy
     krige_st_initialize
+
     krige_st_set_st_model
     krige_st_set_obs
+    krige_st_update_obs_value
     krige_st_set_obs_drift
+    krige_st_set_grad
+
+    krige_st_reset_vgm
     krige_st_set_vgm
     krige_st_set_vgm_temporal
     krige_st_set_vgm_joint_sills
+
     krige_st_set_grid
     krige_st_set_grid_block
     krige_st_set_grid_cv
     krige_st_set_grid_drift
     krige_st_set_sim
     krige_st_set_search
+
+    krige_st_prepare
     krige_st_solve
+
     krige_st_get_nblocks
     krige_st_get_nsim
+    krige_st_get_block_coord
     krige_st_get_estimate
+    krige_st_get_estimate_all
     krige_st_get_variance
+    krige_st_get_variance_all
+
+    krige_st_to_str
+
+    krige_st_get_factor_info
+    krige_st_get_factor_matrices
+    krige_st_get_factor_system
+
+    krige_st_free_weight_store
+    krige_st_get_weight_dims
+    krige_st_get_weight_nnear
+    krige_st_get_weight_inear
+    krige_st_get_weight_data
+    krige_st_get_weight_var
+    krige_st_set_weights
+
+    krige_st_get_max_threads
+    krige_st_get_num_threads

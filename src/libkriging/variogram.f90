@@ -1,43 +1,47 @@
 !==============================================================================
 ! Module: variogram
 !
-! Variogram / covariance model library for 3D universal cokriging.
+! Variogram / covariance model library for 3D/2D universal cokriging.
 !
 ! Design principles:
 !
-!  1. Per-structure anisotropy.
-!     Each nested structure carries its own vgm_aniso descriptor (azimuth,
-!     dip, plunge, range ratios).  The affine transformation matrix is
-!     computed once on construction and cached.  Different structures in the
-!     same composite model can therefore have independent geometries.
+!  1. No polymorphism in the hot path.
+!     The covariance shape is stored as an integer tag (vtype_id) in
+!     vgm_component.  corefunc_fn(vtype_id, rdist) is a pure
+!     elemental function using a select case — the compiler inlines it,
+!     builds a jump table for the switch, and can SIMD-vectorise the call.
+!     There are no abstract types, no vtable lookups, no heap allocations
+!     for shape objects.
 !
-!  2. Clean separation of concerns.
-!     variog        : shape of the correlation function (sph, exp, ...)
-!     vgm_component : one structure = shape + sill + anisotropy + table
-!     vgm_struct    : composite = nugget + array of vgm_component + public API
+!  2. Per-structure anisotropy.
+!     vgm_aniso holds the cached affine transform matrix (built once).
+!     ndim = 2 skips the z-row in aniso_h (4 mul+1 sqrt vs 9 mul+1 sqrt).
 !
-!  3. Lookup table lives on vgm_component, not on the composite.
-!     Tables are built per structure, so the same fitted variog_sph object
-!     can be reused in cross-variogram models without recomputation.
+!  3. Two-level piecewise-uniform lookup table.
 !
-!  4. No raw pointers, no ptr_vgm wrapper type in the public API.
+!     Level A — build_all_tables():  one table per vgm_component.
+!       Works for any combination of anisotropies.
+!       cov_tab cost: nstruct × (1 aniso_h + 1 table lookup).
 !
-!  5. GSLIB rotation convention throughout.
-!     Azimuth measured clockwise from North in the horizontal plane,
-!     dip positive downward from horizontal, plunge = rake of the major axis.
+!     Level B — build_struct_table():  one composite table for the whole struct.
+!       REQUIRES all non-nugget structures to share the same mat matrix.
+!       cov_tab cost: 1 aniso_h + 1 table lookup (independent of nstruct).
+!       cov_tab() auto-dispatches to Level B when struct_tab_ready = .true.
+!
+!     Both levels use piecewise-uniform zones (no log in the hot path):
+!       h_bounds = [0.0, 0.1, 0.5, 3.5]   → 3 zones + implicit zero tail
+!       dh       = [1e-5, 1e-4, 1e-3]
+!       entries: 10000+4000+3000 = 17001, ~66 KB, max err < 5e-7
 !==============================================================================
 module variogram
 
   use common,          only: pi, DEG2RAD, EPSLON
   use kriging_err,     only: kriging_error
+  use vgm_func
   implicit none
   private
 
-  !-- public surface
-  public :: variog                                       ! abstract base
-  public :: variog_sph, variog_exp, variog_hol           ! concrete models
-  public :: variog_gau, variog_pow, variog_bsq
-  public :: variog_cir, variog_lin
+  !-- Public API
   public :: vgm_aniso                                    ! anisotropy descriptor
   public :: vgm_component                                ! one structure
   public :: vgm_struct                                   ! composite model
@@ -45,98 +49,19 @@ module variogram
 
   integer, parameter, public :: maxvgm  = 99
 
-  !=============================================================================
-  ! Abstract base type: pure correlation function shape, no geometry.
-  ! Declared before the abstract interface so the interface can import it.
-  !=============================================================================
-  type, abstract :: variog
-    character(3) :: vtype  = '   '
-    real         :: nugget = 0.0   ! per-structure nugget (usually 0)
-  contains
-    procedure(corefunc_if), deferred :: corefunc   ! C(rdist), rdist = h/range
-    procedure                        :: tostr
-  end type variog
+  !-- Tolerance for anisotropy compatibility check in build_struct_table
+  real, parameter :: MAT_TOL = 1.0e-6
 
-  ! Abstract interface declared after the type so 'variog' is already visible.
-  ! Forward reference to corefunc_if in the type body is permitted for
-  ! deferred bindings (Fortran 2003 S4.5.4).
-  abstract interface
-    elemental function corefunc_if(this, rdist) result(res)
-      import :: variog
-      class(variog), intent(in) :: this
-      real,      intent(in) :: rdist   ! dimensionless lag h / a_major
-      real                  :: res     ! correlation in [0, 1]
-    end function
-  end interface
+
 
   !=============================================================================
-  ! Concrete variogram shapes.
-  ! Each type carries only its own extra parameters; range and sill live on
-  ! vgm_component, keeping the shape types lightweight and reusable.
-  !=============================================================================
-  type, extends(variog) :: variog_nug
-  contains
-    procedure :: corefunc => corefunc_nug
-  end type
-
-
-  type, extends(variog) :: variog_sph
-  contains
-    procedure :: corefunc => corefunc_sph
-  end type
-
-  type, extends(variog) :: variog_exp
-  contains
-    procedure :: corefunc => corefunc_exp
-  end type
-
-  type, extends(variog) :: variog_hol
-    ! Not positive-definite in 3D; use only for 1D/2D or in combination
-    ! with a p.d. structure that dominates at short lags.
-  contains
-    procedure :: corefunc => corefunc_hol
-  end type
-
-  type, extends(variog) :: variog_gau
-  contains
-    procedure :: corefunc => corefunc_gau
-  end type
-
-  type, extends(variog) :: variog_pow
-    real :: alpha = 1.5   ! 0 < alpha < 2; generalised covariance IRF-k
-  contains
-    procedure :: corefunc => corefunc_pow
-  end type
-
-  type, extends(variog) :: variog_bsq
-    ! Bi-square (compact support): (1 - rdist^2)^2 for rdist < 1.
-  contains
-    procedure :: corefunc => corefunc_bsq
-  end type
-
-  type, extends(variog) :: variog_cir
-  contains
-    procedure :: corefunc => corefunc_cir
-  end type
-
-  type, extends(variog) :: variog_lin
-  contains
-    procedure :: corefunc => corefunc_lin
-  end type
-
-  !=============================================================================
-  ! Anisotropy descriptor — one per structure.
-  !
-  ! Stores interpretable parameters (angles + range ratios) AND the
-  ! pre-computed 3x3 affine transform matrix that maps a real-space lag vector
-  ! to a dimensionless isotropic lag magnitude:
-  !
-  !   h_iso = || mat * lag_vec ||
-  !
-  ! where mat = diag(1/a_major, 1/a_minor1, 1/a_minor2) * R(az, dip, plunge)
-  ! and the rotation R follows the GSLIB convention documented in build_aniso_mat.
+  ! vgm_aniso — anisotropy descriptor.
+  ! ndim = 1: range only
+  ! ndim = 2: azimuth only; 4 mul + 1 sqrt per aniso_h call.
+  ! ndim = 3: full GSLIB rotation; 9 mul + 1 sqrt per aniso_h call.
   !=============================================================================
   type :: vgm_aniso
+    integer :: ndim  = 3
     real :: azimuth  = 0.0    ! clockwise from North in horizontal plane
     real :: dip      = 0.0    ! downward tilt of the major axis (degrees)
     real :: plunge   = 0.0    ! rotation of semi-axes around major axis
@@ -152,54 +77,86 @@ module variogram
     procedure :: h_iso => aniso_h           ! lag vector -> scalar isotropic h
   end type vgm_aniso
 
+
   !=============================================================================
-  ! One nested structure: shape + partial sill + anisotropy + lookup table.
+  ! vgm_component — one nested structure.
+  !
+  ! Fields replacing the old class(variog), allocatable :: shape:
+  !   vtype_id  : integer tag (VGM_NUG, VGM_SPH, ...) — used in corefunc_fn
+  !   vtype     : 3-character string ('nug','sph',...) — for display only
+  !   nugget    : per-structure nugget (usually 0; adds to C(0) but not C(h>0))
+  !
+  ! The lookup table stores tab(h) = sill * corefunc_fn(vtype_id, h).
   !=============================================================================
   type :: vgm_component
-    real                   :: sill  = 1.0
-    type(vgm_aniso)            :: aniso
-    class(variog), allocatable :: shape
+    real           :: sill      = 1.0
+    real           :: nugget    = 0.0
+    integer        :: vtype_id  = VGM_NUG
+    character(3)   :: vtype     = 'nug'
+    type(vgm_aniso) :: aniso
 
-    real, allocatable :: tab(:)      ! covariance values C(h_i), i=0..n_tab
-    real, allocatable :: tab_h(:)    ! breakpoints h_i,        i=0..n_tab
-    !-- Geometric spacing: h_i = h1 * ratio^i, i >= 1; h_0 = 0 (nugget point)
-    !   Index formula (O(1), no search): i = floor(log(h/h1) / log_ratio) + 1
-    real    :: tab_hmax     = 0.0
-    real    :: tab_h1       = 0.0    ! first positive breakpoint
-    real    :: tab_log_h1   = 0.0    ! log(h1)
-    real    :: tab_log_ratio= 0.0    ! log(ratio)
-    integer :: tab_n        = 0      ! number of intervals (breakpoints = n+1)
-    logical :: tab_ready    = .false.
+    !-- Piecewise-uniform lookup table
+    real,    allocatable :: tab(:)
+    real,    allocatable :: tab_zone_bounds(:)  ! [0:nzones]
+    real,    allocatable :: tab_zone_inv_dh(:)  ! [nzones]
+    integer, allocatable :: tab_zone_offset(:)  ! [nzones]
+    integer, allocatable :: tab_zone_n(:)        ! [nzones]
+    real    :: tab_hmax   = 0.0
+    integer :: tab_n      = 0
+    integer :: tab_nzones = 0
+    logical :: tab_ready  = .false.
+
   contains
     procedure :: build_table => comp_build_table
-    procedure :: cov_h       => comp_cov_h        ! analytic, isotropic scalar h
-    procedure :: cov_lag     => comp_cov_lag       ! analytic, dx [,dy [,dz]]
-    procedure :: cov_tab     => comp_cov_tab       ! table,    dx [,dy [,dz]]
+    procedure :: cov_h       => comp_cov_h
+    procedure :: cov_lag     => comp_cov_lag
+    procedure :: cov_tab     => comp_cov_tab
+    procedure :: cov_tab_h   => comp_cov_tab_h
     procedure :: tostr       => comp_tostr
     final     :: comp_finalise
   end type vgm_component
 
+
   !=============================================================================
-  ! Composite variogram model: nugget + array of vgm_component.
+  ! vgm_struct — composite model.
   !=============================================================================
   type :: vgm_struct
-    integer  :: nstruct = 0
-    real     :: cov0    = 0.0
+    integer :: ndim    = 0
+    integer :: nstruct = 0
+    real    :: cov0    = 0.0
     type(vgm_component) :: structs(maxvgm)
+
+    !-- Level-B composite struct table
+    type(vgm_aniso)      :: struct_aniso
+    real,    allocatable :: struct_tab(:)
+    real,    allocatable :: struct_zone_bounds(:)
+    real,    allocatable :: struct_zone_inv_dh(:)
+    integer, allocatable :: struct_zone_offset(:)
+    integer, allocatable :: struct_zone_n(:)
+    real    :: struct_hmax    = 0.0
+    integer :: struct_n       = 0
+    integer :: struct_nzones  = 0
+    logical :: struct_tab_ready = .false.
+
   contains
     procedure :: reset         => struct_reset
+    procedure :: reset_model   => struct_reset
     procedure :: add_args      => struct_add_args
     procedure :: add_comp      => struct_add_comp
     generic   :: add           => add_args, add_comp
-    procedure :: build_all_tables
+    procedure :: build_all_tables              ! Level A
+    procedure :: build_struct_table            ! Level B
     procedure :: cov_h         => struct_cov_h     ! isotropic scalar h
     procedure :: cov_lag       => struct_cov_lag   ! analytic, dx [,dy [,dz]]
     procedure :: cov_tab       => struct_cov_tab   ! table, dx [,dy [,dz]]
     procedure :: tostr         => struct_tostr
     procedure :: is_valid      => struct_is_valid
+    procedure :: set_ndim      => struct_set_ndim
+    procedure, private :: cov_struct_tab_h
   end type vgm_struct
 
 contains
+
 
   !=============================================================================
   ! vgm_aniso
@@ -218,23 +175,28 @@ contains
   subroutine build_aniso_mat(this)
     use rotation, only: calc_rotmat
     class(vgm_aniso), intent(inout) :: this
-
-    this%mat   = calc_rotmat(&
-      this%azimuth, this%dip, this%plunge, &
-      this%a_minor1/this%a_major, this%a_minor2/this%a_major)/this%a_major
+      this%mat = calc_rotmat( &
+        this%azimuth, this%dip, this%plunge, &
+        this%a_minor1/this%a_major, this%a_minor2/this%a_major) / this%a_major
     this%ready = .true.
   end subroutine build_aniso_mat
 
-  !-- Transform a 3D lag vector to a dimensionless isotropic distance.
   elemental function aniso_h(this, dx, dy, dz) result(h)
     class(vgm_aniso), intent(in) :: this
     real,             intent(in) :: dx, dy, dz
-    real                     :: h
-    real :: rx, ry, rz
-    rx = this%mat(1,1)*dx + this%mat(1,2)*dy + this%mat(1,3)*dz
-    ry = this%mat(2,1)*dx + this%mat(2,2)*dy + this%mat(2,3)*dz
-    rz = this%mat(3,1)*dx + this%mat(3,2)*dy + this%mat(3,3)*dz
-    h  = sqrt(rx*rx + ry*ry + rz*rz)
+    real :: h, rx, ry, rz
+    if (this%ndim == 1) then
+      h  = abs(dx * this%mat(1,1))
+    else if (this%ndim == 2) then
+      rx = this%mat(1,1)*dx + this%mat(1,2)*dy
+      ry = this%mat(2,1)*dx + this%mat(2,2)*dy
+      h  = sqrt(rx*rx + ry*ry)
+    else
+      rx = this%mat(1,1)*dx + this%mat(1,2)*dy + this%mat(1,3)*dz
+      ry = this%mat(2,1)*dx + this%mat(2,2)*dy + this%mat(2,3)*dz
+      rz = this%mat(3,1)*dx + this%mat(3,2)*dy + this%mat(3,3)*dz
+      h  = sqrt(rx*rx + ry*ry + rz*rz)
+    end if
   end function aniso_h
 
   !-- Public convenience wrapper.
@@ -243,160 +205,182 @@ contains
     call aniso%build()
   end subroutine build_rotmat
 
+
+  !=============================================================================
+  ! Private zone-building helper
+  !=============================================================================
+
+  subroutine alloc_zones(h_bounds, dh, hmax, &
+      nzones, ntab_total, n_zone, zone_bounds, zone_inv_dh, zone_offset, zone_n)
+    real,    intent(in)  :: h_bounds(:), hmax
+    real,    intent(in)  :: dh(:)
+    integer, intent(out) :: nzones, ntab_total
+    integer, allocatable, intent(out) :: n_zone(:)
+    real,    allocatable, intent(out) :: zone_bounds(:)
+    real,    allocatable, intent(out) :: zone_inv_dh(:)
+    integer, allocatable, intent(out) :: zone_offset(:)
+    integer, allocatable, intent(out) :: zone_n(:)
+
+    integer :: k, offset
+
+    nzones = size(dh)
+    allocate(n_zone(nzones))
+    do k = 1, nzones
+      n_zone(k) = max(1, nint((h_bounds(k+1) - h_bounds(k)) / dh(k)))
+    end do
+    ntab_total = sum(n_zone)
+
+    allocate(zone_bounds(0:nzones))
+    allocate(zone_inv_dh(nzones))
+    allocate(zone_offset(nzones))
+    allocate(zone_n(nzones))
+
+    zone_bounds = h_bounds
+    offset = 0
+    do k = 1, nzones
+      zone_offset(k)  = offset
+      zone_n(k)       = n_zone(k)
+      zone_inv_dh(k)  = real(n_zone(k)) / (h_bounds(k+1) - h_bounds(k))
+      offset          = offset + n_zone(k)
+    end do
+  end subroutine alloc_zones
+
+
   !=============================================================================
   ! vgm_component
   !=============================================================================
 
-  !-- Build the lookup table with geometrically increasing intervals.
-  !
-  !   Breakpoints:  h_0 = 0,  h_i = h_min * ratio^(i-1)  for i >= 1
-  !   where h_min = hmax * h_min_frac  (default 1e-4 of hmax).
-  !   The number of points n is auto-computed so that h_{n} >= hmax exactly.
-  !
-  !   This gives dense resolution near h=0 (where the variogram changes
-  !   fastest) and coarser spacing near hmax (nearly flat).
-  !
-  !   Guidance on ratio choice (max relative interpolation error):
-  !     ratio = 1.005 -> ~1850 pts, err < 3e-4
-  !     ratio = 1.01  -> ~930  pts, err < 1e-3  (recommended default)
-  !     ratio = 1.02  -> ~470  pts, err < 5e-3
-  !
-  !   hmax: dimensionless upper limit (rdist = h / a_major).
-  !         Use 1.05 for compact-support models (sph, lin, cir, bsq),
-  !         3.5 for infinite-support models (exp, gau).
-  !
-  !   Index lookup is O(1) via: i = floor(log(h/h_min) / log(ratio)) + 1
-  subroutine comp_build_table(this, hmax, ratio)
+  subroutine comp_build_table(this, hmax, n_tab, h_bounds, dh)
     class(vgm_component), intent(inout) :: this
-    real, intent(in) :: hmax
-    real, intent(in) :: ratio          ! geometric growth factor, e.g. 1.01
+    real,    intent(in)           :: hmax
+    integer, intent(in), optional :: n_tab
+    real,    intent(in), optional :: h_bounds(:), dh(:)
 
-    integer :: i, n_tab
-    real    :: h_min, log_r
+    integer              :: i, k, offset, ntab_total, nzones_local
+    integer, allocatable :: n_zone(:)
+    real,    allocatable :: z_bounds(:), z_inv_dh(:), h_b(:), d_h(:)
+    integer, allocatable :: z_offset(:), z_n(:)
+    real :: step_k, h_lo, rdist
 
-    if (.not. allocated(this%shape)) then
-      call kriging_error('vgm_component%build_table', 'shape not allocated')
+    if (hmax <= 0.0) then
+      call kriging_error('vgm_component%comp_build_table', 'hmax must be positive')
       return
     end if
-    if (ratio <= 1.0) then
-      call kriging_error('vgm_component%build_table', 'ratio must be > 1.0')
-      return
+
+    if (allocated(this%tab))             deallocate(this%tab)
+    if (allocated(this%tab_zone_bounds)) deallocate(this%tab_zone_bounds)
+    if (allocated(this%tab_zone_inv_dh)) deallocate(this%tab_zone_inv_dh)
+    if (allocated(this%tab_zone_offset)) deallocate(this%tab_zone_offset)
+    if (allocated(this%tab_zone_n))      deallocate(this%tab_zone_n)
+
+    if (present(h_bounds) .and. present(dh)) then
+      if (size(h_bounds) /= size(dh)+1) then
+        call kriging_error ('vgm_component%comp_build_table', 'size(h_bounds) must be size(dh)+1')
+        return
+      end if
+      allocate(h_b, source=h_bounds)
+      allocate(d_h, source=dh)
+    else
+      allocate(h_b(2));  h_b = [0.0, hmax]
+      allocate(d_h(1));  d_h(1) = hmax / real(merge(n_tab, 10000, present(n_tab)))
     end if
 
-    !-- h_min: smallest positive breakpoint (1e-4 of hmax)
-    h_min = hmax * 1.0e-4
-    log_r = log(ratio)
+    call alloc_zones(h_b, d_h, hmax, &
+      nzones_local, ntab_total, n_zone, z_bounds, z_inv_dh, z_offset, z_n)
 
-    !-- auto-compute n_tab to cover [h_min, hmax]
-    n_tab = int(log(hmax / h_min) / log_r) + 2
+    allocate(this%tab(0:ntab_total))
+    this%tab(0) = this%sill + this%nugget   ! C(0)
 
-    if (allocated(this%tab))   deallocate(this%tab)
-    if (allocated(this%tab_h)) deallocate(this%tab_h)
-    allocate(this%tab(0:n_tab), this%tab_h(0:n_tab))
-
-    !-- h=0 entry: sill + nugget
-    this%tab_h(0) = 0.0
-    this%tab(0) = this%sill + this%shape%nugget
-
-    !-- positive breakpoints
-    do i = 1, n_tab
-      this%tab_h(i) = h_min * ratio**(i-1)
-      this%tab(i)   = this%sill * this%shape%corefunc(this%tab_h(i))
+    offset = 0
+    do k = 1, nzones_local
+      h_lo   = z_bounds(k-1)
+      step_k = 1.0 / z_inv_dh(k)
+      do i = 1, n_zone(k)
+        rdist = h_lo + real(i) * step_k
+        this%tab(offset+i) = this%sill * corefunc_fn(this%vtype_id, rdist)
+      end do
+      offset = offset + n_zone(k)
     end do
-    !-- clamp last breakpoint exactly to hmax (avoids fp drift)
-    this%tab_h(n_tab) = hmax
-    this%tab(n_tab)   = this%sill * this%shape%corefunc(hmax)
 
-    this%tab_n         = n_tab
-    this%tab_hmax      = hmax
-    this%tab_h1        = h_min
-    this%tab_log_h1    = log(h_min)
-    this%tab_log_ratio = log_r
-    this%tab_ready = .true.
+    this%tab_nzones = nzones_local
+    this%tab_n      = ntab_total
+    this%tab_hmax   = hmax
+    call move_alloc(z_bounds, this%tab_zone_bounds)
+    call move_alloc(z_inv_dh, this%tab_zone_inv_dh)
+    call move_alloc(z_offset, this%tab_zone_offset)
+    call move_alloc(z_n,      this%tab_zone_n)
+    this%tab_ready  = .true.
   end subroutine comp_build_table
 
-  !-- Analytic evaluation at a pre-transformed isotropic lag h.
+
   function comp_cov_h(this, h) result(res)
     class(vgm_component), intent(in) :: this
-    real,             intent(in) :: h
-    real                         :: res
+    real,                 intent(in) :: h
+    real :: res
     real, parameter :: eps = tiny(1.0) * 1.0e3
     if (h > eps) then
-      res = this%sill * this%shape%corefunc(h)
+      res = this%sill * corefunc_fn(this%vtype_id, h)
     else
-      res = this%sill + this%shape%nugget
+      res = this%sill + this%nugget
     end if
   end function comp_cov_h
 
-  !-- Analytic evaluation at a lag vector
   function comp_cov_lag(this, dx, dy, dz) result(res)
     class(vgm_component), intent(in) :: this
-    real,               intent(in) :: dx, dy, dz
-    real                         :: res
+    real,                 intent(in) :: dx, dy, dz
+    real :: res
     res = this%cov_h(this%aniso%h_iso(dx, dy, dz))
   end function comp_cov_lag
 
-  !-- Fast table path.
-  !   Index into the geometric table in O(1) via the log formula, then
-  !   linearly interpolate between the two surrounding breakpoints.
   function comp_cov_tab(this, dx, dy, dz) result(res)
     class(vgm_component), intent(in) :: this
-    real,               intent(in) :: dx, dy, dz
-    real                         :: res
-    real    :: h, frac
-    integer :: i
-
-    h = this%aniso%h_iso(dx, dy, dz)
-
-    if (.not. this%tab_ready) then
-      res = this%cov_h(h)
-      return
-    end if
-
-    !-- Beyond table range: covariance is zero
-    if (h >= this%tab_hmax) then
-      res = 0.0
-      return
-    end if
-
-    !-- Below first positive breakpoint: use h=0 entry (nugget+sill)
-    if (h < this%tab_h1) then
-      res = this%tab(0)
-      return
-    end if
-
-    !-- O(1) index: i such that tab_h(i) <= h < tab_h(i+1)
-    i = int( (log(h) - this%tab_log_h1) / this%tab_log_ratio ) + 1
-    i = max(1, min(i, this%tab_n - 1))
-
-    !-- Linear interpolation between breakpoints tab_h(i) and tab_h(i+1)
-    frac = (h - this%tab_h(i)) / (this%tab_h(i+1) - this%tab_h(i))
-    res  = this%tab(i) + frac * (this%tab(i+1) - this%tab(i))
+    real,                 intent(in) :: dx, dy, dz
+    real :: res
+    res = this%cov_tab_h(this%aniso%h_iso(dx, dy, dz))
   end function comp_cov_tab
+
+  function comp_cov_tab_h(this, h) result(res)
+    class(vgm_component), intent(in) :: this
+    real,                 intent(in) :: h
+    real :: res, fi
+    integer :: k, i
+    if (.not. this%tab_ready) then; res = this%cov_h(h); return; end if
+    if (h >= this%tab_hmax)   then; res = 0.0;            return; end if
+    if (h <= 0.0)             then; res = this%tab(0);    return; end if
+    do k = 1, this%tab_nzones
+      if (h < this%tab_zone_bounds(k)) then
+        fi = (h - this%tab_zone_bounds(k-1)) * this%tab_zone_inv_dh(k)
+        i  = this%tab_zone_offset(k) + min(int(fi), this%tab_zone_n(k)-1)
+        fi = fi - real(int(fi))
+        res = this%tab(i) + fi*(this%tab(i+1) - this%tab(i))
+        return
+      end if
+    end do
+    res = 0.0
+  end function comp_cov_tab_h
 
   function comp_tostr(this) result(s)
     class(vgm_component), intent(in) :: this
-    character(:), allocatable         :: s
+    character(:), allocatable :: s
     character(256) :: buf
-    if (allocated(this%shape)) then
-      write(buf,'(A3,"  sill=",G13.6, &
-               &"  az=",F7.2,"  dip=",F7.2,"  pl=",F7.2, &
-               &"  a=",3(G13.6,1X))') &
-        this%shape%vtype, this%sill,                          &
-        this%aniso%azimuth, this%aniso%dip, this%aniso%plunge, &
-        this%aniso%a_major, this%aniso%a_minor1, this%aniso%a_minor2
-    else
-      buf = '(unset component)'
-    end if
+    write(buf,'(A3,"  sill=",G13.6,"  nug=",G13.6, &
+             &"  az=",F7.2,"  dip=",F7.2,"  pl=",F7.2, &
+             &"  a=",3(G13.6,1X))') &
+      this%vtype, this%sill, this%nugget, &
+      this%aniso%azimuth, this%aniso%dip, this%aniso%plunge, &
+      this%aniso%a_major, this%aniso%a_minor1, this%aniso%a_minor2
     s = trim(buf)
   end function comp_tostr
 
   subroutine comp_finalise(this)
     type(vgm_component), intent(inout) :: this
-    if (allocated(this%tab))   deallocate(this%tab)
-    if (allocated(this%tab_h)) deallocate(this%tab_h)
-    if (allocated(this%shape)) deallocate(this%shape)
+    if (allocated(this%tab))             deallocate(this%tab)
+    if (allocated(this%tab_zone_bounds)) deallocate(this%tab_zone_bounds)
+    if (allocated(this%tab_zone_inv_dh)) deallocate(this%tab_zone_inv_dh)
+    if (allocated(this%tab_zone_offset)) deallocate(this%tab_zone_offset)
+    if (allocated(this%tab_zone_n))      deallocate(this%tab_zone_n)
   end subroutine comp_finalise
+
 
   !=============================================================================
   ! vgm_struct
@@ -406,26 +390,32 @@ contains
     class(vgm_struct), intent(inout) :: this
     this%nstruct = 0
     this%cov0    = 0.0
+    this%struct_tab_ready = .false.
   end subroutine struct_reset
 
-  subroutine struct_add_comp(this, comp)
+   subroutine struct_add_comp(this, comp)
     class(vgm_struct),   intent(inout) :: this
     type(vgm_component), intent(in)    :: comp
+    ! if (this%ndim ==0) then
+    !   call kriging_error('vgm_struct%struct_add_comp', 'ndim was not set; call vgm_struct%set_ndim()')
+    !   return
+    ! end if
     if (this%nstruct >= maxvgm) then
-      call kriging_error('vgm_struct%add', 'exceeded maxvgm nested structures')
+      call kriging_error('vgm_struct%struct_add_comp', 'exceeded maxvgm nested structures')
       return
     end if
-    if (.not. allocated(comp%shape)) then
-      call kriging_error('vgm_struct%add', 'component shape not allocated')
+
+    if (comp%vtype_id < 0) then
+      call kriging_error('vgm_struct%struct_add_comp', 'invalid vgm_id')
       return
     end if
     if (.not. comp%aniso%ready) then
-      call kriging_error('vgm_struct%add', 'aniso matrix not built; call aniso%build()')
+      call kriging_error('vgm_struct%struct_add_comp', 'aniso matrix not built; call aniso%build()')
       return
     end if
     this%nstruct = this%nstruct + 1
     this%structs(this%nstruct) = comp
-    this%cov0 = this%cov0 + comp%sill + comp%shape%nugget
+    this%cov0 = this%cov0 + comp%sill + comp%nugget
   end subroutine struct_add_comp
 
   subroutine struct_add_args(this, vtype, nugget, sill, &
@@ -435,66 +425,191 @@ contains
     real,              intent(in)    :: nugget, sill
     real,              intent(in)    :: a_major, a_minor1, a_minor2
     real,              intent(in)    :: azimuth, dip, plunge
+    integer :: id
+    ! if (this%ndim ==0) then
+    !   call kriging_error('vgm_struct%struct_add_comp', 'ndim was not set; call vgm_struct%set_ndim()')
+    !   return
+    ! end if
     if (this%nstruct >= maxvgm) then
       call kriging_error('vgm_struct%add', 'exceeded maxvgm nested structures')
       return
     end if
-    this%nstruct = this%nstruct + 1
-    associate (cc => this%structs(this%nstruct))
-      if (allocated(cc%shape)) deallocate(cc%shape)
-      cc%sill            = sill
-      cc%aniso%azimuth   = azimuth
-      cc%aniso%dip       = dip
-      cc%aniso%plunge    = plunge
-      cc%aniso%a_major   = a_major
-      cc%aniso%a_minor1  = a_minor1
-      cc%aniso%a_minor2  = a_minor2
-      call cc%aniso%build()
-      select case (trim(vtype))
-        case('nug'); allocate(variog_nug :: cc%shape)
-        case('sph'); allocate(variog_sph :: cc%shape)
-        case('exp'); allocate(variog_exp :: cc%shape)
-        case('hol'); allocate(variog_hol :: cc%shape)
-        case('gau'); allocate(variog_gau :: cc%shape)
-        case('pow'); allocate(variog_pow :: cc%shape)
-        case('bsq'); allocate(variog_bsq :: cc%shape)
-        case('cir'); allocate(variog_cir :: cc%shape)
-        case('lin'); allocate(variog_lin :: cc%shape)
-        case default
-          this%nstruct = this%nstruct - 1
-          call kriging_error('vgm_struct%add', 'unknown variogram type: '//trim(vtype))
-          return
-      end select
-      cc%shape%vtype = trim(vtype)
-      this%cov0 = this%cov0 + sill + nugget
-    end associate
+
+      id = vtype_from_str(vtype)
+      if (id < 0) then
+        call kriging_error('vgm_struct%struct_add_comp', 'Unknown variogram type: '//trim(vtype))
+        return
+      end if
+
+      this%nstruct = this%nstruct + 1
+      associate(cc => this%structs(this%nstruct))
+        cc%sill            = sill
+        cc%nugget          = nugget
+        cc%vtype_id        = id
+        cc%vtype           = vtype
+        cc%aniso%ndim      = this%ndim
+        cc%aniso%azimuth   = azimuth;  cc%aniso%dip      = dip
+        cc%aniso%plunge    = plunge
+        cc%aniso%a_major   = a_major;  cc%aniso%a_minor1 = a_minor1
+        cc%aniso%a_minor2  = a_minor2
+        call cc%aniso%build()
+        this%cov0 = this%cov0 + sill + nugget
+      end associate
+
   end subroutine struct_add_args
 
-  !-- Build tables for all structures.
-  !-- Build tables for all structures.
-  !   ratio:       geometric growth factor (e.g. 1.01).  n is auto-computed.
-  !   hmax_factor: table covers [0, hmax_factor] in dimensionless rdist.
-  !                Use ~1.05 for compact-support, ~3.5 for infinite-support.
-  subroutine build_all_tables(this, ratio, hmax_factor)
+  subroutine struct_set_ndim(self, ndim)
+    class(vgm_struct), intent(inout) :: self
+    integer,           intent(in)    :: ndim
+    integer :: iv
+    self%ndim = ndim
+    do iv = 1, self%nstruct
+      self%structs(iv)%aniso%ndim = ndim
+    end do
+  end subroutine struct_set_ndim
+
+  !-- Level A: build per-component tables.
+  subroutine build_all_tables(this, n_tab, hmax_factor, h_bounds, dh)
     class(vgm_struct), intent(inout) :: this
-    real,              intent(in)    :: ratio
-    real, optional, intent(in)   :: hmax_factor
+    integer, intent(in), optional :: n_tab
+    real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
     real :: factor
-    integer  :: iv
-    factor = 3.5
-    if (present(hmax_factor)) factor = hmax_factor
+    integer :: iv
+    factor = 3.5;  if (present(hmax_factor)) factor = hmax_factor
     do iv = 1, this%nstruct
-      call this%structs(iv)%build_table(hmax=factor, ratio=ratio)
+      if (present(h_bounds) .and. present(dh)) then
+        call this%structs(iv)%build_table( &
+          hmax=h_bounds(size(h_bounds)), h_bounds=h_bounds, dh=dh)
+      else
+        call this%structs(iv)%build_table(hmax=factor, n_tab=n_tab)
+      end if
     end do
   end subroutine build_all_tables
 
-  !-- Composite covariance at a scalar isotropic lag.
-  !   Only correct when all structures are isotropic (all rotmat = I).
-  !   Use cov_lag or cov_tab for the general anisotropic case.
+
+  !-- Level B: build composite struct-level table.
+  !
+  !   Stores: tab(0)   = cov0 = sum_k (sill_k + nugget_k)
+  !           tab(i>0) = sum_k sill_k * corefunc_fn(vtype_k, h_i)
+  !
+  !   REQUIRES: all non-nugget structures share the same mat matrix.
+  !   Nugget structures are skipped in the compatibility check because
+  !   corefunc_fn(VGM_NUG, h) = 0 for all h > 0.
+  subroutine build_struct_table(this, n_tab, hmax_factor, h_bounds, dh)
+    class(vgm_struct), intent(inout) :: this
+    integer, intent(in), optional :: n_tab
+    real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
+
+    integer              :: iv, k, i, ref_idx, ntab_total, nzones_local
+    integer, allocatable :: n_zone(:)
+    real,    allocatable :: z_bounds(:), z_inv_dh(:), h_b(:), d_h(:)
+    integer, allocatable :: z_offset(:), z_n(:)
+    real :: factor, hmax, h_lo, step_k, rdist, val
+
+    factor = 3.5;  if (present(hmax_factor)) factor = hmax_factor
+
+    !-- Find first non-nugget structure; use its mat as the reference.
+    ref_idx = 0
+    do iv = 1, this%nstruct
+      if (this%structs(iv)%vtype_id == VGM_NUG) cycle
+      if (ref_idx == 0) then
+        ref_idx = iv
+        this%struct_aniso = this%structs(iv)%aniso
+      else
+        if (maxval(abs(this%structs(iv)%aniso%mat - this%struct_aniso%mat)) > MAT_TOL) then
+          write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
+          write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
+          write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
+          write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
+            '   Incompatible: structure ', iv
+
+          call kriging_error('vgm_struct%add', 'component shape not allocated')
+          return
+        end if
+      end if
+    end do
+
+    if (ref_idx == 0) &
+      write(*,'(A)') 'WARNING build_struct_table: all structures are nuggets.'
+
+    !-- Zone setup
+    if (present(h_bounds) .and. present(dh)) then
+      allocate(h_b, source=h_bounds)
+      allocate(d_h, source=dh)
+      hmax = h_bounds(size(h_bounds))
+    else
+      hmax = factor
+      allocate(h_b(2));  h_b = [0.0, hmax]
+      allocate(d_h(1))
+      if (present(n_tab)) then
+          d_h(1) = hmax / real(n_tab)
+      else
+          d_h(1) = hmax / 10000.0
+      end if
+    end if
+
+    if (allocated(this%struct_tab))         deallocate(this%struct_tab)
+    if (allocated(this%struct_zone_bounds)) deallocate(this%struct_zone_bounds)
+    if (allocated(this%struct_zone_inv_dh)) deallocate(this%struct_zone_inv_dh)
+    if (allocated(this%struct_zone_offset)) deallocate(this%struct_zone_offset)
+    if (allocated(this%struct_zone_n))      deallocate(this%struct_zone_n)
+
+    call alloc_zones(h_b, d_h, hmax, &
+      nzones_local, ntab_total, n_zone, z_bounds, z_inv_dh, z_offset, z_n)
+
+    allocate(this%struct_tab(0:ntab_total))
+    this%struct_tab(0) = this%cov0   ! includes all sills + nuggets
+
+    do k = 1, nzones_local
+      h_lo   = z_bounds(k-1)
+      step_k = 1.0 / z_inv_dh(k)
+      do i = 1, n_zone(k)
+        rdist = h_lo + real(i) * step_k
+        val   = 0.0
+        do iv = 1, this%nstruct
+          associate(cc => this%structs(iv))
+            val = val + cc%sill * corefunc_fn(cc%vtype_id, rdist)
+          end associate
+        end do
+        this%struct_tab(z_offset(k)+i) = val
+      end do
+    end do
+
+    this%struct_nzones = nzones_local
+    this%struct_n      = ntab_total
+    this%struct_hmax   = hmax
+    call move_alloc(z_bounds, this%struct_zone_bounds)
+    call move_alloc(z_inv_dh, this%struct_zone_inv_dh)
+    call move_alloc(z_offset, this%struct_zone_offset)
+    call move_alloc(z_n,      this%struct_zone_n)
+    this%struct_tab_ready = .true.
+  end subroutine build_struct_table
+
+
+  function cov_struct_tab_h(this, h) result(res)
+    class(vgm_struct), intent(in) :: this
+    real,              intent(in) :: h
+    real :: res, fi
+    integer :: k, i
+    if (h >= this%struct_hmax) then; res = 0.0;                 return; end if
+    if (h <= 0.0)              then; res = this%struct_tab(0);  return; end if
+    do k = 1, this%struct_nzones
+      if (h < this%struct_zone_bounds(k)) then
+        fi = (h - this%struct_zone_bounds(k-1)) * this%struct_zone_inv_dh(k)
+        i  = this%struct_zone_offset(k) + min(int(fi), this%struct_zone_n(k)-1)
+        fi = fi - real(int(fi))
+        res = this%struct_tab(i) + fi*(this%struct_tab(i+1) - this%struct_tab(i))
+        return
+      end if
+    end do
+    res = 0.0
+  end function cov_struct_tab_h
+
+
   function struct_cov_h(this, h) result(res)
     class(vgm_struct), intent(in) :: this
-    real,          intent(in) :: h
-    real                      :: res
+    real,              intent(in) :: h
+    real :: res
     integer :: iv
     res = 0.0
     do iv = 1, this%nstruct
@@ -502,12 +617,10 @@ contains
     end do
   end function struct_cov_h
 
-  !-- Composite covariance at a 3D lag vector — primary production interface.
-  !   Each structure applies its own independent anisotropy transform.
   function struct_cov_lag(this, lag) result(res)
     class(vgm_struct), intent(in) :: this
-    real,          intent(in) :: lag(3)
-    real                      :: res
+    real,              intent(in) :: lag(3)
+    real :: res
     integer :: iv
     res = 0.0
     do iv = 1, this%nstruct
@@ -515,25 +628,30 @@ contains
     end do
   end function struct_cov_lag
 
-  !-- Fast composite covariance via per-structure tables.
-  !   Use this inside the cokriging assembly loop.
+  !-- Dispatches to Level B (struct_tab) if ready, else Level A (per-component).
   function struct_cov_tab(this, lag) result(res)
     class(vgm_struct), intent(in) :: this
-    real,          intent(in) :: lag(3)
-    real                      :: res
+    real,              intent(in) :: lag(3)
+    real :: res
     integer :: iv
-    res = 0.0
-    do iv = 1, this%nstruct
-      res = res + this%structs(iv)%cov_tab(lag(1), lag(2), lag(3))
-    end do
+    if (this%struct_tab_ready) then
+      res = this%cov_struct_tab_h( &
+        this%struct_aniso%h_iso(lag(1), lag(2), lag(3)))
+    else
+      res = 0.0
+      do iv = 1, this%nstruct
+        res = res + this%structs(iv)%cov_tab(lag(1), lag(2), lag(3))
+      end do
+    end if
   end function struct_cov_tab
 
   function struct_tostr(this) result(s)
     class(vgm_struct), intent(in) :: this
-    character(:), allocatable      :: s
+    character(:), allocatable :: s
     character(64) :: buf
     integer :: iv
-    write(buf,'("  Number of structures = ",I0)') this%nstruct
+    write(buf,'("  ndim=",I0,"  nstruct=",I0,"  struct_tab=",L1)') &
+      this%ndim, this%nstruct, this%struct_tab_ready
     s = trim(buf)
     do iv = 1, this%nstruct
       s = s // new_line('a') // '    ' // this%structs(iv)%tostr()
@@ -545,17 +663,15 @@ contains
     class(vgm_struct), intent(in) :: this
     logical :: ok
     integer :: iv
+    character(256) :: msg
     ok = .true.
-
-
+    if (this%ndim < 1 .or. this%ndim > 3) then
+      write(*,'(A,I0)') 'WARNING: ndim must be 1, 2 or 3, got ', this%ndim; ok = .false.
+    end if
     do iv = 1, this%nstruct
       associate(c => this%structs(iv))
-        if (.not. allocated(c%shape)) then
-          write(*,'(A,I0,A)') &
-            'WARNING vgm_struct: structure ', iv, ': no shape allocated'
-          ok = .false.
-        end if
-        if (c%shape%nugget < 0.0) then
+
+        if (c%nugget < 0.0) then
           write(*,'(A,I0,A)') &
             'WARNING vgm_struct: structure ', iv, ': negative nugget'
           ok = .false.
@@ -587,154 +703,52 @@ contains
           ok = .false.
         end if
         !-- Type-guard: warn if hole-effect used in 3D context
-        if (allocated(c%shape)) then
-          select type(sh => c%shape)
-          type is (variog_hol)
+        if (c%vtype_id == VGM_HOL .and. this%ndim==3) then
             write(*,'(A,I0,A)') &
               'WARNING vgm_struct: structure ', iv, &
               ': hole-effect is not p.d. in 3D'
-          end select
+            ok = .false.
         end if
       end associate
+      if (.not. ok) then
+        call kriging_error('is_valid_vgm_st', trim(msg))
+        return
+      end if
     end do
   end function struct_is_valid
-
-  !=============================================================================
-  ! Core correlation functions
-  ! All elemental; rdist = h / a_major (dimensionless, post-aniso transform).
-  !=============================================================================
-
-  elemental function corefunc_nug(this, rdist) result(res)
-    class(variog_nug), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = 0.0
-  end function
-
-  elemental function corefunc_sph(this, rdist) result(res)
-    class(variog_sph), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    if (rdist < 1.0) then
-      res = 1.0 - 1.5*rdist + 0.5*rdist**3
-    else
-      res = 0.0
-    end if
-  end function
-
-  elemental function corefunc_exp(this, rdist) result(res)
-    class(variog_exp), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = exp(-3.0 * rdist)           ! C(a_major) ~= 0.05
-  end function
-
-  elemental function corefunc_hol(this, rdist) result(res)
-    class(variog_hol), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = cos(pi * rdist)                ! first zero at rdist = 0.5
-  end function
-
-  elemental function corefunc_gau(this, rdist) result(res)
-    class(variog_gau), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = exp(-3.0625 * rdist**2)     ! -49/16; C(a_major) ~= 0.047
-  end function
-
-  elemental function corefunc_pow(this, rdist) result(res)
-    class(variog_pow), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = merge(1.0 - rdist**this%alpha, 0.0, rdist < 1.0) ! generalised covariance K(h) = -h^a
-  end function
-
-  elemental function corefunc_bsq(this, rdist) result(res)
-    class(variog_bsq), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = merge((1.0 - rdist**2)**2, 0.0, rdist < 1.0)
-  end function
-
-  elemental function corefunc_cir(this, rdist) result(res)
-    class(variog_cir), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = merge(1.0 - (2.0*rdist*sqrt(1.0 - rdist**2) + 2.0*asin(rdist)) / pi, 0.0, rdist < 1.0)
-  end function
-
-  elemental function corefunc_lin(this, rdist) result(res)
-    class(variog_lin), intent(in) :: this
-    real,          intent(in) :: rdist
-    real                      :: res
-    res = merge(1.0 - rdist, 0.0, rdist < 1.0)
-  end function
-
-  !=============================================================================
-  ! variog base: tostr
-  !=============================================================================
-  function tostr(this) result(s)
-    class(variog), intent(in)  :: this
-    character(:), allocatable  :: s
-    character(64) :: buf
-    write(buf,'(A3,"  nugget=",G13.6)') this%vtype, this%nugget
-    s = trim(buf)
-  end function tostr
 
 end module variogram
 
 
 !==============================================================================
-! Usage example
+! Usage examples
 !==============================================================================
 !
 !   use variogram
+!   type(vgm_struct) :: vg
 !
-!   type(vgm_struct)    :: vg
-!   type(vgm_component) :: c1, c2
+!   !=== Standard model setup ===
+!   vg%ndim = 3
+!   call vg%add(spec='nug 0.1 0.0 1 1 1 0 0 0')            ! nugget
+!   call vg%add(spec='exp 0.0 0.9 5000 2000 300 30 10 0')  ! exponential
 !
-!   !-- Structure 1: isotropic spherical, sill = 0.70
-!   allocate(variog_sph :: c1%shape)
-!   c1%shape%vtype   = 'sph'
-!   c1%sill          = 0.70
-!   c1%aniso%a_major  = 1200.0    ! isotropic: all three ranges equal
-!   c1%aniso%a_minor1 = 1200.0
-!   c1%aniso%a_minor2 = 1200.0
-!   call c1%aniso%build()            ! computes the affine transform matrix
+!   !=== Level B composite table (1 aniso_h + 1 lookup in assembly loop) ===
+!   call vg%build_struct_table(h_bounds=[0.,0.1,0.5,3.5], dh=[1e-5,1e-4,1e-3])
 !
-!   !-- Structure 2: anisotropic exponential, sill = 0.25
-!   !   Major axis: 5000 m azimuth=30 deg, dip=10 deg
-!   !   Semi-axes:  2000 m (horizontal), 300 m (vertical)
-!   allocate(variog_exp :: c2%shape)
-!   c2%shape%vtype   = 'exp'
-!   c2%sill          = 0.25
-!   c2%aniso%a_major  = 5000.0
-!   c2%aniso%a_minor1 = 2000.0
-!   c2%aniso%a_minor2 =  300.0
-!   c2%aniso%azimuth  =  30.0
-!   c2%aniso%dip      =  10.0
-!   c2%aniso%plunge   =   0.0
-!   call c2%aniso%build()
+!   !=== Level A per-component tables (any anisotropy, fallback) ===
+!   call vg%build_all_tables(h_bounds=[0.,0.1,0.5,3.5], dh=[1e-5,1e-4,1e-3])
 !
-!   !-- Assemble composite
-!   vg%nugget = 0.05
-!   call vg%add(c1)
-!   call vg%add(c2)
+!   !=== 2D model ===
+!   vg%ndim = 2                                ! set BEFORE first add()
+!   call vg%add(spec='sph 0 0.8 1000 500 500 45 0 0')
+!   call vg%build_struct_table()               ! n_tab=10000, hmax=3.5
 !
-!   !-- Build tables (3.5 x a_major per structure, 10000 points each)
-!   call vg%build_all_tables(ratio=1.01, hmax_factor=3.5)
+!   !=== Assembly loop ===
+!   C(i,j) = vg%cov_tab(lag)                  ! fast: table + ndim aniso
+!   C(i,j) = vg%cov_lag(lag)                  ! exact analytic (for validation)
 !
-!   if (.not. vg%is_valid()) error stop 'invalid variogram model'
-!
-!   !-- In the cokriging assembly loop (lag = x_i - x_j as a 3-vector):
-!   C(i,j) = vg%cov_tab(lag)        ! fast: table + per-structure aniso
-!   C(i,j) = vg%cov_lag(lag)        ! exact: analytic + per-structure aniso
-!   C(i,i) = C(i,i) + vg%nugget     ! nugget on diagonal only
-!
-!   !-- Cross-variogram (linear model of coregionalization):
-!   !   Build a separate vg12 with the same ranges/aniso as vg but
-!   !   c1%sill = b12_1, c2%sill = b12_2.
-!   !   LMC constraint per structure k: b12_k^2 <= b11_k * b22_k
+!   !=== Call corefunc_fn directly (variogram fitting, etc.) ===
+!   C = corefunc_fn(VGM_EXP, rdist)           ! elemental, vectorisable
+!   C_arr = corefunc_fn(VGM_SPH, h_array)     ! works on whole arrays
 !
 !==============================================================================

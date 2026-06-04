@@ -195,21 +195,25 @@ _CORE_SRCS := \
   src/libkriging/common.f90          \
   src/libkriging/kriging_err.f90     \
   src/libkriging/utils.F90           \
+  src/libkriging/vgmfunc.f90         \
   src/libkriging/progress_bar.F90    \
   src/libkriging/rotation.f90        \
-  src/libkriging/variogram.f90       \
   src/libkriging/kdtree2_maxidx.f90  \
   src/libkriging/gaussian_quadrature.f90 \
   src/libkriging/lapack.f            \
   src/libkriging/solver.f90          \
+  src/libkriging/kriging_base.F90    \
+  src/libkriging/variogram.f90       \
   src/libkriging/kriging.F90
 
 LIB_SRCS := \
   $(_CORE_SRCS) \
   src/libkriging/variogram_st.f90    \
+  src/libkriging/kriging_capi_common.F90    \
   src/libkriging/kriging_capi.F90    \
   src/libkriging/kriging_st.F90      \
   src/libkriging/kriging_st_capi.f90
+# Note: kriging_shared.F90 has been merged into kriging_base.F90
 
 SPK_SRCS := \
   $(_CORE_SRCS) \
