@@ -226,7 +226,7 @@ _krige_set_grad    = _status_cfun("krige_set_grad", [
     _ptr_dbl,                                    # variance[ngrad]
     _c_int, _ptr_dbl,                            # ndrift_c, drift_ext[ndrift,ngrad]
 ])
-_krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64, ctypes.c_int])
+_krige_solve       = _status_cfun("krige_solve",       [ctypes.c_int64, ctypes.c_int, ctypes.c_int])
 # _krige_print       = _cfun("krige_print",       [ctypes.c_int64])
 _krige_get_nblocks     = _status_cfun("krige_get_nblocks",     [ctypes.c_int64, _ptr_int])
 _krige_get_nsim        = _status_cfun("krige_get_nsim",        [ctypes.c_int64, _ptr_int])
@@ -1186,7 +1186,7 @@ class _SpatialKriging:
         )
 
     # ------------------------------------------------------------------
-    def solve(self, nthread: int = 0):
+    def solve(self, nthread: int = 0, ncache: Optional[int] = None):
         """
         Run the kriging or SGSIM loop over all blocks.
         Calls prepare(), then the parallel block loop internally.
@@ -1199,10 +1199,17 @@ class _SpatialKriging:
             ``1`` forces single-threaded execution (useful for reproducible
             results or when calling :meth:`solve` from inside another
             parallel region).
+        ncache : int, optional
+            Number of per-thread multi-slot hcache entries to use for this
+            solve call.  ``None`` keeps the compiled/object default, ``0``
+            disables the hcache, and ``1`` gives a one-slot hcache for
+            cache-overhead comparisons.  The single-entry ``ctx%cache`` and
+            optional persistent factor cache are unaffected.
         """
         if self.verbose:
             get_omp_info()
-        _krige_solve(_h(self._handle), ctypes.c_int(nthread))
+        ncache_c = -1 if ncache is None else int(ncache)
+        _krige_solve(_h(self._handle), ctypes.c_int(nthread), ctypes.c_int(ncache_c))
 
     # ------------------------------------------------------------------
     def get_results(self, copy: bool = False, squeeze: bool = True):
@@ -1914,6 +1921,7 @@ def ordinary_kriging(
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
     nthread=0,
+    ncache: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     One-shot ordinary kriging with a single isotropic (or anisotropic) variogram.
@@ -1941,6 +1949,8 @@ def ordinary_kriging(
         Azimuth of search ellipse major axis (degrees from North).
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
+    ncache : int, optional
+        Per-thread hcache slots for this solve. None uses the default.
 
     Returns
     -------
@@ -1968,7 +1978,7 @@ def ordinary_kriging(
         k.set_vgm(ivar=1, jvar=1, **spec)
     k.set_search(ivar=1, anis1=search_anis1, anis2=search_anis2,
                  azimuth=search_azimuth)
-    k.solve(nthread)
+    k.solve(nthread=nthread, ncache=ncache)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
     return est, var
 
@@ -1982,6 +1992,7 @@ def cokriging(
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
     nthread: int = 0,
+    ncache: Optional[int] = None,
     std_ck: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -2004,6 +2015,8 @@ def cokriging(
         Maximum neighbours per variable.
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
+    ncache : int, optional
+        Per-thread hcache slots for this solve. None uses the default.
     std_ck: bool
         Use standard Ordinary Kriging.
 
@@ -2042,7 +2055,7 @@ def cokriging(
     for i in range(1, nvar + 1):
         k.set_search(ivar=i)
 
-    k.solve(nthread)
+    k.solve(nthread=nthread, ncache=ncache)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
     return est, var
 
@@ -2060,6 +2073,7 @@ def sequential_gaussian_simulation(
     rangescale: Optional[float] = None,
     localnugget: Optional[float] = None,
     nthread: int = 0,
+    ncache: Optional[int] = None,
 ) -> np.ndarray:
     """
     Sequential Gaussian Simulation.
@@ -2083,6 +2097,8 @@ def sequential_gaussian_simulation(
         Random seed for reproducibility.
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
+    ncache : int, optional
+        Per-thread hcache slots for this solve. None uses the default.
 
     Returns
     -------
@@ -2102,7 +2118,7 @@ def sequential_gaussian_simulation(
     # set_sim with no args: Python generates random path and N(0,1) samples
     k.set_sim(randpath, sample)
     k.set_search(ivar=1)
-    k.solve(nthread)
+    k.solve(nthread=nthread, ncache=ncache)
 
     sims, _ = k.get_results()   # shape (nsim, ngrid)
     return sims

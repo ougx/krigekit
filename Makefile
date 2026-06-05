@@ -13,6 +13,8 @@
 #   make FC=ifx                   # force Intel ifx
 #   make FC=ifort                 # force Intel ifort (classic)
 #   make OPT=debug                # debug build
+#   make HCACHE=0                 # disable multi-slot factor cache for testing
+#   make HCACHE=1                 # one-slot hcache for cache-overhead comparison
 #   make libkriging               # shared library only
 #   make sparks                   # executable only
 #   make clean                    # remove all compiled outputs
@@ -103,6 +105,11 @@ endif
 OPT ?= release
 # Set OPENMP=0 to disable OpenMP parallelisation (e.g. make OPENMP=0)
 OPENMP ?= 1
+# Compile-time default for the bounded per-thread multi-slot factor cache.
+# HCACHE=0 disables hcache entirely; HCACHE=1 gives a one-slot hcache for
+# overhead comparison; bare `make` keeps the normal 64-slot default.
+# The single-entry ctx%cache and optional persistent pf cache remain available.
+HCACHE ?= 64
 
 # ---------------------------------------------------------------------------
 # Object-file directories
@@ -132,6 +139,7 @@ endif
 # Compiler flags
 # ---------------------------------------------------------------------------
 OMP_FLAGS :=
+CACHE_FLAGS :=
 
 ifeq ($(OPENMP),1)
     ifeq ($(FC),gfortran)
@@ -145,8 +153,30 @@ ifeq ($(OPENMP),1)
     endif
 endif
 
+ifeq ($(HCACHE),0)
+    ifeq ($(FC),gfortran)
+        CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE) -DPYKRIGING_DISABLE_HCACHE
+    else ifneq ($(filter $(FC),ifx ifort),)
+        ifeq ($(WINDOWS),1)
+            CACHE_FLAGS := /DPYKRIGING_HCACHE_SLOTS=$(HCACHE) /DPYKRIGING_DISABLE_HCACHE
+        else
+            CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE) -DPYKRIGING_DISABLE_HCACHE
+        endif
+    endif
+else
+    ifeq ($(FC),gfortran)
+        CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+    else ifneq ($(filter $(FC),ifx ifort),)
+        ifeq ($(WINDOWS),1)
+            CACHE_FLAGS := /DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+        else
+            CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+        endif
+    endif
+endif
+
 ifeq ($(FC),gfortran)
-  FFLAGS         := -fdefault-real-8 -cpp -fbacktrace -ffree-line-length-none $(OMP_FLAGS)
+  FFLAGS         := -fdefault-real-8 -cpp -fbacktrace -ffree-line-length-none $(OMP_FLAGS) $(CACHE_FLAGS)
   FFLAGS_release := -O2 $(FFLAGS)
   FFLAGS_debug   := -O0 -g -Wall -fcheck=all $(FFLAGS) -DDEBUG
   LIB_SHARED     := -shared -fPIC
@@ -165,7 +195,7 @@ else ifneq ($(filter $(FC),ifx ifort),)
   ifeq ($(WINDOWS),1)
     export MSYS2_ARG_CONV_EXCL := *
     export MSYS_NO_PATHCONV    := 1
-    FFLAGS         := /real-size:64 /traceback /fpp /nologo $(OMP_FLAGS) /heap-arrays:10
+    FFLAGS         := /real-size:64 /traceback /fpp /nologo $(OMP_FLAGS) $(CACHE_FLAGS) /heap-arrays:10
     FFLAGS_release := /O2 $(FFLAGS)
     FFLAGS_debug   := /Od /debug:full /warn:all /check:all $(FFLAGS) /DDEBUG
     LIB_SHARED     := /dll /libs:static
@@ -173,7 +203,7 @@ else ifneq ($(filter $(FC),ifx ifort),)
     SPK_MODF       := /module:$(SPK_BDIR) /I$(SPK_BDIR)
     DLL_EXTRA      := -link /def:$(DEF_FILE)
   else
-    FFLAGS         := -real-size:64 -traceback -fpp -nologo $(OMP_FLAGS) -heap-arrays:10
+    FFLAGS         := -real-size:64 -traceback -fpp -nologo $(OMP_FLAGS) $(CACHE_FLAGS) -heap-arrays:10
     FFLAGS_release := -O2 $(FFLAGS)
     FFLAGS_debug   := -O0 -g -warn all -check all $(FFLAGS) -DDEBUG
     LIB_SHARED     := -shared -fPIC
@@ -317,6 +347,8 @@ info:
 	@echo 'Mode     :' $(OPT)
 	@echo 'OpenMP   :' $(OPENMP)
 	@echo 'OMP_FLAGS:' $(OMP_FLAGS)
+	@echo 'HCACHE   :' $(HCACHE)
+	@echo 'CACHE_FLAGS:' $(CACHE_FLAGS)
 	@echo 'Platform :' $(if $(WINDOWS),Windows,Linux/macOS)
 	@echo 'DLL      :' $(DLL_FILE)
 	@echo 'EXE      :' $(EXE_FILE)

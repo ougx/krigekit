@@ -570,3 +570,35 @@ class TestNthread:
         est, var = k.get_results()
         assert np.all(np.isfinite(est)), "nthread=0 produced non-finite estimates"
         assert np.all(var >= 0.0),       "nthread=0 produced negative variances"
+
+
+# ===========================================================================
+# ncache parameter
+# ===========================================================================
+
+class TestNcache:
+    """Tests for Kriging.solve(ncache=N)."""
+
+    def _make_kriging(self, pc2d_obs):
+        coord, value = pc2d_obs
+        k = Kriging(ndim=2, nvar=1, verbose=0)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k.set_grid(coord=coord[5:20])
+        k.set_search(ivar=1)
+        return k
+
+    def test_ncache_variants_match_default(self, pc2d_obs):
+        """ncache is a performance knob only; estimates/variance must match."""
+        k_default = self._make_kriging(pc2d_obs)
+        k_default.solve(nthread=1)
+        est_default, var_default = k_default.get_results()
+
+        for ncache in (0, 1, 4):
+            k = self._make_kriging(pc2d_obs)
+            k.solve(nthread=1, ncache=ncache)
+            est, var = k.get_results()
+            np.testing.assert_allclose(est, est_default, rtol=1e-6, atol=1e-10,
+                err_msg=f"ncache={ncache} changed estimates")
+            np.testing.assert_allclose(var, var_default, rtol=1e-6, atol=1e-10,
+                err_msg=f"ncache={ncache} changed variances")

@@ -6,7 +6,11 @@ rem -fopenmp is needed because solve() uses OpenMP internally — omitting it wi
 
 del *.exe *.obj *.o *.mod *.pdb
 rem -fopenmp
-gfortran -cpp -fbacktrace -ffree-line-length-none -O2 -fdefault-real-8 -fPIC  -shared ^
+if "%HCACHE%"=="" set HCACHE=64
+if "%PYKRIGING_DISABLE_HCACHE%"=="1" set HCACHE=0
+set CACHE_FLAGS=-DPYKRIGING_HCACHE_SLOTS=%HCACHE%
+if "%HCACHE%"=="0" set CACHE_FLAGS=%CACHE_FLAGS% -DPYKRIGING_DISABLE_HCACHE
+gfortran -cpp -fbacktrace -ffree-line-length-none -O2 -fdefault-real-8 %CACHE_FLAGS% -fPIC  -shared ^
    common.f90 ^
    kriging_err.f90 ^
    utils.F90 ^

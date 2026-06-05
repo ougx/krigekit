@@ -708,11 +708,13 @@ contains
   !
   ! Runs the kriging or SGSIM block loop.
   ! nthread: max OMP threads for this call (0 = use the OMP runtime default).
+  ! ncache : hcache slots for this call (-1 = keep object default; 0 disables).
   ! After this returns, results are available via the getters below.
   !=============================================================================
-  integer(c_int) function krige_solve(handle, nthread) bind(C, name='krige_solve') result(ierr)
+  integer(c_int) function krige_solve(handle, nthread, ncache) bind(C, name='krige_solve') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: nthread
+    integer(c_int),      intent(in), value :: ncache
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -725,7 +727,7 @@ contains
     !   subroutine contains an !$OMP PARALLEL region, producing a null
     !   descriptor access violation.  Passing 0 preserves the original
     !   semantics (solve() reads omp_get_max_threads() when nthread <= 0).
-    call obj%solve(nthread = int(nthread))
+    call obj%solve(nthread = int(nthread), ncache = int(ncache))
     ierr = int(kriging_ierr(), c_int)
   end function krige_solve
 

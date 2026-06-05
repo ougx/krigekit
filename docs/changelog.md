@@ -115,6 +115,10 @@ New C API function:
 - The CAPI handle registry moved into `kriging_capi_common.F90` and stores
   polymorphic `class(t_kriging_base)` pointers.  The spatial and ST CAPI modules
   downcast from the shared registry to their concrete types.
+- `solve(ncache=...)` now controls the per-thread multi-slot factor cache for a
+  single solve call.  Use `ncache=0` to disable the hcache, `ncache=1` for a
+  one-slot comparison, and the default `None` to keep the compiled/object
+  default.
 - `set_obs_drift` must be called (or re-called) after each `set_obs` when
   `ndrift > 0`; `set_obs` zeros the external drift rows on each call.
   Using `update_obs_value` is the correct API when only values change.

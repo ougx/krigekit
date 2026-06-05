@@ -327,12 +327,15 @@ by `krige_solve`; exposed separately for benchmarking.
 ### `krige_solve`
 
 ```c
-int krige_solve(int64_t handle, int nthread)
+int krige_solve(int64_t handle, int nthread, int ncache)
 ```
 
 Runs the kriging or SGSIM block loop.  `nthread = 0` uses the OpenMP runtime
-default; `nthread > 0` caps the thread count for this call only.  Results are
-available via the getters immediately after this returns.
+default; `nthread > 0` caps the thread count for this call only.  `ncache = -1`
+keeps the object's current hcache slot default, `ncache = 0` disables the
+multi-slot hcache for this solve, and `ncache > 0` sets the per-thread hcache
+slot count for this solve only.  Results are available via the getters
+immediately after this returns.
 
 ---
 
@@ -452,6 +455,16 @@ The multi-slot cache size is controlled in Fortran by `factor_cache_size`
 (default 64 slots per thread) and by a per-thread byte cap
 (`MAX_HCACHE_BYTES`).  The byte cap limits `L`, `kinv_drift`, and `schur`
 storage for each OpenMP worker context.
+
+For cache-path testing, the Python `solve(ncache=...)` argument and C API
+`krige_solve(..., ncache)` argument override this slot count for one solve
+call.  Use `ncache=0` to disable the multi-slot hcache, `ncache=1` for a
+one-slot hcache, or `ncache=None` in Python / `ncache=-1` in C to keep the
+compiled default.  The Makefile `HCACHE` variable sets that compiled default:
+`make HCACHE=0` disables the multi-slot hcache by default, `make HCACHE=1`
+builds a one-slot default, and bare `make` uses the normal 64-slot default.
+These controls do not disable the single-entry `ctx%cache` or the optional
+persistent `self%pf` cache.
 
 ### `krige_get_factor_info`
 

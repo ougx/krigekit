@@ -303,7 +303,11 @@ module kriging_base
     logical :: varying_vgm        = .false.
     logical :: std_ck             = .true.
     logical :: pf_cache           = .true.
+#ifdef PYKRIGING_HCACHE_SLOTS
+    integer :: factor_cache_size  = PYKRIGING_HCACHE_SLOTS
+#else
     integer :: factor_cache_size  = 64      ! per-thread multi-entry factor cache; <=0 disables
+#endif
     character(len=1024) :: weight_file = ""
     integer :: ifile              = 0
     integer :: seed               = 0    ! 0 = no explicit seed; >0 for reproducibility
@@ -1913,15 +1917,18 @@ contains
   ! and the set_weights() in-memory path.  Debug matrix output is serialised with
   ! a small critical section so the kriging work can still run in parallel.
   !============================================================================
-  subroutine solve_base(self, nthread)
+  subroutine solve_base(self, nthread, ncache)
     use omp_lib
     class(t_kriging_base) :: self
     integer, intent(in), optional :: nthread
+    integer, intent(in), optional :: ncache
     type(t_kriging_ctx), allocatable :: ctx
-    integer :: ib, nb, prev_nthread, nthread_local
+    integer :: ib, nb, prev_nthread, nthread_local, prev_ncache
 
     prev_nthread  = 0
     nthread_local = 0
+    prev_ncache   = self%factor_cache_size
+    if (present(ncache) .and. ncache >= 0) self%factor_cache_size = ncache
 #ifdef _OPENMP
     if (present(nthread) .and. nthread > 0) then
       prev_nthread = omp_get_max_threads()
@@ -1933,7 +1940,7 @@ contains
 #endif
 
     call self%pre_solve()
-    if (kriging_failed()) return
+    if (kriging_failed()) goto 900
 
     nb = self%block%n
 
@@ -2000,7 +2007,7 @@ contains
 
     if (self%store_weight .and. trim(self%weight_file) /= "") &
       call self%write_weight_store()
-    if (kriging_failed()) return
+    if (kriging_failed()) goto 900
 
 #ifdef __INTEL_COMPILER
     if (self%verbose) close(6)
@@ -2011,6 +2018,8 @@ contains
 
     if (self%nsim > 0) call self%reorder_sgsim()
 
+900 continue
+    self%factor_cache_size = prev_ncache
 #ifdef _OPENMP
     if (prev_nthread > 0) call omp_set_num_threads(prev_nthread)
 #endif
@@ -2126,7 +2135,11 @@ contains
     class(t_kriging_base), intent(in)  :: krige
     integer :: ivar, kvar, kgrad
     ! Per-thread upper bound for the multi-entry factor cache.
+#ifdef PYKRIGING_DISABLE_HCACHE
+    integer(int64), parameter :: MAX_HCACHE_BYTES = 0_int64
+#else
     integer(int64), parameter :: MAX_HCACHE_BYTES = 64_int64 * 1024_int64 * 1024_int64 ! 64 MB/thread
+#endif
     integer(int64) :: bytes_per_real, p_cache, slot_reals, slot_bytes, slot_limit
     integer :: safe_nslot
 

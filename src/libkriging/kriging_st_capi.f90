@@ -557,10 +557,12 @@ contains
   !=============================================================================
   ! krige_st_solve
   !   nthread: max OMP threads (0 = use OMP runtime default).
+  !   ncache : hcache slots for this call (-1 = keep object default; 0 disables).
   !=============================================================================
-  integer(c_int) function krige_st_solve(handle, nthread) bind(C, name='krige_st_solve') result(ierr)
+  integer(c_int) function krige_st_solve(handle, nthread, ncache) bind(C, name='krige_st_solve') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: nthread
+    integer(c_int),      intent(in), value :: ncache
     type(t_kriging_st), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -568,7 +570,7 @@ contains
       ierr = int(kriging_ierr(), c_int)
       return
     end if
-    call obj%solve(nthread = int(nthread))
+    call obj%solve(nthread = int(nthread), ncache = int(ncache))
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_solve
 

@@ -172,7 +172,7 @@ _st_set_search = _status_cfun("krige_st_set_search", [
 ])
 _st_prepare       = _status_cfun("krige_st_prepare",        [ctypes.c_int64])
 _st_reset_vgm     = _status_cfun("krige_st_reset_vgm",     [ctypes.c_int64, _c_int, _c_int])
-_st_solve         = _status_cfun("krige_st_solve",          [ctypes.c_int64, _c_int])
+_st_solve         = _status_cfun("krige_st_solve",          [ctypes.c_int64, _c_int, _c_int])
 _st_get_nblocks   = _status_cfun("krige_st_get_nblocks",   [ctypes.c_int64, _ptr_int])
 _st_get_nsim      = _status_cfun("krige_st_get_nsim",      [ctypes.c_int64, _ptr_int])
 _st_get_block_coord = _status_cfun("krige_st_get_block_coord", [
@@ -680,7 +680,7 @@ class SpaceTimeKriging:
                        _c_double(azimuth), _c_double(dip), _c_double(plunge))
 
     # ------------------------------------------------------------------
-    def solve(self, nthread: int = 0):
+    def solve(self, nthread: int = 0, ncache: Optional[int] = None):
         """Run the ST kriging or SGSIM loop.
 
         Parameters
@@ -688,8 +688,13 @@ class SpaceTimeKriging:
         nthread : int, optional
             Maximum number of OpenMP threads.  0 (default) lets the OpenMP
             runtime choose (respects ``OMP_NUM_THREADS``).
+        ncache : int, optional
+            Number of per-thread multi-slot hcache entries for this solve.
+            ``None`` keeps the compiled/object default, ``0`` disables hcache,
+            and ``1`` builds a one-slot hcache for overhead comparisons.
         """
-        _st_solve(_h(self._handle), _c_int(nthread))
+        ncache_c = -1 if ncache is None else int(ncache)
+        _st_solve(_h(self._handle), _c_int(nthread), _c_int(ncache_c))
 
     # ------------------------------------------------------------------
     def get_factor(self) -> dict:
@@ -827,6 +832,8 @@ def spacetime_kriging(
     search_anis2: float = 1.0,
     search_azimuth: float = 0.0,
     k_ps: float = 0.0,
+    nthread: int = 0,
+    ncache: Optional[int] = None,
 ) -> "tuple[np.ndarray, np.ndarray]":
     """
     One-shot ordinary space-time kriging (single variable).
@@ -846,6 +853,8 @@ def spacetime_kriging(
     time_nugget, time_sill : f(dt) scale for the joint temporal distance
     nmax         : max neighbours
     maxdist      : max 4D search radius in transformed space
+    nthread      : max OMP threads for this call (0 = OMP default)
+    ncache       : per-thread hcache slots for this solve; None uses default
 
     Returns
     -------
@@ -868,7 +877,7 @@ def spacetime_kriging(
                  time_nugget=time_nugget, time_sill=time_sill,
                  time_at=at,
                  anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth)
-    k.solve()
+    k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()
 
 
@@ -887,6 +896,8 @@ def spacetime_cokriging(
     time_sill: float = 1.0,
     nmax: int = 20,
     maxdist: Optional[float] = None,
+    nthread: int = 0,
+    ncache: Optional[int] = None,
 ) -> "tuple[np.ndarray, np.ndarray]":
     """
     One-shot ordinary space-time co-kriging.
@@ -900,6 +911,8 @@ def spacetime_cokriging(
     spatial_specs : dict (ivar,jvar) -> dict or list[dict]
     temporal_specs: dict (ivar,jvar) -> dict or list[dict]
     joint_sills  : dict (ivar,jvar) -> list[float]
+    nthread      : max OMP threads for this call (0 = OMP default)
+    ncache       : per-thread hcache slots for this solve; None uses default
 
     Returns
     -------
@@ -934,5 +947,5 @@ def spacetime_cokriging(
                      time_nugget=time_nugget, time_sill=time_sill,
                      time_at=at)
 
-    k.solve()
+    k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()
