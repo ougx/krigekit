@@ -42,6 +42,7 @@ SOURCES = [
     "gaussian_quadrature.f90",
     "lapack.f",
     "solver.f90",
+    "kriging_base.F90",
     "kriging.F90",
     "kriging_capi_common.F90",
     "kriging_capi.F90",          # uppercase F — preprocessed by cpp

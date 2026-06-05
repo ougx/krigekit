@@ -39,6 +39,7 @@ SOURCES = [
     "gaussian_quadrature.f90",
     "lapack.f",
     "solver.f90",
+    "kriging_base.F90",
     "kriging.F90",
     "../sparks/f90getopt.F90",
     "../sparks/io.f90",
