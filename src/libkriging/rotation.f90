@@ -157,7 +157,7 @@ real                    :: coord1(ndim, npnt)
 real                    :: coord2(ndim, npnt)
 real, optional          :: origin(ndim)
 ! local
-integer                 :: idim, j
+integer                 :: j
 real                    :: tmp(ndim, npnt)
 
 if (present(origin)) then

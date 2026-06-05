@@ -26,19 +26,36 @@ matrices (`L`, `K⁻¹F`, Schur complement) are stored after the first solve and
 reused on subsequent calls with unchanged observations and variogram — saving
 the $O(N^3)$ factorisation for the cost of an $O(N^2 p)$ array copy.
 
-**Architecture** — all persistent-factor interaction is outside the parallel
-block loop:
+**Architecture** — persistent-factor interaction is limited to read-only
+pre-warming plus one after-loop save:
 
 - *Before the loop* — each thread pre-warms its private `ctx%cache` from
   `self%pf` via `copy_all`.  Matching blocks then hit the existing intra-solve
   cache in `assemble_linear_system` and never enter a CRITICAL section.
-- *Inside the loop* — no pf logic; the hot path is completely free of locks.
-- *After the loop* — the first thread with a valid `ctx%cache` writes it to
-  `self%pf` inside a single `!$OMP CRITICAL(pf_save)`.
+- *Inside the loop* — no persistent-cache write occurs on the hot path.  Fresh
+  factorisations update only the prepared factors and mark the current
+  thread-local `ctx%matA`/`ctx%rhsB` as matching those factors; hcache hits
+  remain factor-only.
+- *After the loop* — the first thread whose `ctx%cache` still has a valid
+  assembled system copies the factors and `ctx%matA`/`ctx%rhsB` to `self%pf`
+  inside a single `!$OMP CRITICAL(pf_save)`.
 
 The persistent factor (`self%pf`) and the per-thread intra-solve cache
 (`ctx%cache`) are both instances of the same `t_factor_cache` derived type,
 sharing `alloc`, `matches`, `save_key`, `copy_to`, and `copy_all` methods.
+
+An additional per-thread multi-slot cache (`ctx%hcache`) retains recently
+prepared factorisations during a single `solve()` call.  This catches repeated
+neighbour systems even when they are not consecutive blocks.  The multi-slot
+cache stores only the prepared factor matrices (`L`, `K^{-1}F`, and the Schur
+factor), not the assembled `matA`/`rhsB` snapshots used for inspection.  It is
+bounded by `factor_cache_size` slots and a per-thread memory cap; lookup uses a
+small bucket table (`hash -> bucket -> linked slot list`) so only the matching
+bucket is scanned instead of every cached slot.  Each hash candidate is still
+verified with the full neighbour-set key before reuse, so collisions cannot
+reuse an incorrect factorisation.  Replacement is global least-recently-used
+across the slots, with replaced entries unlinked from their old bucket and
+reinserted into the new bucket.
 
 Cache invalidation is automatic:
 - `set_obs` — coordinates may change K; sets `pf%valid = .false.`
@@ -51,10 +68,13 @@ you plan to call `solve()` multiple times on the same observation grid.
 New C API functions:
 - `krige_get_factor_info(handle, npp, p, valid)` — query dimensions and validity
 - `krige_get_factor_matrices(handle, npp, p, L, kinv_drift, schur)` — copy matrices
+- `krige_get_factor_system(handle, npp, p, nvar, matA, rhsB)` — copy the
+  assembled LHS/RHS snapshot used to build the persistent factor
 
 New Python method:
 - `Kriging.get_factor()` — returns a dict with keys `valid`, `npp`, `p`,
-  `L`, `kinv_drift`, `schur` (all as NumPy arrays when `valid=True`)
+  `L`, `kinv_drift`, `schur`, `matA`, and `rhsB` (all as NumPy arrays when
+  `valid=True`)
 
 ### Structured result array (`get_result_array`)
 
@@ -85,6 +105,16 @@ New C API function:
 
 ### Internal / correctness changes
 
+- The Fortran solver now uses a shared inheritance framework.  `kriging_base.F90`
+  defines the abstract `t_kriging_base`, common data containers, the unified
+  per-thread context, the shared `solve` template, weight storage, and factor
+  caches.  `t_kriging` in `kriging.F90` and `t_kriging_st` in `kriging_st.F90`
+  now extend that base type and implement only the spatial/ST-specific hooks
+  such as search, covariance assembly, variance calculation, and variogram
+  formatting.
+- The CAPI handle registry moved into `kriging_capi_common.F90` and stores
+  polymorphic `class(t_kriging_base)` pointers.  The spatial and ST CAPI modules
+  downcast from the shared registry to their concrete types.
 - `set_obs_drift` must be called (or re-called) after each `set_obs` when
   `ndrift > 0`; `set_obs` zeros the external drift rows on each call.
   Using `update_obs_value` is the correct API when only values change.

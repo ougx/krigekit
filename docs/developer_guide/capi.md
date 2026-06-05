@@ -1,8 +1,13 @@
-# C API reference (`kriging_capi.F90`)
+# C API reference (`kriging_capi.F90`, `kriging_st_capi.f90`)
 
-The C API is an ISO C Binding wrapper around the `t_kriging` Fortran type.
+The C API is an ISO C Binding wrapper around the spatial `t_kriging` and
+space-time `t_kriging_st` Fortran types.  Both inherit from
+`t_kriging_base`; see [Fortran architecture](architecture.md) for the shared
+solve framework.
+
 Every public method is exposed as a C-callable function that takes an opaque
-64-bit integer **handle** instead of the Fortran derived type.
+64-bit integer **handle** instead of the Fortran derived type.  Handles are
+registry slot indices, not raw pointers.
 
 All functions return `integer(c_int) ierr`: **0 = success**, non-zero = error.
 Retrieve the error message with `krige_get_last_error`.
@@ -11,7 +16,7 @@ Retrieve the error message with `krige_get_last_error`.
 
 | Convention | Detail |
 |---|---|
-| Handle type | `int64` (registry slot index, not a raw pointer) |
+| Handle type | `int64` (shared polymorphic registry slot index, not a raw pointer) |
 | Boolean flags | `int32`: `0` = false, `1` = true |
 | Strings | Null-terminated C char arrays; converted internally with `c2fstr` |
 | Array layout | Fortran column-major `(ndim, nobs)` — Python transposes before calling |
@@ -19,6 +24,23 @@ Retrieve the error message with `krige_get_last_error`.
 | Optional args | Python always supplies concrete values; no sentinel / `has_*` logic needed here |
 
 ---
+
+## Fortran object model
+
+The spatial and ST CAPIs share the same handle infrastructure in
+`kriging_capi_common.F90`.  That registry stores `class(t_kriging_base)`
+pointers, so a slot can hold either concrete type:
+
+```text
+class(t_kriging_base)
+  +-- type(t_kriging)       spatial API, kriging_capi.F90
+  +-- type(t_kriging_st)    ST API, kriging_st_capi.f90
+```
+
+Each API module retrieves the base pointer and then downcasts it with
+`select type` before calling concrete-only methods.  Shared methods, including
+persistent-factor accessors, live on `t_kriging_base` and are available to both
+spatial and ST objects.
 
 ## Lifecycle
 
@@ -407,6 +429,30 @@ The cache is populated automatically after the first successful `krige_solve`
 and invalidated by `krige_set_obs` or `krige_set_vgm`.  These two functions
 let Python query the cached matrices for inspection or debugging.
 
+Internally there are three cache layers:
+
+- `ctx%cache`: one single-entry cache per worker thread.  It handles immediate
+  repeated systems and is pre-warmed from the persistent cache when available.
+- `ctx%hcache`: one bounded multi-slot cache per worker thread for repeated
+  systems within a single solve.  It stores only recent prepared factor
+  matrices (`L`, `K^{-1}F`, and the Schur factor) in LRU slots and indexes them
+  with a bucket table (`hash -> bucket -> linked slot list`), so lookup scans
+  only the matching bucket.  Every hash candidate is verified against the full
+  neighbour key with `fcache_matches`, so collisions are safe.
+- `self%pf`: the optional persistent cache shared by the kriging object across
+  solves when `pf_cache=1`.  This cache also stores the assembled `matA`/`rhsB`
+  snapshot exposed by `krige_get_factor_system`.
+
+`self%pf` is saved after the parallel block loop from a thread whose current
+`ctx%matA`/`ctx%rhsB` still match its thread-local factors.  hcache hits do not
+update the assembled system, so they are not used to populate `matA`/`rhsB` for
+inspection.
+
+The multi-slot cache size is controlled in Fortran by `factor_cache_size`
+(default 64 slots per thread) and by a per-thread byte cap
+(`MAX_HCACHE_BYTES`).  The byte cap limits `L`, `kinv_drift`, and `schur`
+storage for each OpenMP worker context.
+
 ### `krige_get_factor_info`
 
 ```c
@@ -441,6 +487,19 @@ All arrays are in Fortran column-major order.  The solver uses `uplo='U'`
 - **`kinv_out`** — `K^{-1} F` where F is the full drift matrix.
 - **`schur_out`** — upper triangle is the Cholesky factor of `F' K^{-1} F`.
 
+### `krige_get_factor_system`
+
+```c
+int krige_get_factor_system(int64_t handle,
+    int npp, int p, int nvar,
+    double *matA_out,    // [npp+p x npp+p] assembled LHS before factorization
+    double *rhsB_out)    // [nvar x npp+p] assembled RHS before solving
+```
+
+Copies the assembled linear system that produced the persistent factor.  This is
+for inspection and debugging; `npp`, `p`, and `nvar` must match the kriging
+object and the dimensions returned by `krige_get_factor_info`.
+
 #### Invalidation rules
 
 | Trigger | Effect on persistent cache |
@@ -459,6 +518,8 @@ f = kriging_object.get_factor()
 # f['L']           ndarray (npp, npp)       — upper-triangular factor
 # f['kinv_drift']  ndarray (npp, max(1,p))  — K^{-1} F
 # f['schur']       ndarray (max(1,p), max(1,p))
+# f['matA']        ndarray (npp+p, npp+p)   — assembled LHS
+# f['rhsB']        ndarray (nvar, npp+p)    — assembled RHS
 ```
 
 ---

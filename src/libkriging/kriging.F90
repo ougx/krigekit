@@ -648,7 +648,7 @@ contains
     type(t_kriging_ctx), intent(inout) :: ctx
 
     integer                :: kvar, lvar, i, j, jstart
-    integer                :: ivgm, ivar, jvar, givar, igrad
+    integer                :: ivgm, ivar, jvar, givar
     real                   :: lag(self%ndim), ln, rs, cov_g, c11, c12, c21, c22
     class(t_data), pointer :: obs1, obs2
 

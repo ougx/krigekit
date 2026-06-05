@@ -3,7 +3,6 @@ contains
 subroutine progress(i, n)
   implicit none
   integer        ::i, n
-  real           :: r
   integer        ::j,k
   character(len=17)::bar="???% |          |"
   j = int(real(i)/real(n) * 100)

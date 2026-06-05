@@ -63,6 +63,7 @@
 
 module kriging_base
   use, intrinsic   :: ieee_arithmetic
+  use, intrinsic   :: iso_fortran_env, only: int64
   use iso_c_binding, only: c_char, c_null_char
   use common,        only: version
   use kriging_err,   only: kriging_error, kriging_failed
@@ -75,6 +76,7 @@ module kriging_base
 
   ! --- shared infrastructure ---
   public :: t_factor_cache
+  public :: t_factor_hash_cache
   public :: t_kriging_ctx
   public :: t_data
   public :: t_obsgrid
@@ -97,6 +99,7 @@ module kriging_base
   public :: assign_weight_ctx
   public :: fcache_matches
   public :: fcache_save_key
+  public :: fhcache_hash_key
   public :: group_ivar
   public :: filter_by_maxlag
 
@@ -110,6 +113,7 @@ module kriging_base
   type :: t_factor_cache
     logical  :: valid       = .false.
     logical  :: hit         = .false.
+    logical  :: system_valid = .false.
     integer  :: npp         = 0
     integer  :: p           = 0
     real     :: rangescale  = 1.0
@@ -126,6 +130,34 @@ module kriging_base
     procedure :: copy_to  => fcache_copy_to
     procedure :: copy_all => fcache_copy_all
   end type t_factor_cache
+
+  !============================================================================
+  ! t_factor_hash_cache — fixed-size per-thread multi-entry factor cache
+  !
+  ! This is intentionally bounded: memory scales with factor_cache_size and
+  ! OpenMP thread count, not with the number of grid blocks.  Each entry stores
+  ! one prepared factorization keyed by the exact neighbour indices and local
+  ! block modifiers.  Hash matches are always verified with fcache_matches(), so
+  ! collisions cannot produce an incorrect factorization reuse.
+  !============================================================================
+  type :: t_factor_entry
+    logical :: valid = .false.
+    integer :: hash = 0
+    integer :: last_used = 0
+    type(t_factor_cache) :: fac
+  end type t_factor_entry
+
+  type :: t_factor_hash_cache
+    integer :: nslot = 0
+    integer :: nbucket = 0
+    integer :: clock = 0
+    type(t_factor_entry), allocatable :: slot(:)
+    integer, allocatable :: bucket(:)
+    integer, allocatable :: next(:)
+  contains
+    procedure :: alloc  => fhcache_alloc
+    procedure :: free   => fhcache_free
+  end type t_factor_hash_cache
 
   !============================================================================
   ! t_kriging_ctx — unified per-thread working context
@@ -152,6 +184,7 @@ module kriging_base
     real,    allocatable :: matA  (:,:)    ! [matsize, matsize]
     real,    allocatable :: rhsB  (:,:)    ! [nvar, matsize]
     type(t_factor_cache) :: cache
+    type(t_factor_hash_cache) :: hcache
   contains
     procedure :: free_core => kriging_ctx_free_core
   end type t_kriging_ctx
@@ -270,6 +303,7 @@ module kriging_base
     logical :: varying_vgm        = .false.
     logical :: std_ck             = .true.
     logical :: pf_cache           = .true.
+    integer :: factor_cache_size  = 64      ! per-thread multi-entry factor cache; <=0 disables
     character(len=1024) :: weight_file = ""
     integer :: ifile              = 0
     integer :: seed               = 0    ! 0 = no explicit seed; >0 for reproducibility
@@ -1417,23 +1451,30 @@ contains
   ! t_factor_cache methods
   !============================================================================
 
-  subroutine fcache_alloc(self, npp, p, nvar, ngroups, mmax)
+  subroutine fcache_alloc(self, npp, p, nvar, ngroups, mmax, with_system)
     class(t_factor_cache), intent(inout) :: self
     integer, intent(in) :: npp, p, nvar, ngroups, mmax
+    logical, intent(in), optional :: with_system
     integer :: matsize, pg
+    logical :: alloc_system
     matsize = npp + p
     pg = max(1, p)
+    alloc_system = .true.
+    if (present(with_system)) alloc_system = with_system
     allocate(self%nnear(ngroups))
     allocate(self%inear(mmax, ngroups))
-    allocate(self%matA(matsize, matsize))
-    allocate(self%rhsB(nvar, matsize))
+    if (alloc_system) then
+      allocate(self%matA(matsize, matsize))
+      allocate(self%rhsB(nvar, matsize))
+    end if
     allocate(self%L(npp, npp))
     allocate(self%kinv_drift(npp, pg))
     allocate(self%schur(pg, pg))
     self%nnear = 0
     self%inear = 0
-    self%matA = 0.0
-    self%rhsB = 0.0
+    if (allocated(self%matA)) self%matA = 0.0
+    if (allocated(self%rhsB)) self%rhsB = 0.0
+    self%system_valid = .false.
   end subroutine fcache_alloc
 
 
@@ -1446,7 +1487,7 @@ contains
   !----------------------------------------------------------------------------
   subroutine fcache_copy_to(self, dst, npp, p)
     class(t_factor_cache), intent(in)    :: self
-    class(t_factor_cache), intent(inout) :: dst
+    type(t_factor_cache),  intent(inout) :: dst
     integer, intent(in) :: npp, p
     integer :: pg
     pg = max(1, p)
@@ -1467,13 +1508,18 @@ contains
   ! If src%valid is .false. this is a no-op.
   subroutine fcache_copy_all(self, src)
     class(t_factor_cache), intent(inout) :: self
-    class(t_factor_cache), intent(in)    :: src
-    integer :: matsize, ngroups
+    type(t_factor_cache),  intent(in)    :: src
+    integer :: matsize, ngroups, nvar
     if (.not. src%valid) return
     matsize = src%npp + src%p
-    call src%copy_to(self, src%npp, src%p)
-    self%matA(1:matsize, 1:matsize) = src%matA(1:matsize, 1:matsize)
-    self%rhsB(:,         1:matsize) = src%rhsB(:,         1:matsize)
+    !-- Inline copy_to body (L, kinv_drift, schur) to avoid any implicit
+    !   TYPE→CLASS conversion when src is type(t_factor_cache), which can
+    !   trigger null-descriptor crashes in Intel ifort/ifx.
+    associate(pg => max(1, src%p))
+    self%L         (1:src%npp, 1:src%npp) = src%L         (1:src%npp, 1:src%npp)
+    self%kinv_drift(1:src%npp, 1:pg     ) = src%kinv_drift(1:src%npp, 1:pg     )
+    self%schur     (1:pg,      1:pg     ) = src%schur     (1:pg,      1:pg     )
+    end associate
     self%npp         = src%npp
     self%p           = src%p
     self%rangescale  = src%rangescale
@@ -1481,8 +1527,249 @@ contains
     ngroups = size(src%nnear)
     self%nnear(1:ngroups) = src%nnear(1:ngroups)
     self%inear             = src%inear
+    !-- Copy assembled LHS/RHS only when both caches carry system snapshots.
+    !   The persistent cache stores these for get_factor(); hcache slots do not,
+    !   and use copy_to() for factor-only transfer.
+    self%system_valid = .false.
+    if (src%system_valid .and. allocated(self%matA) .and. allocated(src%matA) .and. &
+        allocated(self%rhsB) .and. allocated(src%rhsB)) then
+      nvar = size(src%rhsB, 1)
+      self%matA(1:matsize, 1:matsize) = src%matA(1:matsize, 1:matsize)
+      self%rhsB(1:nvar,    1:matsize) = src%rhsB(1:nvar,    1:matsize)
+      self%system_valid = .true.
+    end if
     self%valid = .true.
   end subroutine fcache_copy_all
+
+
+  !============================================================================
+  ! t_factor_hash_cache methods
+  !============================================================================
+
+  subroutine fhcache_alloc(self, nslot, npp, p, nvar, ngroups, mmax)
+    class(t_factor_hash_cache), intent(inout) :: self
+    integer, intent(in) :: nslot, npp, p, nvar, ngroups, mmax
+    integer :: i
+
+    call self%free()
+    self%nslot = max(0, nslot)
+    self%clock = 0
+    if (self%nslot <= 0) then
+      self%nbucket = 0
+      return
+    end if
+    self%nbucket = max(1, (self%nslot + 3) / 4)
+
+    allocate(self%slot(self%nslot))
+    allocate(self%bucket(self%nbucket))
+    allocate(self%next(self%nslot))
+    self%bucket = 0
+    self%next = 0
+    do i = 1, self%nslot
+      call self%slot(i)%fac%alloc(npp, p, nvar, ngroups, mmax, with_system=.false.)
+      self%slot(i)%valid = .false.
+      self%slot(i)%hash = 0
+      self%slot(i)%last_used = 0
+    end do
+  end subroutine fhcache_alloc
+
+
+  subroutine fhcache_free(self)
+    class(t_factor_hash_cache), intent(inout) :: self
+    integer :: i
+
+    if (allocated(self%slot)) then
+      do i = 1, size(self%slot)
+        if (allocated(self%slot(i)%fac%nnear))      deallocate(self%slot(i)%fac%nnear)
+        if (allocated(self%slot(i)%fac%inear))      deallocate(self%slot(i)%fac%inear)
+        if (allocated(self%slot(i)%fac%matA))       deallocate(self%slot(i)%fac%matA)
+        if (allocated(self%slot(i)%fac%rhsB))       deallocate(self%slot(i)%fac%rhsB)
+        if (allocated(self%slot(i)%fac%L))          deallocate(self%slot(i)%fac%L)
+        if (allocated(self%slot(i)%fac%kinv_drift)) deallocate(self%slot(i)%fac%kinv_drift)
+        if (allocated(self%slot(i)%fac%schur))      deallocate(self%slot(i)%fac%schur)
+      end do
+      deallocate(self%slot)
+    end if
+    if (allocated(self%bucket)) deallocate(self%bucket)
+    if (allocated(self%next)) deallocate(self%next)
+    self%nslot = 0
+    self%nbucket = 0
+    self%clock = 0
+  end subroutine fhcache_free
+
+
+  integer function fhcache_hash_key(ctx) result(h)
+    type(t_kriging_ctx), intent(in) :: ctx
+    integer :: kvar, i
+
+    h = 216613626
+    call mix_int(h, ctx%npp)
+    call mix_int(h, ctx%p)
+    call mix_int(h, nint(ctx%rangescale  * 1000000.0))
+    call mix_int(h, nint(ctx%localnugget * 1000000.0))
+
+    do kvar = 1, ctx%ngroups_base
+      call mix_int(h, ctx%nnear(kvar))
+      do i = 1, ctx%nnear(kvar)
+        call mix_int(h, ctx%inear(i,kvar))
+      end do
+    end do
+
+  contains
+
+    subroutine mix_int(hh, x)
+      integer, intent(inout) :: hh
+      integer, intent(in)    :: x
+      hh = ieor(hh, x)
+      hh = hh * 16777619
+      if (hh == 0) hh = 216613626
+    end subroutine mix_int
+
+  end function fhcache_hash_key
+
+
+  integer function fhcache_bucket_index(cache, h) result(ibucket)
+    type(t_factor_hash_cache), intent(in) :: cache
+    integer, intent(in) :: h
+
+    if (cache%nbucket <= 0) then
+      ibucket = 0
+    else
+      ibucket = 1 + modulo(h, cache%nbucket)
+    end if
+  end function fhcache_bucket_index
+
+
+  subroutine fhcache_unlink_slot(cache, islot)
+    type(t_factor_hash_cache), intent(inout) :: cache
+    integer, intent(in) :: islot
+    integer :: ibucket, iprev, icur
+
+    if (islot < 1 .or. islot > cache%nslot) return
+    if (.not. allocated(cache%bucket)) return
+    if (.not. allocated(cache%next)) return
+    if (.not. cache%slot(islot)%valid) return
+
+    ibucket = fhcache_bucket_index(cache, cache%slot(islot)%hash)
+    if (ibucket <= 0) return
+
+    iprev = 0
+    icur = cache%bucket(ibucket)
+    do while (icur > 0)
+      if (icur < 1 .or. icur > cache%nslot) exit
+      if (icur == islot) then
+        if (iprev == 0) then
+          cache%bucket(ibucket) = cache%next(icur)
+        else
+          cache%next(iprev) = cache%next(icur)
+        end if
+        cache%next(icur) = 0
+        return
+      end if
+      iprev = icur
+      icur = cache%next(icur)
+    end do
+  end subroutine fhcache_unlink_slot
+
+
+  !-- fhcache_lookup / fhcache_insert are standalone procedures (not bound to
+  !   t_factor_hash_cache) so that ctx%hcache, ctx%cache, and ctx itself are
+  !   never passed as separate dummy arguments that alias the same storage.
+  !   Fortran §15.5.2.13 forbids multiple dummies associated with overlapping
+  !   actual arguments when any dummy is defined.
+
+  logical function fhcache_lookup(ctx, krige) result(found)
+    type(t_kriging_ctx),   intent(inout) :: ctx    ! single object — no aliasing
+    class(t_kriging_base), intent(in)    :: krige
+    integer :: h, ibucket, i
+
+    found = .false.
+    if (ctx%hcache%nslot <= 0) return
+    if (.not. allocated(ctx%hcache%slot)) return
+    if (.not. allocated(ctx%hcache%bucket)) return
+    if (.not. allocated(ctx%hcache%next)) return
+    if (krige%varying_vgm) return
+
+    h = fhcache_hash_key(ctx)
+    ibucket = fhcache_bucket_index(ctx%hcache, h)
+    if (ibucket <= 0) return
+
+    i = ctx%hcache%bucket(ibucket)
+    do while (i > 0)
+      if (i < 1 .or. i > ctx%hcache%nslot) exit
+      if (ctx%hcache%slot(i)%valid .and. ctx%hcache%slot(i)%hash == h) then
+        if (fcache_matches(ctx%hcache%slot(i)%fac, ctx, krige%varying_vgm)) then
+          call ctx%hcache%slot(i)%fac%copy_to(ctx%cache, &
+                                              ctx%hcache%slot(i)%fac%npp, &
+                                              ctx%hcache%slot(i)%fac%p)
+          call fcache_save_key(ctx%cache, ctx)
+          ctx%hcache%clock = ctx%hcache%clock + 1
+          ctx%hcache%slot(i)%last_used = ctx%hcache%clock
+          found = .true.
+          return
+        end if
+      end if
+      i = ctx%hcache%next(i)
+    end do
+  end function fhcache_lookup
+
+
+  subroutine fhcache_insert(ctx, krige)
+    type(t_kriging_ctx),   intent(inout) :: ctx    ! single object — no aliasing
+    class(t_kriging_base), intent(in)    :: krige
+    integer :: h, ibucket, i, victim, oldest
+
+    if (ctx%hcache%nslot <= 0) return
+    if (.not. allocated(ctx%hcache%slot)) return
+    if (.not. allocated(ctx%hcache%bucket)) return
+    if (.not. allocated(ctx%hcache%next)) return
+    if (.not. ctx%cache%valid) return
+    if (krige%varying_vgm) return
+
+    h = fhcache_hash_key(ctx)
+    ibucket = fhcache_bucket_index(ctx%hcache, h)
+    if (ibucket <= 0) return
+
+    ! If the same key already exists, refresh it in place.
+    i = ctx%hcache%bucket(ibucket)
+    do while (i > 0)
+      if (i < 1 .or. i > ctx%hcache%nslot) exit
+      if (ctx%hcache%slot(i)%valid .and. ctx%hcache%slot(i)%hash == h) then
+        if (fcache_matches(ctx%hcache%slot(i)%fac, ctx, krige%varying_vgm)) then
+          call ctx%cache%copy_to(ctx%hcache%slot(i)%fac, ctx%cache%npp, ctx%cache%p)
+          call fcache_save_key(ctx%hcache%slot(i)%fac, ctx)
+          ctx%hcache%clock = ctx%hcache%clock + 1
+          ctx%hcache%slot(i)%last_used = ctx%hcache%clock
+          return
+        end if
+      end if
+      i = ctx%hcache%next(i)
+    end do
+
+    victim = 1
+    oldest = huge(oldest)
+    do i = 1, ctx%hcache%nslot
+      if (.not. ctx%hcache%slot(i)%valid) then
+        victim = i
+        exit
+      end if
+      if (ctx%hcache%slot(i)%last_used < oldest) then
+        oldest = ctx%hcache%slot(i)%last_used
+        victim = i
+      end if
+    end do
+
+    if (ctx%hcache%slot(victim)%valid) call fhcache_unlink_slot(ctx%hcache, victim)
+
+    call ctx%cache%copy_to(ctx%hcache%slot(victim)%fac, ctx%cache%npp, ctx%cache%p)
+    call fcache_save_key(ctx%hcache%slot(victim)%fac, ctx)
+    ctx%hcache%clock = ctx%hcache%clock + 1
+    ctx%hcache%slot(victim)%valid = .true.
+    ctx%hcache%slot(victim)%hash = h
+    ctx%hcache%slot(victim)%last_used = ctx%hcache%clock
+    ctx%hcache%next(victim) = ctx%hcache%bucket(ibucket)
+    ctx%hcache%bucket(ibucket) = victim
+  end subroutine fhcache_insert
 
 
   !============================================================================
@@ -1501,9 +1788,12 @@ contains
     if (allocated(self%rhsB  )) deallocate(self%rhsB)
     if (allocated(self%cache%nnear))      deallocate(self%cache%nnear)
     if (allocated(self%cache%inear))      deallocate(self%cache%inear)
+    if (allocated(self%cache%matA))       deallocate(self%cache%matA)
+    if (allocated(self%cache%rhsB))       deallocate(self%cache%rhsB)
     if (allocated(self%cache%L))          deallocate(self%cache%L)
     if (allocated(self%cache%kinv_drift)) deallocate(self%cache%kinv_drift)
     if (allocated(self%cache%schur))      deallocate(self%cache%schur)
+    call self%hcache%free()
     self%iblock       = 0
     self%npp          = 0
     self%matsize      = 0
@@ -1511,6 +1801,7 @@ contains
     self%p            = 0
     self%cache%valid  = .false.
     self%cache%hit    = .false.
+    self%cache%system_valid = .false.
   end subroutine kriging_ctx_free_core
 
 
@@ -1658,7 +1949,9 @@ contains
     !   that matching blocks get a ctx%cache hit in assemble_linear_system
     !   without ever entering the pf CRITICAL section.  self%pf is read-only
     !   here (set in a prior solve()); ctx%cache is thread-private.
-    if (self%pf_cache .and. self%pf%valid) call ctx%cache%copy_all(self%pf)
+    !-- Pre-warm only when ctx%cache was allocated (use_old_weight=.false. path).
+    if (self%pf_cache .and. self%pf%valid .and. allocated(ctx%cache%L)) &
+        call ctx%cache%copy_all(self%pf)
 
     !$OMP DO SCHEDULE(DYNAMIC,1)
     do ib = 1, nb
@@ -1689,11 +1982,17 @@ contains
     end do
     !$OMP END DO
 
-    if (self%pf_cache .and. .not. self%pf%valid .and. ctx%cache%valid) then
+    if (self%pf_cache .and. ctx%cache%valid .and. ctx%cache%system_valid) then
       !$OMP CRITICAL(pf_save)
-      if (.not. self%pf%valid) call self%pf%copy_all(ctx%cache)
-      self%pf%matA = ctx%matA
-      self%pf%rhsB = ctx%rhsB
+      if (.not. self%pf%valid) then
+        call ctx%cache%copy_to(self%pf, ctx%cache%npp, ctx%cache%p)
+        call fcache_save_key(self%pf, ctx)
+        self%pf%matA(1:ctx%matsize, 1:ctx%matsize) = &
+            ctx%matA(1:ctx%matsize, 1:ctx%matsize)
+        self%pf%rhsB(1:self%nvar, 1:ctx%matsize) = &
+            ctx%rhsB(1:self%nvar, 1:ctx%matsize)
+        self%pf%system_valid = .true.
+      end if
       !$OMP END CRITICAL(pf_save)
     end if
     deallocate(ctx)
@@ -1826,6 +2125,10 @@ contains
     type(t_kriging_ctx),   intent(out) :: ctx
     class(t_kriging_base), intent(in)  :: krige
     integer :: ivar, kvar, kgrad
+    ! Per-thread upper bound for the multi-entry factor cache.
+    integer(int64), parameter :: MAX_HCACHE_BYTES = 64_int64 * 1024_int64 * 1024_int64 ! 64 MB/thread
+    integer(int64) :: bytes_per_real, p_cache, slot_reals, slot_bytes, slot_limit
+    integer :: safe_nslot
 
     associate( &
       npp     => krige%nppmax, &
@@ -1835,11 +2138,24 @@ contains
       nv      => krige%nvar, &
       mmax    => krige%mmax)
 
+      bytes_per_real = max(1_int64, int(storage_size(0.0) / 8, int64))
+      p_cache = int(max(1, krige%ndrift + krige%naug), int64)
+      slot_reals = int(npp, int64) * int(npp, int64) + &          ! L
+                   int(npp, int64) * p_cache + &                  ! kinv_drift
+                   p_cache * p_cache                              ! schur
+      slot_bytes = max(1_int64, slot_reals * bytes_per_real)
+      slot_limit = MAX_HCACHE_BYTES / slot_bytes
+      safe_nslot = max(0, min(krige%factor_cache_size, &
+                              int(min(slot_limit, int(huge(safe_nslot), int64)))))
+
+
       if (.not. krige%use_old_weight) then
         allocate(ctx%istart(ng));         ctx%istart = 0
         allocate(ctx%matA  (matsize, matsize))
         allocate(ctx%rhsB  (nv,      matsize))
         call ctx%cache%alloc(npp, krige%ndrift + krige%naug, nv, nb, mmax)
+        if (safe_nslot > 0) &
+          call ctx%hcache%alloc(safe_nslot, npp, krige%ndrift + krige%naug, nv, nb, mmax)
       end if
       allocate(ctx%nnear (ng))
       allocate(ctx%inear (mmax, ng))
@@ -1929,6 +2245,7 @@ contains
         cache%inear(1:ctx%nnear(kvar), kvar) = ctx%inear(1:ctx%nnear(kvar), kvar)
     end do
     cache%valid = .true.
+    cache%system_valid = .false.
   end subroutine fcache_save_key
 
   !============================================================================
@@ -2645,7 +2962,14 @@ contains
         return
       end if
 
+      if (fhcache_lookup(ctx, self)) then
+        ctx%cache%hit = .true.
+        call self%assemble_rhs(ctx)
+        return
+      end if
+
       ctx%cache%valid = .false.
+      ctx%cache%system_valid = .false.
       call self%assemble_lhs(ctx)
       call self%assemble_rhs(ctx)
     end associate
@@ -2688,13 +3012,20 @@ contains
                            ctx%cache%schur, info)
         if (info == 0) then
           call fcache_save_key(ctx%cache, ctx)
+          !-- Mark that ctx%matA/rhsB still match ctx%cache's factors.  The
+          !   assembled system is copied to self%pf only once after the loop.
+          ctx%cache%system_valid = .true.
           call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
                                       ctx%cache%schur, rhsB, x, info)
+          if (info == 0) then
+            call fhcache_insert(ctx, self)
+          end if
         end if
       end if
 
       if (info /= 0) then
         ctx%cache%valid = .false.
+        ctx%cache%system_valid = .false.
         call ssysv_fallback(npp, p, q, matA, rhsB, x, info)
         if (self%verbose) &
           print*, "Cholesky fails. Fallback SSYSV is used for block", iblock
