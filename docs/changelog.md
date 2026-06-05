@@ -4,6 +4,59 @@
 
 Initial release.
 
+### Breaking changes
+
+#### ST search time coordinate — linear scaling replaces variogram transform
+
+`set_search` (Fortran/C API) and `SpaceTimeKriging.set_search` (Python) now use
+a **linear** time-to-search-coordinate mapping:
+
+```
+t_kd = t * time_at
+```
+
+Previously the time axis was mapped through a saturating variogram function
+(`signed_time_coord = sign(f_time_vgm_st(vtype, nugget, sill, at, t), t)`).
+That transform saturated for absolute time values `|t| >> time_at`, collapsing
+all observations to the same KD-tree coordinate and causing infinite recursion
+(stack overflow) for structured datasets (e.g. fixed monitoring stations with
+repeated observation times).
+
+The new linear mapping is:
+- **Monotone and unbounded** — no saturation artefacts.
+- **Model-consistent** — for the sum-metric model `h_ST = sqrt(h_S^2 + (at·Δt)^2)`,
+  the L2 distance in the `(x, y, z, t·at)` search space equals `h_ST` exactly.
+- **`maxdist` now operates in km-equivalent units** (same as `h_ST`), not in
+  variogram-value space.
+
+**Removed parameters**: `time_transform / time_vtype`, `time_nugget`, `time_sill`
+from `set_search` / `krige_st_set_search`.  Only `time_at` (the temporal scale,
+same value as in `set_st_model`) remains.  Pass `time_at=at` to keep search and
+variogram scales consistent.
+
+**Implementation note** — gfortran does not correctly set the `present()` flag
+for optional arguments passed through a CLASS polymorphic dispatch (vtable call).
+The CAPI workaround pre-writes `obs%time_at` before calling `set_search`;
+`set_search` then reads that pre-stored value as its effective default, so `time_at`
+is used for both the KD-tree coordinate build and the subsequent distance computations.
+
+#### Duplicate observation coordinate check
+
+`set_obs` now validates observation coordinates before storing them.  If any two
+observations for the same variable share identical coordinate tuples (all
+coordinate components equal), it reports a clear error before `set_search` can
+build a KD-tree on invalid input:
+
+```
+ERROR: Duplicate coordinate found! Station <i> and Station <j> share identical coordinates.
+Common cause: multiple observations at the same location and time.
+Remove or aggregate duplicate observations before calling set_obs.
+```
+
+The degenerate-split guard previously patched into the tree builder
+(`if (m >= u .or. m < l) m = (l+u-1)/2`) has been removed.  It was a
+band-aid for a problem that is now prevented before it reaches the tree.
+
 ### Features
 
 - Ordinary and simple kriging (point and block)
@@ -122,6 +175,8 @@ New C API function:
 - `set_obs_drift` must be called (or re-called) after each `set_obs` when
   `ndrift > 0`; `set_obs` zeros the external drift rows on each call.
   Using `update_obs_value` is the correct API when only values change.
+- `set_obs` rejects duplicate observation coordinate tuples for each variable.
+  For space-time observations, the time coordinate is part of the tuple.
 - `set_search` must be called after `set_obs`; it caps `obs%nmax` at `n`
   (the actual observation count).  Skipping `set_search` after a repeated
   `set_obs` would leave `obs%nmax = HUGE(int)`, causing integer overflow in

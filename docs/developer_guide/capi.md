@@ -124,6 +124,8 @@ int krige_set_obs(int64_t handle,
 Sets coordinates, values, and per-observation measurement variance for one
 variable.  Pass `INT_MAX` for `nmax` and `DBL_MAX` for `maxdist` to use all
 observations within unlimited range.  `sk_mean` is only used when `unbias=0`.
+Duplicate coordinate tuples within the same variable are rejected.  For spatial
+kriging, all `ndim_c` coordinate rows must match to count as a duplicate.
 
 ### `krige_set_obs_drift`
 
@@ -639,6 +641,83 @@ void krige_get_num_threads(int *n)
 
 Query the OpenMP thread count.  Both return 1 when the library is compiled
 without OpenMP (`--no-openmp`).
+
+---
+
+## Space-time API (`kriging_st_capi.f90`)
+
+All ST entry points are prefixed `krige_st_` and share the same handle
+registry as the spatial API.  Differences from the spatial API are noted below;
+methods not listed here have the same signature as their `krige_` counterparts
+(e.g. `krige_st_solve`, `krige_st_prepare`, `krige_st_get_estimate`, …).
+
+### `krige_st_set_obs`
+
+As with `krige_set_obs`, duplicate observation coordinate tuples are rejected.
+For ST data, the duplicate key includes spatial coordinates and time.
+
+```c
+int krige_st_set_obs(int64_t handle,
+    int ivar, int nobs,
+    const double *coord,    // [4 × nobs], Fortran column-major; rows 1:3 = spatial, row 4 = time
+    const double *value,    // [nobs]
+    const double *variance, // [nobs]
+    int nmax, double maxdist, double sk_mean)
+```
+
+Identical to `krige_set_obs` except that `coord` has 4 rows (3 spatial + 1 time).
+`maxdist` is in **km-equivalent units** — the same space as `h_ST`.
+
+### `krige_st_set_grid`
+
+```c
+int krige_st_set_grid(int64_t handle,
+    int ngrid,
+    const double *coord,  // [3 × ngrid], Fortran column-major (spatial only)
+    const double *time)   // [ngrid]
+```
+
+Accepts spatial coordinates and times as separate arrays (unlike `krige_set_grid`
+which takes a single `ndim`-row coord array).
+
+### `krige_st_set_st_model`
+
+```c
+int krige_st_set_st_model(int64_t handle,
+    const char *model,       // "sum_metric" or "product_sum"
+    const char *transform,   // variogram type for f_time: "lin", "exp", "sph", …
+    double at,               // joint temporal scale (same units as time coordinate)
+    double time_nugget,      // temporal variogram nugget
+    double time_sill,        // temporal variogram sill
+    double k_ps)             // product-sum k (ignored for sum_metric)
+```
+
+Sets global ST model parameters shared by all variogram entries.
+
+### `krige_st_set_search`
+
+```c
+int krige_st_set_search(int64_t handle,
+    int ivar,
+    double time_at,    // temporal scale: t_kd = t * time_at  (km-equivalent)
+    double anis1,      // spatial minor/major anisotropy ratio
+    double anis2,      // spatial vertical/major anisotropy ratio
+    double azimuth,    // major-axis azimuth (degrees, clockwise from North)
+    double dip,        // dip angle (degrees)
+    double plunge)     // plunge angle (degrees)
+```
+
+Builds the 4D KD-tree for variable `ivar`.  The time axis is stored as
+`t_kd = t * time_at` so that the L2 distance in the `(x, y, z, t·time_at)`
+space equals the sum-metric distance:
+
+```
+h_ST = sqrt(h_S^2 + (time_at * dt)^2)
+```
+
+Pass `time_at` equal to `at` from `krige_st_set_st_model` to keep search and
+variogram scales consistent.  `maxdist` set in `krige_st_set_obs` is then a
+radius in km-equivalent (h_ST) units.
 
 ---
 

@@ -39,6 +39,100 @@ subroutine set_seq(array, number_of_values, random)
   end if
 end subroutine
 
+
+subroutine check_duplicate_coordinates_base(ndim, n, coord, has_duplicates, msg)
+  integer, intent(in)           :: ndim, n
+  real,    intent(in)           :: coord(ndim, n)
+  logical, intent(out)          :: has_duplicates
+  character(len=*), intent(out) :: msg
+
+  integer, allocatable :: perm(:)
+  integer :: i, j, k, d, ileft, iright, val_idx
+  logical :: match, is_less
+
+  has_duplicates = .false.
+  if (n <= 1) return
+
+  allocate(perm(n))
+  do i = 1, n
+    perm(i) = i
+  end do
+
+  ileft = n / 2 + 1
+  iright = n
+
+  do
+    if (ileft > 1) then
+      ileft = ileft - 1
+      val_idx = perm(ileft)
+    else
+      val_idx = perm(iright)
+      perm(iright) = perm(1)
+      iright = iright - 1
+      if (iright == 1) then
+        perm(1) = val_idx
+        exit
+      end if
+    end if
+
+    i = ileft
+    j = 2 * ileft
+    do while (j <= iright)
+      if (j < iright) then
+        is_less = .false.
+        do d = 1, ndim
+          if (coord(d, perm(j)) < coord(d, perm(j+1))) then
+            is_less = .true.
+            exit
+          else if (coord(d, perm(j)) > coord(d, perm(j+1))) then
+            exit
+          end if
+        end do
+        if (is_less) j = j + 1
+      end if
+
+      is_less = .false.
+      do d = 1, ndim
+        if (coord(d, val_idx) < coord(d, perm(j))) then
+          is_less = .true.
+          exit
+        else if (coord(d, val_idx) > coord(d, perm(j))) then
+          exit
+        end if
+      end do
+
+      if (is_less) then
+        perm(i) = perm(j)
+        i = j
+        j = j + j
+      else
+        j = iright + 1
+      end if
+    end do
+    perm(i) = val_idx
+  end do
+
+  do i = 1, n - 1
+    match = .true.
+    do k = 1, ndim
+      if (coord(k, perm(i)) /= coord(k, perm(i+1))) then
+        match = .false.
+        exit
+      end if
+    end do
+
+    if (match) then
+      has_duplicates = .true.
+      write(msg, '(A, I0, A, I0, A)') "ERROR: Duplicate coordinate found! Station ", &
+            perm(i), " and Station ", perm(i+1), " share identical coordinates."
+      exit
+    end if
+  end do
+
+  deallocate(perm)
+end subroutine check_duplicate_coordinates_base
+
+
 subroutine random_seed_initialize (key)
   !*****************************************************************************
   !

@@ -29,7 +29,7 @@
 !       cov_tab() auto-dispatches to Level B when struct_tab_ready = .true.
 !
 !     Both levels use piecewise-uniform zones (no log in the hot path):
-!       h_bounds = [0.0, 0.1, 0.5, 3.5]   → 3 zones + implicit zero tail
+!       h_bounds = [0.0, 0.1, 0.5, 3.5]   → 3 zones + model-specific tail
 !       dh       = [1e-5, 1e-4, 1e-3]
 !       entries: 10000+4000+3000 = 17001, ~66 KB, max err < 5e-7
 !==============================================================================
@@ -37,7 +37,8 @@ module variogram
 
   use common,          only: pi, DEG2RAD, EPSLON
   use kriging_err,     only: kriging_error
-  use vgm_func
+  use vgm_func,        only: VGM_NUG, VGM_HOL, corefunc_fn, &
+                             corefunc_has_analytic_tail, vtype_from_str
   implicit none
   private
 
@@ -105,6 +106,7 @@ module variogram
     integer :: tab_n      = 0
     integer :: tab_nzones = 0
     logical :: tab_ready  = .false.
+    logical :: tab_analytic_tail = .false.
 
   contains
     procedure :: build_table => comp_build_table
@@ -137,6 +139,7 @@ module variogram
     integer :: struct_n       = 0
     integer :: struct_nzones  = 0
     logical :: struct_tab_ready = .false.
+    logical :: struct_analytic_tail = .false.
 
   contains
     procedure :: reset         => struct_reset
@@ -305,6 +308,7 @@ contains
     this%tab_nzones = nzones_local
     this%tab_n      = ntab_total
     this%tab_hmax   = hmax
+    this%tab_analytic_tail = corefunc_has_analytic_tail(this%vtype_id)
     call move_alloc(z_bounds, this%tab_zone_bounds)
     call move_alloc(z_inv_dh, this%tab_zone_inv_dh)
     call move_alloc(z_offset, this%tab_zone_offset)
@@ -345,7 +349,14 @@ contains
     real :: res, fi
     integer :: k, i
     if (.not. this%tab_ready) then; res = this%cov_h(h); return; end if
-    if (h >= this%tab_hmax)   then; res = 0.0;            return; end if
+    if (h >= this%tab_hmax) then
+      if (this%tab_analytic_tail) then
+        res = this%cov_h(h)
+      else
+        res = 0.0
+      end if
+      return
+    end if
     if (h <= 0.0)             then; res = this%tab(0);    return; end if
     do k = 1, this%tab_nzones
       if (h < this%tab_zone_bounds(k)) then
@@ -356,7 +367,11 @@ contains
         return
       end if
     end do
-    res = 0.0
+    if (this%tab_analytic_tail) then
+      res = this%cov_h(h)
+    else
+      res = 0.0
+    end if
   end function comp_cov_tab_h
 
   function comp_tostr(this) result(s)
@@ -578,6 +593,11 @@ contains
     this%struct_nzones = nzones_local
     this%struct_n      = ntab_total
     this%struct_hmax   = hmax
+    this%struct_analytic_tail = .false.
+    do iv = 1, this%nstruct
+      this%struct_analytic_tail = this%struct_analytic_tail .or. &
+        corefunc_has_analytic_tail(this%structs(iv)%vtype_id)
+    end do
     call move_alloc(z_bounds, this%struct_zone_bounds)
     call move_alloc(z_inv_dh, this%struct_zone_inv_dh)
     call move_alloc(z_offset, this%struct_zone_offset)
@@ -591,8 +611,15 @@ contains
     real,              intent(in) :: h
     real :: res, fi
     integer :: k, i
-    if (h >= this%struct_hmax) then; res = 0.0;                 return; end if
-    if (h <= 0.0)              then; res = this%struct_tab(0);  return; end if
+    if (h >= this%struct_hmax) then
+      if (this%struct_analytic_tail) then
+        res = this%cov_h(h)
+      else
+        res = 0.0
+      end if
+      return
+    end if
+    if (h <= 0.0)              then; res = this%struct_tab(0);   return; end if
     do k = 1, this%struct_nzones
       if (h < this%struct_zone_bounds(k)) then
         fi = (h - this%struct_zone_bounds(k-1)) * this%struct_zone_inv_dh(k)
@@ -602,7 +629,11 @@ contains
         return
       end if
     end do
-    res = 0.0
+    if (this%struct_analytic_tail) then
+      res = this%cov_h(h)
+    else
+      res = 0.0
+    end if
   end function cov_struct_tab_h
 
 

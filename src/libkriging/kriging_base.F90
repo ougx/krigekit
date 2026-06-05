@@ -534,12 +534,15 @@ contains
   ! set_obs_base -- shared observation setup.
   !============================================================================
   subroutine set_obs_base(self, ivar, coord, value, variance, nmax, maxdist, sk_mean)
+    use utils, only: check_duplicate_coordinates_base
     class(t_kriging_base), intent(inout) :: self
     integer, intent(in)                 :: ivar
     real,    intent(in)                 :: coord(:,:), value(:)
     real,    intent(in), optional       :: variance(:), maxdist, sk_mean
     integer, intent(in), optional       :: nmax
     integer :: i
+    logical :: has_duplicates
+    character(1024) :: msg
     character(len=*), parameter :: subname = "t_kriging_base%set_obs"
 
     if (.not. associated(self%obs)) then
@@ -561,11 +564,15 @@ contains
         return
       end if
     end if
-
     call self%reset_obs(ivar)
 
     associate(obs => self%obs(ivar))
       obs%n = size(value)
+      call check_duplicate_coordinates_base(self%nlag, obs%n, coord, has_duplicates, msg)
+      if (has_duplicates) then
+        call kriging_error(subname, msg)
+        return
+      end if
       allocate(obs%coord, source=coord)
 
       allocate(obs%value(1, 1, obs%n))
@@ -592,13 +599,13 @@ contains
         end if
       end if
 
-      obs%nmax    = huge(0)
-      obs%maxdist = huge(0.0)
-      obs%rotmat  = kriging_identity_rotmat3()
+      obs%nmax          = huge(0)
+      obs%maxdist       = huge(0.0)
+      obs%rotmat        = kriging_identity_rotmat3()
       obs%time_vtype_id = 0
       obs%time_nugget   = 0.0
       obs%time_sill     = 1.0
-      obs%time_at        = 1.0
+      obs%time_at       = 1.0
       if (present(nmax))    obs%nmax    = nmax
       if (present(maxdist)) obs%maxdist = maxdist**2
       if (present(sk_mean)) obs%sk_mean = sk_mean

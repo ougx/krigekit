@@ -167,8 +167,7 @@ _st_set_sim = _status_cfun("krige_st_set_sim", [
 ])
 _st_set_search = _status_cfun("krige_st_set_search", [
     ctypes.c_int64, _c_int,
-    ctypes.c_char_p, _c_double, _c_double, _c_double,
-    _c_double, _c_double, _c_double, _c_double, _c_double,
+    _c_double, _c_double, _c_double, _c_double, _c_double, _c_double,
 ])
 _st_prepare       = _status_cfun("krige_st_prepare",        [ctypes.c_int64])
 _st_reset_vgm     = _status_cfun("krige_st_reset_vgm",     [ctypes.c_int64, _c_int, _c_int])
@@ -382,6 +381,8 @@ class SpaceTimeKriging:
     ):
         """
         Load observations for variable ivar.
+        Duplicate checks include all four coordinate columns, so repeated
+        spatial locations are allowed only at different times.
 
         Parameters
         ----------
@@ -390,7 +391,7 @@ class SpaceTimeKriging:
         value    : (nobs,)   observed values
         variance : (nobs,)   measurement error variance (default: zeros)
         nmax     : max neighbours
-        maxdist  : max 4D search radius in transformed space
+        maxdist  : max search radius in km-equivalent space (same units as h_ST)
         sk_mean  : global mean for simple kriging (unbias=0); default 0
         """
         import sys as _sys
@@ -651,9 +652,6 @@ class SpaceTimeKriging:
     def set_search(
         self,
         ivar: int,
-        time_transform: str = "linear",
-        time_nugget: float = 0.0,
-        time_sill: float = 1.0,
         time_at: float = 1.0,
         anis1: float = 1.0,
         anis2: float = 1.0,
@@ -664,17 +662,14 @@ class SpaceTimeKriging:
         """
         Build ST KD-tree for variable ivar.
 
-        ``time_transform``, ``time_nugget``, ``time_sill``, and ``time_at``
-        control the search time coordinate independently from the variogram
-        model.  Use the same values as ``set_st_model`` when the
-        search neighbourhood should follow the variogram's temporal scale; use
-        different values for a broader or tighter search anisotropy.
+        ``time_at`` scales the time axis to km-equivalent units: the KD-tree
+        coordinate is ``t * time_at``.  This makes the L2 distance in the 4D
+        search space equal to the sum-metric ST distance h_ST = sqrt(h_S^2 +
+        (time_at * dt)^2).  Use the same value as ``set_st_model(at=...)``.
 
         Call after set_obs (and after set_sim for ivar=1 in SGSIM).
         """
         _st_set_search(_h(self._handle), _c_int(ivar),
-                       _normalize_vtype(str(time_transform)).encode(),
-                       _c_double(time_nugget), _c_double(time_sill),
                        _c_double(time_at),
                        _c_double(anis1), _c_double(anis2),
                        _c_double(azimuth), _c_double(dip), _c_double(plunge))
@@ -849,10 +844,10 @@ def spacetime_kriging(
     joint_sills  : list[float]         joint sills (sum-metric only)
     model        : 'sum_metric' or 'product_sum'
     transform    : 'nug', 'sph', 'exp', 'gau', 'pow', 'bsq', 'cir', or 'lin'
-    at           : joint temporal scale
-    time_nugget, time_sill : f(dt) scale for the joint temporal distance
+    at           : joint temporal scale (also used as ``time_at`` for the KD-tree)
+    time_nugget, time_sill : temporal variogram nugget/sill for ``set_vgm_temporal``
     nmax         : max neighbours
-    maxdist      : max 4D search radius in transformed space
+    maxdist      : max search radius in km-equivalent space (h_ST units)
     nthread      : max OMP threads for this call (0 = OMP default)
     ncache       : per-thread hcache slots for this solve; None uses default
 
@@ -873,9 +868,7 @@ def spacetime_kriging(
     if model == "sum_metric":
         k.set_vgm_joint_sills(1, 1, *joint_sills)
     k.set_grid(coord=grid_coord, time=grid_time)
-    k.set_search(ivar=1, time_transform=transform,
-                 time_nugget=time_nugget, time_sill=time_sill,
-                 time_at=at,
+    k.set_search(ivar=1, time_at=at,
                  anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth)
     k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()
@@ -943,9 +936,7 @@ def spacetime_cokriging(
     k.set_grid(coord=grid_coord, time=grid_time)
 
     for i in range(1, nvar + 1):
-        k.set_search(ivar=i, time_transform=transform,
-                     time_nugget=time_nugget, time_sill=time_sill,
-                     time_at=at)
+        k.set_search(ivar=i, time_at=at)
 
     k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()

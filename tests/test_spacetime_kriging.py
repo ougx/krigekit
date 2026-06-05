@@ -89,22 +89,28 @@ def _build_search_transform_probe(obs_coord, obs_value, maxdist=None, nmax=1):
     return k
 
 
-def _estimate_with_search_transform(time_transform, *, time_at=100.0, time_sill=10.0):
-    # The first pair is spatially colocated but temporally distant. The second
-    # pair is spatially offset but contemporaneous. With nmax=2 and equal values
-    # inside each pair, the estimate reveals which pair was selected.
+def _estimate_with_time_at(time_at):
+    # Two pairs of observations, nmax=2.
+    # Pair A: obs 0,1 spatially colocated at (0,0,0) but at t=10,11 (value=10).
+    # Pair B: obs 2,3 spatially offset at (3,0,0) but contemporaneous t=0 (value=20).
+    # Prediction target: (0,0,0) at t=0.
+    #
+    # With small time_at the temporal distance (t*at = 10*at) is small compared
+    # to the spatial offset (3 km), so Pair A is the nearest nmax=2 neighbours
+    # and the estimate is ~10.  With large time_at the temporal distance (1000 km)
+    # dominates, Pair B wins, and the estimate is ~20.
     obs_coord = np.array([
-        [0.0, 0.0, 0.0, 20.0],
-        [0.0, 0.0, 0.0, 21.0],
-        [3.0, 0.0, 0.0, 0.0],
-        [3.1, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 10.0],
+        [0.0, 0.0, 0.0, 11.0],
+        [3.0, 0.0, 0.0,  0.0],
+        [3.1, 0.0, 0.0,  0.0],
         [100.0, 0.0, 0.0, 0.0],
         [0.0, 100.0, 0.0, 0.0],
         [0.0, 0.0, 100.0, 0.0],
     ])
     obs_value = np.array([10.0, 10.0, 20.0, 20.0, -1.0, -2.0, -3.0])
     k = _build_search_transform_probe(obs_coord, obs_value, nmax=2)
-    k.set_search(1, time_transform=time_transform, time_at=time_at, time_sill=time_sill)
+    k.set_search(1, time_at=time_at)
     k.solve()
     est, _ = k.get_results()
     return est[0]
@@ -230,40 +236,45 @@ class TestSumMetricBounded:
 
 
 # ===========================================================================
-# 3. set_search temporal transform
+# 3. set_search time_at parameter
 # ===========================================================================
-class TestSearchTimeTransform:
+class TestSearchTimeAt:
 
-    def test_time_transform_changes_nearest_neighbour(self):
+    def test_time_at_controls_nearest_neighbour(self):
         """
-        set_search() has its own temporal transform. Holding the ST variogram
-        fixed, changing only the search transform must be able to change the
-        nmax=2 neighbourhood selected in transformed 4-D search space.
+        time_at scales the time axis to km-equivalent units: t_kd = t * time_at.
+        With small time_at the temporal distance is negligible → spatially
+        colocated (but temporally offset) neighbours win.
+        With large time_at the temporal distance dominates → contemporaneous
+        (but spatially offset) neighbours win.
         """
-        est_linear = _estimate_with_search_transform("linear")
-        est_bounded = _estimate_with_search_transform("bounded")
+        est_small_at = _estimate_with_time_at(time_at=0.1)   # 10 yr * 0.1 km/yr = 1 km < 3 km
+        est_large_at = _estimate_with_time_at(time_at=100.0)  # 10 yr * 100 km/yr = 1000 km >> 3 km
 
-        assert est_linear == pytest.approx(10.0)
-        assert est_bounded == pytest.approx(20.0)
+        assert est_small_at == pytest.approx(10.0)
+        assert est_large_at == pytest.approx(20.0)
 
     def test_time_at_controls_search_temporal_radius(self):
         """
-        time_at is also search-specific. A larger time_at should bring a
-        temporally distant but spatially colocated observation inside maxdist.
+        time_at determines the temporal contribution to h_ST.  With a small
+        time lag (dt=0.04 yr) and maxdist=5, a larger time_at brings the
+        observation outside maxdist; a smaller time_at keeps it inside.
         """
         obs_coord = np.array([
-            [0.0, 0.0, 0.0, 20.0],
-            [0.0, 0.0, 0.0, 21.0],
+            [0.0, 0.0, 0.0, 0.04],
+            [0.0, 0.0, 0.0, 0.05],
         ])
         obs_value = np.array([10.0, 10.0])
 
+        # time_at=50: t_kd = 0.04*50 = 2 km → dist=2 < maxdist=5 → inside → valid est
         k_inside = _build_search_transform_probe(obs_coord, obs_value, maxdist=5.0, nmax=2)
-        k_inside.set_search(1, time_transform="linear", time_at=100.0, time_sill=10.0)
+        k_inside.set_search(1, time_at=50.0)
         k_inside.solve()
         est_inside, _ = k_inside.get_results()
 
+        # time_at=200: t_kd = 0.04*200 = 8 km → dist=8 > maxdist=5 → outside → NaN
         k_outside = _build_search_transform_probe(obs_coord, obs_value, maxdist=5.0, nmax=2)
-        k_outside.set_search(1, time_transform="linear", time_at=10.0, time_sill=10.0)
+        k_outside.set_search(1, time_at=200.0)
         k_outside.solve()
         est_outside, _ = k_outside.get_results()
 
@@ -272,13 +283,13 @@ class TestSearchTimeTransform:
 
     def test_get_factor_includes_assembled_linear_system(self):
         obs_coord = np.array([
-            [0.0, 0.0, 0.0, 20.0],
-            [0.0, 0.0, 0.0, 21.0],
+            [0.0, 0.0, 0.0, 0.04],
+            [0.0, 0.0, 0.0, 0.05],
         ])
         obs_value = np.array([10.0, 10.0])
 
         k = _build_search_transform_probe(obs_coord, obs_value, nmax=2)
-        k.set_search(1, time_transform="linear", time_at=100.0, time_sill=10.0)
+        k.set_search(1, time_at=100.0)
         k.solve()
 
         f = k.get_factor()

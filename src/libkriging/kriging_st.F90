@@ -10,9 +10,9 @@
 ! nlag=ndim+1 (spatial + 1 for time).  Coord arrays have nlag rows.
 !
 ! Neighbor search uses an nlag-dimensional KD-tree built in set_search.  Time is
-! transformed to a distance-like coordinate with the same transform formula used
-! by the ST variogram, but with search-specific temporal parameters, analogous
-! to how spatial search anisotropy can differ from variogram anisotropy.
+! mapped to a search coordinate by linear scaling: t_kd = t * at.  This keeps
+! the KD-tree metric consistent with the sum-metric ST distance
+! h_ST = sqrt(h_S^2 + (at*dt)^2), because |t1*at - t2*at| = at*|t1-t2|.
 ! The raw native time is always stored in coord(nlag,:); covariance evaluation
 ! extracts coord(1:ndim) for the spatial lag and coord(nlag) for dt.
 !
@@ -32,8 +32,7 @@ module kriging_st
 
   use rotation,         only: calc_rotmat, sub_rotate, rotated_dists
   use variogram_st,     only: vgm_struct_st, ST_MODEL_SUM_METRIC, ST_MODEL_PRODUCT_SUM, &
-                               ST_TRANSFORM_LINEAR, ST_TRANSFORM_BOUNDED, ST_TRANSFORM_POWER, &
-                               f_time_vgm_st
+                               ST_TRANSFORM_LINEAR, ST_TRANSFORM_BOUNDED, ST_TRANSFORM_POWER
   use vgm_func,         only: VGM_NUG, VGM_HOL, VGM_LIN, vtype_from_str
   use kdtree2_module
   use kriging_base
@@ -80,20 +79,19 @@ module kriging_st
 contains
 
   !=============================================================================
-  ! signed_time_coord
+  ! time_search_coord
   !
-  ! Convert native time to the one-dimensional search coordinate.  The magnitude
-  ! uses the same temporal transform formula as vgm_struct_st%f_time(), while
-  ! sign is preserved so KD-tree coordinates remain ordered around the chosen
-  ! time origin.
+  ! Convert native time to the one-dimensional KD-tree search coordinate.
+  ! Linear scaling t * at maps the time axis to km-equivalent units so that
+  ! the L2 distance in the (x,y,z, t*at) search space equals h_ST for the
+  ! sum-metric model.  Monotone and unbounded — no saturation artifacts.
   !=============================================================================
-  pure elemental function signed_time_coord(vtype_id, nugget, sill, at, time) result(ht)
-    integer, intent(in) :: vtype_id
-    real,    intent(in) :: nugget, sill, at, time
+  pure elemental function time_search_coord(at, time) result(ht)
+    real, intent(in) :: at, time
     real :: ht
 
-    ht = sign(f_time_vgm_st(vtype_id, nugget, sill, at, time), time)
-  end function signed_time_coord
+    ht = time * at
+  end function time_search_coord
 
   ! ctx_initialize and ctx_assign_weight replaced by the unified
   ! initialize_ctx and assign_weight_ctx from kriging_base.
@@ -312,28 +310,21 @@ contains
   !=============================================================================
   ! set_search — build nlag-dimensional KD-tree for variable ivar
   !
-  ! Search anisotropy is independent of variogram anisotropy.  Spatial search
-  ! uses the supplied rotation/scaling parameters; temporal search uses the
-  ! same transform formula as vgm_struct_st%f_time(), but with search-specific
-  ! time_vtype/time_nugget/time_sill/time_at parameters.
-  !
-  ! The tree is built on [spatial', h_time], where h_time is the transformed
-  ! signed time coordinate.  maxdist on set_obs then acts as a radius in this
-  ! transformed search space.
+  ! Spatial search anisotropy is independent of variogram anisotropy.
+  ! The time axis is mapped to km-equivalent units via t_kd = t * time_at,
+  ! which is consistent with the sum-metric distance h_ST = sqrt(h_S^2 + (at*dt)^2).
+  ! maxdist on set_obs therefore acts as a radius in km-equivalent space.
   !
   ! If all observations fit within nmax, need_search=.false. and no tree is
   ! built; distances are computed directly in search_neighbors.
   !=============================================================================
-  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, &
-                        time_vtype, time_nugget, time_sill, time_at)
+  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, time_at)
     class(t_kriging_st), intent(inout) :: self
     integer,             intent(in)    :: ivar
     real,    intent(in), optional      :: anis1, anis2, azimuth, dip, plunge
-    real,    intent(in), optional      :: time_nugget, time_sill, time_at
-    character(*), optional, intent(in) :: time_vtype
+    real,    intent(in), optional      :: time_at
 
-    integer :: tv
-    real    :: a1, a2, az, dp, pl, tnug, tsill, ta
+    real    :: a1, a2, az, dp, pl, ta
     real, allocatable :: tcoord(:,:)
 
     if (.not. associated(self%obs)) then
@@ -361,28 +352,15 @@ contains
     az = 0.0
     dp = 0.0
     pl = 0.0
-    tv = ST_TRANSFORM_LINEAR
-    tnug = 0.0
-    tsill = 1.0
-    ta = 1.0
+    ! Use any pre-stored time_at as the default (CAPI pre-sets it before calling us
+    ! to work around gfortran not setting present() through CLASS polymorphic dispatch).
+    ta = self%obs(ivar)%time_at
     if (present(anis1))   a1 = anis1
     if (present(anis2))   a2 = anis2
     if (present(azimuth)) az = azimuth
     if (present(dip))     dp = dip
     if (present(plunge))  pl = plunge
-    if (present(time_vtype))  tv = vtype_from_str(time_vtype)
-    if (present(time_nugget)) tnug = time_nugget
-    if (present(time_sill))   tsill = time_sill
-    if (present(time_at))     ta = time_at
-    if (tv < VGM_NUG .or. tv > VGM_LIN .or. tv == VGM_HOL) then
-      call kriging_error('set_search', &
-        'time_vtype_id must be a monotone vgmfunc id: nug, sph, exp, gau, pow, bsq, cir, or lin.')
-      return
-    end if
-    if (tnug < 0.0 .or. tsill < 0.0) then
-      call kriging_error('set_search', 'time_nugget and time_sill must be non-negative.')
-      return
-    end if
+    if (present(time_at)) ta = time_at
     if (ta <= EPSLON) then
       call kriging_error('set_search', 'time_at must be positive.')
       return
@@ -390,10 +368,7 @@ contains
 
     associate(obs => self%obs(ivar))
       obs%rotmat  = calc_rotmat(az, dp, pl, a1, a2)
-      obs%time_vtype_id = tv
-      obs%time_nugget   = tnug
-      obs%time_sill     = tsill
-      obs%time_at        = ta
+      obs%time_at = ta
       obs%anisotropic_search = (abs(a1-1.0) > EPSLON .or. abs(a2-1.0) > EPSLON) &
                                 .and. self%anisotropic_search
 
@@ -416,7 +391,7 @@ contains
         else
           tcoord(1:self%ndim,:) = obs%coord(1:self%ndim,:)
         end if
-        tcoord(self%nlag,:) = signed_time_coord(tv, tnug, tsill, ta, obs%coord(self%nlag,:))
+        tcoord(self%nlag,:) = time_search_coord(ta, obs%coord(self%nlag,:))
         obs%tree => kdtree2_create(tcoord, sort=.false., rearrange=.true.)
         if (kriging_failed()) return
       end if
@@ -491,9 +466,9 @@ contains
     type(t_kriging_ctx),     intent(inout) :: ctx
     integer,                 intent(in)    :: ivar
 
-    integer                  :: i, nobs, tv, igsim
+    integer                  :: i, nobs, igsim
     real                     :: newloc(self%nlag,1), block_t, block_ht
-    real                     :: tnug, tsill, ta
+    real                     :: ta
     logical, allocatable     :: is_obs(:)
     type(kdtree2_result), allocatable :: results(:)
     character(len=*), parameter :: subname = "t_kriging_st%search_neighbors"
@@ -509,12 +484,9 @@ contains
       maxdist => self%obs(ivar)%maxdist, &
       rotmat  => self%obs(ivar)%rotmat)
 
-      block_t = self%block%coord(self%nlag, iblock)
-      tv      = self%obs(ivar)%time_vtype_id
-      tnug    = self%obs(ivar)%time_nugget
-      tsill   = self%obs(ivar)%time_sill
-      ta      = self%obs(ivar)%time_at
-      block_ht = signed_time_coord(tv, tnug, tsill, ta, block_t)
+      block_t  = self%block%coord(self%nlag, iblock)
+      ta       = self%obs(ivar)%time_at
+      block_ht = time_search_coord(ta, block_t)
       nobs    = self%obs(ivar)%n    ! original obs count (not extended)
 
       !-- Build nlag-dimensional transformed query point
@@ -554,13 +526,11 @@ contains
             if (nnearb > 0) call set_seq(inearb(1:nnearb), nnearb)
             dist(1:nnear) = rotated_dists(rotmat, self%ndim, xloc(1:self%ndim,1), &
                               obsloc(1:self%ndim, 1:nnear)) + &
-                              (signed_time_coord(tv, tnug, tsill, ta, &
-                                 obsloc(self%nlag,1:nnear)) - block_ht)**2
+                              (time_search_coord(ta, obsloc(self%nlag,1:nnear)) - block_ht)**2
             distb(1:nnearb) = rotated_dists(rotmat, self%ndim, &
                                 xloc(1:self%ndim,1), &
                                 self%block%coord(1:self%ndim, 1:nnearb)) + &
-                                (signed_time_coord(tv, tnug, tsill, ta, &
-                                   self%block%coord(self%nlag,1:nnearb)) - block_ht)**2
+                                (time_search_coord(ta, self%block%coord(self%nlag,1:nnearb)) - block_ht)**2
           end if
 
           !-- Apply maxdist filter (nlag-dimensional distance already in dist/distb)
@@ -584,8 +554,7 @@ contains
           call set_seq(inear(1:nnear), nnear)
           dist(1:nnear) = rotated_dists(rotmat, self%ndim, xloc(1:self%ndim,1), &
                             obsloc(1:self%ndim,1:nnear)) + &
-                            (signed_time_coord(tv, tnug, tsill, ta, &
-                               obsloc(self%nlag,1:nnear)) - block_ht)**2
+                            (time_search_coord(ta, obsloc(self%nlag,1:nnear)) - block_ht)**2
         end if
 
         !-- Cross-validation: exclude target from its own neighbourhood

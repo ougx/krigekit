@@ -596,6 +596,7 @@ class _SpatialKriging:
         ivar : int
             Variable index, 1-based.
         coord : ndarray, shape **(nobs, ndim)**
+            Duplicate coordinate tuples within the same variable are rejected.
             Observation coordinates. Rows are points, columns are spatial
             dimensions — standard Python/NumPy convention. The wrapper
             transposes to Fortran's (ndim, nobs) internally.

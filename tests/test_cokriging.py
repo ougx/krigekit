@@ -350,8 +350,11 @@ class TestCoKrigingButte:
             newloc, vgm_spec, std_ck=std_ck)
         e0, v0 = ck(obsloc0, obsloc1, obsval0, obsval1, newloc, vgms=vs, std_ck=std_ck)
         rtol = 1e-3 if vtype == "gau" else 1e-5
+        # Gaussian aniso cases can compare estimates very close to zero, where
+        # tiny factorization/table differences dominate the relative error.
+        e_atol = 5e-5 if vtype == "gau" else 1e-6
         np.testing.assert_allclose(v0, v1[:,0,0], rtol=rtol, atol=1e-6), "Variances do not match"
-        np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=1e-6), "Estimates do not match"
+        np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=e_atol), "Estimates do not match"
 
 
 class TestCoKrigingTextbook:

@@ -41,7 +41,7 @@
 !==============================================================================
 
 ! use analytical covariances otherwise use tabular values
-#define COV_ANALYTICAL
+! #define COV_ANALYTICAL
 #ifdef COV_ANALYTICAL
 #define COV(vgm, lag) vgm%cov_lag(lag)
 #else

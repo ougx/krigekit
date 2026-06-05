@@ -73,6 +73,11 @@ k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
           nmax=15, maxdist=50.0)
 ```
 
+Observation coordinates are checked when `set_obs` is called.  Duplicate
+coordinate tuples within the same variable are rejected because the search tree
+and kriging system require unique observation locations.  Aggregate or remove
+duplicate observations before loading them.
+
 ## Result clipping
 
 Clip estimates to a physically meaningful range with `bounds`:

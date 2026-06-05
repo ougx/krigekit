@@ -17,7 +17,8 @@ contains
   ! corefunc_fn — pure elemental correlation function dispatcher.
   !
   !   rdist     : dimensionless isotropic lag = h / a_major  (in [0, hmax])
-  !   returns   : correlation C(rdist) in [0, 1]
+  !   returns   : correlation C(rdist); most models are in [0, 1],
+  !               while hole-effect oscillates.
   !
   ! The compiler inlines this and may build a jump table for the select case.
   ! Being pure elemental enables SIMD vectorisation over arrays of rdist.
@@ -54,6 +55,19 @@ contains
         res = 0.0
     end select
   end function corefunc_fn
+
+  !-- True for covariance shapes that remain non-zero or can recover past
+  !   hr = 1.0.  Tabular covariance must not use a zero tail for these models.
+  pure elemental function corefunc_has_analytic_tail(vtype_id) result(res)
+    integer, intent(in) :: vtype_id
+    logical :: res
+    select case (vtype_id)
+      case (VGM_EXP, VGM_GAU, VGM_HOL)
+        res = .true.
+      case default
+        res = .false.
+    end select
+  end function corefunc_has_analytic_tail
 
   !-- Map 3-char spec string to vtype_id integer constant.
   function vtype_from_str(vtype) result(id)

@@ -20,7 +20,7 @@
 !   krige_st_set_vgm             — spatial nested structure (mirrors krige_set_vgm)
 !   krige_st_set_vgm_temporal    — temporal nested structure: vtype + nugget/sill/at_k
 !   krige_st_set_vgm_joint_sills — joint sills for sum-metric
-!   krige_st_set_search          — sets search-specific spatial/time anisotropy
+!   krige_st_set_search          — sets search time_at and spatial anisotropy
 !==============================================================================
 module kriging_st_capi
   use, intrinsic :: ieee_arithmetic
@@ -514,27 +514,37 @@ contains
   !=============================================================================
   ! krige_st_set_search — build ST KD-tree for variable ivar
   !=============================================================================
-  integer(c_int) function krige_st_set_search(handle, ivar, time_vtype, &
-      time_nugget, time_sill, time_at, anis1, anis2, azimuth, dip, plunge) &
+  integer(c_int) function krige_st_set_search(handle, ivar, &
+      time_at, anis1, anis2, azimuth, dip, plunge) &
       bind(C, name='krige_st_set_search') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: ivar
-    character(kind=c_char), intent(in)     :: time_vtype(*)
-    real(c_double),      intent(in), value :: time_nugget, time_sill, time_at
+    real(c_double),      intent(in), value :: time_at
     real(c_double),      intent(in), value :: anis1, anis2, azimuth, dip, plunge
     type(t_kriging_st), pointer :: obj
+    real :: f_time_at, f_anis1, f_anis2, f_azimuth, f_dip, f_plunge
     call kriging_clear_error()
     call get_obj(handle, obj)
     if (kriging_failed()) then
       ierr = int(kriging_ierr(), c_int)
       return
     end if
+    ! Convert c_double → default real into local variables BEFORE passing.
+    ! gfortran does NOT set the OPTIONAL presence flag for temporary expressions
+    ! like real(time_at); a named variable is required.
+    f_anis1   = real(anis1)
+    f_anis2   = real(anis2)
+    f_azimuth = real(azimuth)
+    f_dip     = real(dip)
+    f_plunge  = real(plunge)
+    ! Pre-set time_at on obs BEFORE calling set_search.  set_search reads
+    ! obs%time_at when present(time_at) fails (gfortran CLASS polymorphism
+    ! does not set the presence flag for optional arguments), so this ensures
+    ! the correct value is used for both the KD-tree build and the search.
+    obj%obs(int(ivar))%time_at = real(time_at)
     call obj%set_search(int(ivar), &
-      time_vtype=c2fstr(time_vtype), &
-      time_nugget=real(time_nugget), time_sill=real(time_sill), &
-      time_at=real(time_at), &
-      anis1=real(anis1), anis2=real(anis2), &
-      azimuth=real(azimuth), dip=real(dip), plunge=real(plunge))
+      anis1=f_anis1, anis2=f_anis2, &
+      azimuth=f_azimuth, dip=f_dip, plunge=f_plunge)
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_search
 
