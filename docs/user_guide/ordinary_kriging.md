@@ -23,6 +23,12 @@ est, var = ordinary_kriging(
 # est.shape → (441,)   var.shape → (441,)
 ```
 
+```{plot}
+
+x = np.linspace(0, 2 * np.pi, 100)
+plt.plot(x, np.sin(x))
+```
+
 ## Simple kriging
 
 Simple kriging (SK) treats the mean as known rather than estimating it from
@@ -83,9 +89,55 @@ When `sector_search=True` is passed to `set_search`, the search space is divided
 
 Under sector search, `nmax` (set in `set_obs`) acts as a limit **per sector** rather than a global limit. The search selects up to `nmax` closest neighbours from each quadrant/octant. This results in a maximum of `4 * nmax` neighbours in 2D, or `8 * nmax` in 3D/ST, ensuring a balanced spatial distribution around the estimation point.
 
+#### Comparison example
+
+The figure below shows a comparison between standard search and sector search. The target location is at the origin `(0, 0)`. There is a dense cluster of observations in Quadrant 1, and only single observations in Quadrants 2, 3, and 4.
+- **Standard search (nmax=4)** selects the four closest neighbours, which all fall within the Quadrant 1 cluster. The other directions are not represented.
+- **Sector search (nmax=1 per quadrant)** selects the closest neighbour from each quadrant, ensuring that all directions are represented in the kriging weights.
+
+![Sector Search Comparison](../_static/sector_search_comparison.png)
+
+Here is the Python script to run and compare this scenario:
+
 ```python
-# Enable quadrant/octant sector search
-k.set_search(ivar=1, sector_search=True)
+import numpy as np
+from pykriging import Kriging
+
+# Target point at the origin
+target = np.array([[0.0, 0.0]])
+
+# Observations: a dense cluster in Q1, and sparse points in Q2, Q3, Q4
+obs_coord = np.array([
+    [0.1, 0.1], [0.12, 0.15], [0.15, 0.08], [0.2, 0.18], [0.25, 0.22], # Q1
+    [-2.0, 2.0],                                                       # Q2
+    [-2.0, -2.0],                                                      # Q3
+    [2.0, -2.0]                                                        # Q4
+])
+obs_value = np.array([10.0, 10.5, 9.8, 10.2, 10.1, 20.0, 15.0, 25.0])
+
+# 1. Standard search (selects 4 closest, all in Q1)
+k_std = Kriging(ndim=2, nvar=1, store_weight=True)
+k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=4)
+k_std.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
+k_std.set_grid(coord=target)
+k_std.set_search(ivar=1, sector_search=False)
+k_std.solve()
+
+w_std = k_std.get_weights()
+print("Standard selected indices:", w_std["inear"][0, 0, :w_std["nnear"][0, 0]])
+# Output: [1, 2, 3, 4]  (all indices from the Q1 cluster)
+
+# 2. Sector search (selects up to 1 per quadrant)
+k_sec = Kriging(ndim=2, nvar=1, store_weight=True)
+k_sec.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+k_sec.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
+k_sec.set_grid(coord=target)
+k_sec.set_search(ivar=1, sector_search=True)
+k_sec.solve()
+
+w_sec = k_sec.get_weights()
+print("Sector selected indices:", w_sec["inear"][0, 0, :w_sec["nnear"][0, 0]])
+# Output: [1, 6, 7, 8]  (one index from each quadrant)
 ```
 
 Observation coordinates are checked when `set_obs` is called.  Duplicate

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 # Project metadata
 # ---------------------------------------------------------------------------
 project   = "pyKriging"
-copyright = "2025, Michael Ou"
+copyright = "2026, Michael Ou, mou@sspa.com"
 author    = "Michael Ou"
 release   = "0.1.0"
 
@@ -25,6 +25,7 @@ extensions = [
     "sphinx.ext.intersphinx",   # Cross-links to numpy, python docs
     "sphinx_copybutton",        # Copy button on code blocks
     "sphinx_design",            # Grid cards, tabs, badges on index page
+    "sphinx_gallery.gen_gallery",
 ]
 
 # ---------------------------------------------------------------------------
@@ -92,3 +93,16 @@ napoleon_numpy_docstring   = True
 napoleon_google_docstring  = False
 napoleon_use_rtype         = False
 napoleon_use_param         = True
+
+sphinx_gallery_conf = {
+    "examples_dirs": "../examples",
+    "gallery_dirs": "auto_examples",
+    "filename_pattern": r".*\.py",
+}
+
+plot_pre_code = """
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from pykriging import *
+"""

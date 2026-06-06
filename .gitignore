@@ -78,3 +78,5 @@ tests_py/log
 src/pykriging/kriging.exp
 src/pykriging/kriging.pdb
 /scratch
+/docs/auto_examples
+docs/sg_execution_times.rst

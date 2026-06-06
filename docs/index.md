@@ -54,6 +54,7 @@ no JIT compilation step.
 
 installation
 quickstart
+auto_examples/index
 array_conventions
 variogram_models
 user_guide/index
