@@ -1,4 +1,4 @@
-!==============================================================================
+﻿!==============================================================================
 ! Module: kriging
 !
 ! Purpose
@@ -40,13 +40,7 @@
 !   the linear system on every realization.
 !==============================================================================
 
-! use analytical covariances otherwise use tabular values
-! #define COV_ANALYTICAL
-#ifdef COV_ANALYTICAL
-#define COV(vgm, lag) vgm%cov_lag(lag)
-#else
-#define COV(vgm, lag) vgm%cov_tab(lag)
-#endif
+#include "cov_dispatch.fh"
 module kriging
   use iso_fortran_env, only: input_unit, error_unit, output_unit
   use iso_c_binding
@@ -409,23 +403,18 @@ contains
       if (kriging_failed()) return
     end if
     self%vgm%ndim     = self%ndim
-    !!!! no tabular for varying vgm, table storage become too big for entire grid
+    !!!! table is skipped for varying-vgm because storing one table per grid block
+    !      is too expensive for large number of blocks
     !-- Build piecewise lookup tables now that ndim and all structures are final.
-    !   Level B (build_struct_table) is tried first: 1 aniso_h + 1 table lookup
-    !   regardless of nstruct.  Requires all non-nugget structures to share the
-    !   same anisotropy matrix.  If they don't, fall back to Level A
-    !   (build_all_tables): one table per component, always valid.
+    !   build_table tries Level B first (1 aniso_h + 1 lookup, all nstruct),
+    !   falling back to Level A (one table per component) when needed.
     if (.not. self%varying_vgm) then
       do ib = 1, merge(self%block%n, 1, self%varying_vgm)
         do iv = 1, self%nvar
           do jv = iv, self%nvar
-            call self%vgm(iv, jv, ib)%build_struct_table( &
+            call self%vgm(iv, jv, ib)%build_table( &
               h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
-            if (kriging_failed()) then
-              call kriging_clear_error()
-              call self%vgm(iv, jv, ib)%build_all_tables( &
-                h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
-            end if
+            if (kriging_failed()) return
           end do
         end do
       end do

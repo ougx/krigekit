@@ -15,6 +15,7 @@
 #   make OPT=debug                # debug build
 #   make HCACHE=0                 # disable multi-slot factor cache for testing
 #   make HCACHE=1                 # one-slot hcache for cache-overhead comparison
+#   make USE_COV_TABLE=0          # use analytic covariance instead of lookup table (debug)
 #   make libkriging               # shared library only
 #   make sparks                   # executable only
 #   make clean                    # remove all compiled outputs
@@ -103,13 +104,20 @@ endif
 # Build mode
 # ---------------------------------------------------------------------------
 OPT ?= release
-# Set OPENMP=0 to disable OpenMP parallelisation (e.g. make OPENMP=0)
+
+# ---------------------------------------------------------------------------
+# Preprocessor feature flags (all default to ON for production builds)
+# ---------------------------------------------------------------------------
+# OPENMP        — enable OpenMP shared-memory parallelism (0 to disable)
 OPENMP ?= 1
-# Compile-time default for the bounded per-thread multi-slot factor cache.
-# HCACHE=0 disables hcache entirely; HCACHE=1 gives a one-slot hcache for
-# overhead comparison; bare `make` keeps the normal 64-slot default.
-# The single-entry ctx%cache and optional persistent pf cache remain available.
+# HCACHE        — multi-slot per-thread factor cache size
+#                 0 = disabled entirely; 1 = single slot (overhead comparison);
+#                 64 (default) = normal production cache.
 HCACHE ?= 64
+# USE_COV_TABLE — use lookup-table covariance evaluation (faster)
+#                 0 = fall back to analytic evaluation (useful for debugging
+#                     table accuracy or when tables cannot be built).
+USE_COV_TABLE ?= 1
 
 # ---------------------------------------------------------------------------
 # Object-file directories
@@ -175,8 +183,21 @@ else
     endif
 endif
 
+COV_FLAGS :=
+ifeq ($(USE_COV_TABLE),1)
+    ifeq ($(FC),gfortran)
+        COV_FLAGS := -DUSE_COV_TABLE
+    else ifneq ($(filter $(FC),ifx ifort),)
+        ifeq ($(WINDOWS),1)
+            COV_FLAGS := /DUSE_COV_TABLE
+        else
+            COV_FLAGS := -DUSE_COV_TABLE
+        endif
+    endif
+endif
+
 ifeq ($(FC),gfortran)
-  FFLAGS         := -fdefault-real-8 -cpp -fbacktrace -ffree-line-length-none $(OMP_FLAGS) $(CACHE_FLAGS)
+  FFLAGS         := -fdefault-real-8 -cpp -fbacktrace -ffree-line-length-none $(OMP_FLAGS) $(CACHE_FLAGS) $(COV_FLAGS)
   FFLAGS_release := -O2 $(FFLAGS)
   FFLAGS_debug   := -O0 -g -Wall -fcheck=all $(FFLAGS) -DDEBUG
   LIB_SHARED     := -shared -fPIC
@@ -195,15 +216,18 @@ else ifneq ($(filter $(FC),ifx ifort),)
   ifeq ($(WINDOWS),1)
     export MSYS2_ARG_CONV_EXCL := *
     export MSYS_NO_PATHCONV    := 1
-    FFLAGS         := /real-size:64 /traceback /fpp /nologo $(OMP_FLAGS) $(CACHE_FLAGS) /heap-arrays:10
+    FFLAGS         := /real-size:64 /traceback /fpp /nologo $(OMP_FLAGS) $(CACHE_FLAGS) $(COV_FLAGS) /heap-arrays:10
     FFLAGS_release := /O2 $(FFLAGS)
     FFLAGS_debug   := /Od /debug:full /warn:all /check:all $(FFLAGS) /DDEBUG
+    # /dll = produce DLL; /libs:static = embed Intel Fortran runtime (avoids
+    # redistributable dependency).  Note: libiomp5md.dll (OpenMP) is still
+    # dynamically linked when /Qopenmp is active regardless of /libs:static.
     LIB_SHARED     := /dll /libs:static
     LIB_MODF       := /module:$(LIB_BDIR) /I$(LIB_BDIR)
     SPK_MODF       := /module:$(SPK_BDIR) /I$(SPK_BDIR)
     DLL_EXTRA      := -link /def:$(DEF_FILE)
   else
-    FFLAGS         := -real-size:64 -traceback -fpp -nologo $(OMP_FLAGS) $(CACHE_FLAGS) -heap-arrays:10
+    FFLAGS         := -real-size:64 -traceback -fpp -nologo $(OMP_FLAGS) $(CACHE_FLAGS) $(COV_FLAGS) -heap-arrays:10
     FFLAGS_release := -O2 $(FFLAGS)
     FFLAGS_debug   := -O0 -g -warn all -check all $(FFLAGS) -DDEBUG
     LIB_SHARED     := -shared -fPIC
@@ -342,15 +366,18 @@ endif
 # info — print build settings
 # ---------------------------------------------------------------------------
 info:
-	@echo 'Compiler :' $(FC)
-	@echo 'Path     :' $(_FC_FOUND)
-	@echo 'Mode     :' $(OPT)
-	@echo 'OpenMP   :' $(OPENMP)
-	@echo 'OMP_FLAGS:' $(OMP_FLAGS)
-	@echo 'HCACHE   :' $(HCACHE)
-	@echo 'CACHE_FLAGS:' $(CACHE_FLAGS)
-	@echo 'Platform :' $(if $(WINDOWS),Windows,Linux/macOS)
-	@echo 'DLL      :' $(DLL_FILE)
-	@echo 'EXE      :' $(EXE_FILE)
-	@echo 'FFLAGS   :' $(FFLAGS)
-	@echo 'LIB_MODF :' $(LIB_MODF)
+	@echo '--- Build settings ---'
+	@echo 'Compiler     :' $(FC)
+	@echo 'Path         :' $(_FC_FOUND)
+	@echo 'Mode         :' $(OPT)
+	@echo 'Platform     :' $(if $(WINDOWS),Windows,Linux/macOS)
+	@echo '--- Preprocessor flags ---'
+	@echo 'OPENMP       :' $(OPENMP)   '  →' $(OMP_FLAGS)
+	@echo 'HCACHE       :' $(HCACHE)   '  →' $(CACHE_FLAGS)
+	@echo 'USE_COV_TABLE:' $(USE_COV_TABLE) '  →' $(COV_FLAGS)
+	@echo '--- Output ---'
+	@echo 'DLL          :' $(DLL_FILE)
+	@echo 'EXE          :' $(EXE_FILE)
+	@echo '--- Full flags ---'
+	@echo 'FFLAGS       :' $(FFLAGS)
+	@echo 'LIB_MODF     :' $(LIB_MODF)

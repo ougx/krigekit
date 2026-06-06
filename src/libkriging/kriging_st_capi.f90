@@ -11,11 +11,11 @@
 ! parameter so ctypes can pass raw pointers without hidden descriptors.
 !
 ! Entry points vs. the base spatial C API:
-!   krige_st_set_obs          — coord(4,nobs): rows 1:3 spatial, row 4 time
+!   krige_st_set_obs          — coord(ndim+1,nobs): rows 1:ndim spatial, row ndim+1 time
 !   krige_st_update_obs_value — replace values in-place for old-weight reuse
 !   krige_st_set_grid         — C API accepts coord(3,n) + time(n)
 !   krige_st_set_grid_block   — same 3D coord + time API for block centres
-!   krige_st_set_grad         — coord1/coord2(4,ngrad), including time
+!   krige_st_set_grad         — coord1/coord2(ndim+1,ngrad), including time
 !   krige_st_set_st_model        — sets global ST model parameters (strings for model/transform)
 !   krige_st_set_vgm             — spatial nested structure (mirrors krige_set_vgm)
 !   krige_st_set_vgm_temporal    — temporal nested structure: vtype + nugget/sill/at_k
@@ -168,15 +168,15 @@ contains
 
   !=============================================================================
   ! krige_st_set_obs
-  !   coord   : [4, nobs]  rows 1:3 = spatial (x,y,z), row 4 = native time
+  !   coord   : [ndim+1, nobs]  rows 1:ndim = spatial, row ndim+1 = native time
   !   sk_mean : global mean for simple kriging (unbias=0)
   !=============================================================================
-  integer(c_int) function krige_st_set_obs(handle, ivar, nobs, &
+  integer(c_int) function krige_st_set_obs(handle, ivar, nobs, ndim, &
       coord, value, variance, nmax, maxdist, sk_mean) &
       bind(C, name='krige_st_set_obs') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
-    integer(c_int),      intent(in), value :: ivar, nobs, nmax
-    real(c_double),      intent(in)        :: coord(4, nobs)
+    integer(c_int),      intent(in), value :: ivar, nobs, ndim, nmax
+    real(c_double),      intent(in)        :: coord(ndim+1, nobs)
     real(c_double),      intent(in)        :: value(nobs)
     real(c_double),      intent(in)        :: variance(nobs)
     real(c_double),      intent(in), value :: maxdist, sk_mean
@@ -239,20 +239,20 @@ contains
   ! Register ST gradient observation pairs.  coord1/coord2 are full ST endpoint
   ! coordinates: rows 1:3 = spatial, row 4 = native time.
   !=============================================================================
-  integer(c_int) function krige_st_set_grad(handle, ivar, ngrad, coord1, coord2, &
+  integer(c_int) function krige_st_set_grad(handle, ivar, ngrad, ndim, coord1, coord2, &
       grad_val, variance, ndrift_c, drift_ext) &
       bind(C, name='krige_st_set_grad') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
-    integer(c_int),      intent(in), value :: ivar, ngrad, ndrift_c
-    real(c_double),      intent(in) :: coord1(4, max(ngrad,1))
-    real(c_double),      intent(in) :: coord2(4, max(ngrad,1))
+    integer(c_int),      intent(in), value :: ivar, ngrad, ndim, ndrift_c
+    real(c_double),      intent(in) :: coord1(ndim+1, max(ngrad,1))
+    real(c_double),      intent(in) :: coord2(ndim+1, max(ngrad,1))
     real(c_double),      intent(in) :: grad_val(max(ngrad,1))
     real(c_double),      intent(in) :: variance(max(ngrad,1))
     real(c_double),      intent(in) :: drift_ext(max(ndrift_c,1), max(ngrad,1))
 
     type(t_kriging_st), pointer :: obj
-    real :: c1(4, max(ngrad,1)), c2(4, max(ngrad,1))
+    real :: c1(ndim+1, max(ngrad,1)), c2(ndim+1, max(ngrad,1))
     real :: gv(max(ngrad,1)), gvar(max(ngrad,1))
 
     call kriging_clear_error()

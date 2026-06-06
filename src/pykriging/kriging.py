@@ -382,14 +382,9 @@ def _check(ierr: int, call_name: str) -> None:
 # Main Python class
 # ---------------------------------------------------------------------------
 
-class _SpatialKriging:
+class Kriging:
     """
     Python interface to the Fortran t_kriging spatial kriging/simulation engine.
-
-    Do not instantiate directly — use the :func:`Kriging` factory instead::
-
-        k = Kriging(ndim=2, nvar=1)           # spatial (default)
-        k = Kriging(st=True, nvar=1)          # space-time
 
     Array convention
     ----------------
@@ -1098,7 +1093,7 @@ class _SpatialKriging:
          """
          Build the KD-tree and configure the search ellipse for variable ``ivar``.
          Call once per variable after :meth:`set_obs` (and :meth:`set_sim` for SGSIM).
- 
+
          Parameters
          ----------
          ivar : int
@@ -1402,6 +1397,28 @@ class _SpatialKriging:
                 out[f'var_v{iv+1}'] = var_diag[:, iv]
 
         return out
+
+    def get_result_df(self) -> "pd.DataFrame":
+        """Return all results as a :class:`pandas.DataFrame`.
+
+        Wraps :meth:`get_result_array`; column names and field descriptions are
+        identical to those documented there.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per block; columns match the fields of the structured array
+            returned by :meth:`get_result_array`.
+
+        Example
+        -------
+        >>> k.solve()
+        >>> df = k.get_result_df()
+        >>> df.columns.tolist()
+        ['x', 'y', 'estimate', 'variance']
+        """
+        import pandas as pd
+        return pd.DataFrame(self.get_result_array())
 
     def get_factor(self) -> dict:
         """Return the persistent LHS factorization cached after the last :meth:`solve`.
@@ -1809,114 +1826,6 @@ class _SpatialKriging:
     def __str__(self):
         return self.get_info()
 
-# ---------------------------------------------------------------------------
-# Unified entry point
-# ---------------------------------------------------------------------------
-
-# Parameters that exist only in _SpatialKriging and have no ST equivalent.
-_SPATIAL_ONLY_PARAMS = {"ndim", "varying_vgm", "std_ck", "pf_cache"}
-_SPATIAL_ONLY_DEFAULTS = {"ndim": 2, "varying_vgm": False, "std_ck": False, "pf_cache": False}
-
-
-def Kriging(st: bool = False, **kwargs):
-    """
-    Create a kriging object — spatial or space-time.
-
-    This is the primary entry point for both backends.  Pass ``st=True`` to
-    obtain a :class:`SpaceTimeKriging` instance; omit it (or ``st=False``) for
-    ordinary spatial kriging (:class:`_SpatialKriging`).
-
-    Parameters
-    ----------
-    st : bool, default False
-        ``False`` — spatial kriging (:class:`_SpatialKriging`).
-        ``True``  — space-time kriging (:class:`SpaceTimeKriging`).
-    **kwargs
-        Forwarded verbatim to the chosen constructor.
-
-        Spatial-only parameters (``ndim``, ``varying_vgm``, ``std_ck``,
-        ``pf_cache``) are silently removed when ``st=True``; a
-        :class:`UserWarning` is emitted for any that were supplied with a
-        non-default value so they are not silently ignored.
-
-    Returns
-    -------
-    _SpatialKriging
-        When ``st=False``.  Full set of methods: :meth:`~_SpatialKriging.set_obs`,
-        :meth:`~_SpatialKriging.set_vgm`, :meth:`~_SpatialKriging.set_grid`,
-        :meth:`~_SpatialKriging.set_search`, :meth:`~_SpatialKriging.solve`,
-        :meth:`~_SpatialKriging.get_results`, and more.
-    SpaceTimeKriging
-        When ``st=True``.  Same core methods plus
-        :meth:`~SpaceTimeKriging.set_st_model`,
-        :meth:`~SpaceTimeKriging.set_vgm_temporal`, and
-        :meth:`~SpaceTimeKriging.set_vgm_joint_sills`.
-        :meth:`~SpaceTimeKriging.set_grid` requires an extra ``time=`` argument.
-        :meth:`~SpaceTimeKriging.set_search` requires extra ``time_*`` arguments.
-
-    Notes
-    -----
-    *Factory, not a class*: ``Kriging`` is a function that returns one of two
-    concrete types.  Use ``isinstance(k, _SpatialKriging)`` or
-    ``isinstance(k, SpaceTimeKriging)`` for type checks.
-
-    *Output shape*: :meth:`get_results` shapes are consistent within each
-    backend but differ when ``nsim > 1``:
-
-    * spatial  — estimate ``(nblocks, nvar, nsim)`` squeezed to ``(nblocks,)``
-      for ``nvar=1, nsim=1``.
-    * ST       — estimate ``(nsim, nblocks)`` squeezed to ``(nblocks,)`` for
-      ``nsim=1``.
-
-    Examples
-    --------
-    Spatial ordinary kriging::
-
-        k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=20)
-        k.set_grid(coord=grid_coord)
-        k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=500)
-        k.set_search(ivar=1)
-        k.solve()
-        est, var = k.get_results()
-
-    Space-time ordinary kriging::
-
-        k = Kriging(st=True, nvar=1)
-        k.set_st_model(model='sum_metric', transform='bounded', at=5.0)
-        k.set_obs(ivar=1, coord=obs_coord4, value=obs_value, nmax=30)
-        k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=0.8, a_major=1000)
-        k.set_vgm_temporal(ivar=1, jvar=1, vtype="exp", sill=0.6, at_k=10.0)
-        k.set_vgm_joint_sills(1, 1, 0.4)
-        k.set_grid(coord=grid_coord, time=grid_time)
-        k.set_search(ivar=1)
-        k.solve()
-        est, var = k.get_results()
-    """
-    if st:
-        # Warn about any spatial-only params passed with a non-default value
-        non_default = {
-            k: v for k, v in kwargs.items()
-            if k in _SPATIAL_ONLY_PARAMS and v != _SPATIAL_ONLY_DEFAULTS.get(k)
-        }
-        if non_default:
-            import warnings
-            warnings.warn(
-                "Kriging(st=True) ignores spatial-only parameters: "
-                + ", ".join(f"{k}={v!r}" for k, v in non_default.items()),
-                UserWarning,
-                stacklevel=2,
-            )
-        for key in _SPATIAL_ONLY_PARAMS:
-            kwargs.pop(key, None)
-        try:
-            from pykriging.kriging_st import SpaceTimeKriging
-        except ImportError:
-            from kriging_st import SpaceTimeKriging  # type: ignore[no-redef]
-        return SpaceTimeKriging(**kwargs)
-    else:
-        return _SpatialKriging(**kwargs)
-
 
 # ---------------------------------------------------------------------------
 # Convenience functions
@@ -1984,7 +1893,7 @@ def ordinary_kriging(
     if nmax is None:
         nmax = len(obs_coord) + len(grid_coord)
     ndim = obs_coord.shape[1]   # (nobs, ndim) -> ndim is axis 1
-    k = _SpatialKriging(ndim=ndim, nvar=1)
+    k = Kriging(ndim=ndim, nvar=1)
     k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
               nmax=nmax, maxdist=maxdist)
     k.set_grid(coord=grid_coord, rangescale=rangescale, localnugget=localnugget)
@@ -2055,7 +1964,7 @@ def cokriging(
     ndim = obs_coords[0].shape[1]   # (nobs, ndim) -> ndim is axis 1
     if nmax is None:
         nmax = max([len(obs_coord) for obs_coord in obs_coords]) + len(grid_coord)
-    k = _SpatialKriging(ndim=ndim, nvar=nvar, std_ck=std_ck)
+    k = Kriging(ndim=ndim, nvar=nvar, std_ck=std_ck)
 
     for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
         k.set_obs(ivar=i, coord=coord, value=value, nmax=nmax)
@@ -2124,7 +2033,7 @@ def sequential_gaussian_simulation(
     if nmax is None:
         nmax = len(obs_coord) + len(grid_coord)
 
-    k = _SpatialKriging(ndim=ndim, nvar=1, nsim=nsim, seed=seed)
+    k = Kriging(ndim=ndim, nvar=1, nsim=nsim, seed=seed)
     k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=nmax)
     k.set_grid(coord=grid_coord, rangescale=rangescale, localnugget=localnugget)
     for spec in ([vgm_spec] if isinstance(vgm_spec, dict) else list(vgm_spec)):

@@ -119,8 +119,8 @@ _st_set_st_model = _status_cfun("krige_st_set_st_model", [
 ])
 _st_set_obs = _status_cfun("krige_st_set_obs", [
     ctypes.c_int64,
-    _c_int, _c_int,                # ivar, nobs
-    _ptr_dbl, _ptr_dbl, _ptr_dbl,  # coord[4,nobs], value[nobs], variance[nobs]
+    _c_int, _c_int, _c_int,        # ivar, nobs, ndim
+    _ptr_dbl, _ptr_dbl, _ptr_dbl,  # coord[ndim+1,nobs], value[nobs], variance[nobs]
     _c_int, _c_double, _c_double,  # nmax, maxdist, sk_mean
 ])
 _st_update_obs_value = _status_cfun("krige_st_update_obs_value", [
@@ -131,8 +131,8 @@ _st_set_obs_drift = _status_cfun("krige_st_set_obs_drift", [
 ])
 _st_set_grad = _status_cfun("krige_st_set_grad", [
     ctypes.c_int64,
-    _c_int, _c_int,                      # ivar, ngrad
-    _ptr_dbl, _ptr_dbl,                  # coord1[4,ngrad], coord2[4,ngrad]
+    _c_int, _c_int, _c_int,              # ivar, ngrad, ndim
+    _ptr_dbl, _ptr_dbl,                  # coord1[ndim+1,ngrad], coord2[ndim+1,ngrad]
     _ptr_dbl, _ptr_dbl,                  # grad_val[ngrad], variance[ngrad]
     _c_int, _ptr_dbl,                    # ndrift_c, drift_ext[ndrift,ngrad]
 ])
@@ -224,18 +224,22 @@ def _farray(a, dtype=np.float64):
 def _fempty(shape, dtype=np.float64):
     return np.empty(shape, dtype=dtype, order="F")
 
-def _coord3_to_fortran(coord: np.ndarray) -> np.ndarray:
-    """(nobs, 3) → Fortran (3, nobs)."""
+def _coordS_to_fortran(coord: np.ndarray) -> np.ndarray:
+    """(nobs, ndim) → Fortran (ndim, nobs); ndim must be 1, 2, or 3 (spatial only)."""
     a = np.asarray(coord, dtype=np.float64)
-    assert a.ndim == 2 and a.shape[1] == 3, \
-        f"coord must be (nobs, 3), got {a.shape}"
+    if a.ndim != 2 or a.shape[1] not in (1, 2, 3):
+        raise ValueError(
+            f"coord must be (nobs, ndim) with ndim=1, 2, or 3, got {a.shape}"
+        )
     return np.asfortranarray(a.T)
 
-def _coord4_to_fortran(coord: np.ndarray) -> np.ndarray:
-    """(n, 4) -> Fortran (4, n), with column 3 as native time."""
+def _coordST_to_fortran(coord: np.ndarray) -> np.ndarray:
+    """(n, ndim+1) → Fortran (ndim+1, n); ndim must be 1, 2, or 3, last column is time."""
     a = np.asarray(coord, dtype=np.float64)
-    if a.ndim != 2 or a.shape[1] != 4:
-        raise ValueError(f"coord must be (n, 4) [x,y,z,t], got {a.shape}")
+    if a.ndim != 2 or a.shape[1] not in (2, 3, 4):
+        raise ValueError(
+            f"coord must be (n, ndim+1) with ndim=1, 2, or 3 [x[,y[,z]],t], got {a.shape}"
+        )
     return np.asfortranarray(a.T)
 
 def _dptr(a):
@@ -274,15 +278,17 @@ class SpaceTimeKriging:
 
     Coordinate convention
     ---------------------
-    Observation coord arrays use **(nobs, 4)** shape — columns 0:3 are x,y,z
-    and column 3 is time.  Grid/block arrays still use (ngrid, 3) + time separately
-    until set_grid is updated.
+    Observation coord arrays use **(nobs, ndim+1)** shape — the first ``ndim``
+    columns are spatial (x, y [, z]) and the last column is time.  ``ndim`` may
+    be 2 (x, y, t) or 3 (x, y, z, t) and is inferred from the first
+    :meth:`set_obs` call.  :meth:`set_grid` accepts either the same combined
+    ``(ngrid, ndim+1)`` format or split ``(ngrid, ndim)`` + ``time`` arrays.
 
     Typical workflow (single variable, sum-metric)
     -----------------------------------------------
     >>> k = SpaceTimeKriging(nvar=1)
     >>> k.set_st_model(model='sum_metric', transform='bounded', at=5.0)
-    >>> k.set_obs(ivar=1, coord=obs_coord4, value=obs_value,
+    >>> k.set_obs(ivar=1, coord=obs_coord_st, value=obs_value,
     ...           nmax=30, maxdist=5000)
     >>> k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0, sill=0.8, a_major=1000, a_minor1=500, a_minor2=200)
     >>> k.set_vgm_temporal(ivar=1, jvar=1, spec="exp 0 0.6 10.0")
@@ -338,6 +344,7 @@ class SpaceTimeKriging:
         self.ndrift = ndrift
         self.nsim   = nsim
         self.verbose = verbose
+        self.ndim   = None   # set on first set_obs call (2 or 3)
         self._nobs = [0 for _ in range(nvar)]
 
     # ------------------------------------------------------------------
@@ -357,14 +364,16 @@ class SpaceTimeKriging:
         ----------
         model     : 'sum_metric' or 'product_sum'
         transform : 'nug' | 'sph' | 'exp' | 'gau' | 'pow' | 'bsq' | 'cir' | 'lin'
-                    Controls f(dt) used in the joint ST distance.  Aliases:
-                    'linear' -> 'lin', 'bounded' -> 'exp', 'power' -> 'pow'.
-        at        : joint temporal scale (same time units as observations)
-        time_nugget, time_sill
+                    Controls f(dt) used in the joint ST distance for sum_metric model.
+                    Aliases: 'linear' -> 'lin', 'bounded' -> 'exp', 'power' -> 'pow'.
+        at        : joint temporal scale (unit is [L/T] as observations)
+        time_nugget, time_sill for sum_metric model
                   : f(dt) = nugget + sill * (1 - corefunc(|dt| / at)) for
                     nonzero dt; f(0) is always 0.
         k_ps      : product-sum coefficient k (model='product_sum' only)
         """
+        model = model.lower()
+        assert model in ["sum_metric", "product_sum"], f"model must be 'sum_metric' or 'product_sum'"
         _st_set_st_model(_h(self._handle),
             str(model).encode(), _normalize_vtype(str(transform)).encode(), _c_double(at),
             _c_double(time_nugget), _c_double(time_sill), _c_double(k_ps))
@@ -375,6 +384,7 @@ class SpaceTimeKriging:
         ivar: int,
         coord: np.ndarray,
         value: np.ndarray,
+        time: Optional[np.ndarray] = None,
         variance: Optional[np.ndarray] = None,
         nmax: Optional[int] = None,
         maxdist: Optional[float] = None,
@@ -382,13 +392,27 @@ class SpaceTimeKriging:
     ):
         """
         Load observations for variable ivar.
-        Duplicate checks include all four coordinate columns, so repeated
-        spatial locations are allowed only at different times.
+        Duplicate checks include all coordinate columns including time, so repeated
+        spatial locations are allowed at different times.
 
-        Parameters
-        ----------
-        ivar     : variable index, 1-based
-        coord    : (nobs, 4) — columns 0:3 spatial (x,y,z), column 3 = time
+        Accepts two coordinate formats — pick whichever matches your workflow:
+
+        **Combined format** (default)::
+
+            coord : (nobs, ndim+1) — first ndim columns are spatial (x[,y[,z]]),
+                    last column is time; ndim must be 1, 2, or 3.
+            time  : omitted (None)
+
+        **Split format** (explicit time array)::
+
+            coord : (nobs, ndim)  spatial coordinates only
+            time  : (nobs,)       observation times
+
+        ``ndim`` is inferred from the first :meth:`set_obs` call and must be
+        consistent across all subsequent calls on the same object.
+
+        Other parameters
+        ----------------
         value    : (nobs,)   observed values
         variance : (nobs,)   measurement error variance (default: zeros)
         nmax     : max neighbours
@@ -397,11 +421,47 @@ class SpaceTimeKriging:
         """
         import sys as _sys
         a = np.asarray(coord, dtype=np.float64)
-        assert a.ndim == 2 and a.shape[1] == 4, \
-            f"coord must be (nobs, 4) [x,y,z,t], got {a.shape}"
-        coord_f = np.asfortranarray(a.T)   # Fortran (4, nobs)
-        nobs    = coord_f.shape[1]
-        assert len(value) == nobs, "value length != nobs"
+        if a.ndim != 2:
+            raise ValueError(f"coord must be 2-D, got shape {a.shape}")
+
+        if time is None:
+            # Combined format — last column is time
+            if a.shape[1] not in (2, 3, 4):
+                raise ValueError(
+                    f"Combined coord must be (nobs, ndim+1) with ndim=1,2,3, got {a.shape}"
+                )
+            spatial  = a[:, :-1]
+            time_arr = a[:, -1]
+        else:
+            # Split format — spatial coord + separate time array
+            if a.shape[1] not in (1, 2, 3):
+                raise ValueError(
+                    f"Split coord must be (nobs, ndim) with ndim=1,2,3, got {a.shape}"
+                )
+            spatial  = a
+            time_arr = np.asarray(time, dtype=np.float64).ravel()
+            if len(time_arr) != len(spatial):
+                raise ValueError(
+                    f"time length ({len(time_arr)}) != nobs ({len(spatial)})"
+                )
+
+        ndim = spatial.shape[1]
+        if self.ndim is None:
+            self.ndim = ndim
+        elif self.ndim != ndim:
+            raise ValueError(
+                f"ndim mismatch: object was initialised with ndim={self.ndim} "
+                f"but this coord implies ndim={ndim}"
+            )
+
+        # Assemble (ndim+1, nobs) Fortran array: spatial rows then time row
+        nobs    = len(spatial)
+        coord_f = np.empty((ndim + 1, nobs), dtype=np.float64, order="F")
+        coord_f[:ndim, :] = spatial.T
+        coord_f[ndim,  :] = time_arr
+
+        if len(value) != nobs:
+            raise ValueError(f"value length ({len(value)}) != nobs ({nobs})")
 
         value_f = _farray(np.asarray(value).ravel())
         var_f   = _farray(variance) if variance is not None else _farray(np.zeros(nobs))
@@ -410,7 +470,7 @@ class SpaceTimeKriging:
         c_maxdist = _c_double(maxdist if maxdist is not None else _sys.float_info.max)
 
         _st_set_obs(_h(self._handle),
-            _c_int(ivar), _c_int(nobs),
+            _c_int(ivar), _c_int(nobs), _c_int(ndim),
             _dptr(coord_f), _dptr(value_f), _dptr(var_f),
             c_nmax, c_maxdist, _c_double(sk_mean))
         self._nobs[ivar - 1] = nobs
@@ -460,24 +520,25 @@ class SpaceTimeKriging:
         """
         Set time-aware ST gradient observation pairs.
 
-        ``coord1`` and ``coord2`` must both have shape ``(ngrad, 4)`` with
-        columns ``x, y, z, t``.  The constraint is
-        ``Z(coord1[i]) - Z(coord2[i]) = grad_value[i]``.  Because time is part
-        of each endpoint coordinate, targets at other times are penalized by
-        the temporal covariance model.
+        ``coord1`` and ``coord2`` must both have shape ``(ngrad, ndim+1)`` with
+        columns ``x, y [, z], t`` (same ``ndim`` as :meth:`set_obs`).  The
+        constraint is ``Z(coord1[i]) - Z(coord2[i]) = grad_value[i]``.  Because
+        time is part of each endpoint coordinate, targets at other times are
+        penalized by the temporal covariance model.
         """
         if ivar < 1 or ivar > self.nvar:
             raise ValueError(f"ivar must be in [1, {self.nvar}], got {ivar}")
 
-        c1_f = _coord4_to_fortran(coord1)
-        c2_f = _coord4_to_fortran(coord2)
+        c1_f = _coordST_to_fortran(coord1)
+        c2_f = _coordST_to_fortran(coord2)
         if c1_f.shape != c2_f.shape:
             raise ValueError(f"coord1 and coord2 shapes differ: {c1_f.T.shape} vs {c2_f.T.shape}")
 
+        ndim_st = c1_f.shape[0]   # ndim+1 rows in the Fortran layout
         ngrad = c1_f.shape[1]
         if ngrad == 0:
-            c1_arg = np.zeros((4, 1), dtype=np.float64, order="F")
-            c2_arg = np.zeros((4, 1), dtype=np.float64, order="F")
+            c1_arg = np.zeros((ndim_st, 1), dtype=np.float64, order="F")
+            c2_arg = np.zeros((ndim_st, 1), dtype=np.float64, order="F")
             gval = _farray(np.zeros(1, dtype=np.float64))
             gvar = _farray(np.zeros(1, dtype=np.float64))
             de_f = np.zeros((1, 1), dtype=np.float64, order="F")
@@ -512,7 +573,7 @@ class SpaceTimeKriging:
 
         _st_set_grad(
             _h(self._handle),
-            _c_int(ivar), _c_int(ngrad),
+            _c_int(ivar), _c_int(ngrad), _c_int(ndim_st - 1),
             _dptr(c1_arg), _dptr(c2_arg),
             _dptr(gval), _dptr(gvar),
             _c_int(ndrift_c), _dptr(de_f),
@@ -580,21 +641,59 @@ class SpaceTimeKriging:
     def set_grid(
         self,
         coord: np.ndarray,
-        time: np.ndarray,
+        time: Optional[np.ndarray] = None,
         rangescale: Optional[np.ndarray] = None,
         localnugget: Optional[np.ndarray] = None,
     ):
         """
         Set point estimation targets.
 
-        coord : (ngrid, 3) spatial coordinates
-        time  : (ngrid,)   prediction times
-        """
-        coord_f = _coord3_to_fortran(coord)
-        ngrid   = coord_f.shape[1]
-        assert len(time) == ngrid, "time length != ngrid"
+        Accepts two coordinate formats — pick whichever matches your workflow:
 
-        time_f  = _farray(np.asarray(time).ravel())
+        **Combined format** (consistent with :meth:`set_obs`)::
+
+            coord : (ngrid, ndim+1) — first ndim columns are spatial (x[,y[,z]]),
+                    last column is time; ndim must be 1, 2, or 3.
+            time  : omitted (None)
+
+        **Split format** (explicit time array)::
+
+            coord : (ngrid, ndim)  spatial coordinates only
+            time  : (ngrid,)       prediction times
+
+        Other parameters
+        ----------------
+        rangescale  : (ngrid,) local range scale factors (default: ones)
+        localnugget : (ngrid,) local nugget additions   (default: zeros)
+        """
+        a = np.asarray(coord, dtype=np.float64)
+        if a.ndim != 2:
+            raise ValueError(f"coord must be 2-D, got shape {a.shape}")
+
+        if time is None:
+            # Combined format — last column is time (same as set_obs)
+            if a.shape[1] not in (2, 3, 4):
+                raise ValueError(
+                    f"Combined coord must be (ngrid, ndim+1) with ndim=1,2,3, got {a.shape}"
+                )
+            spatial  = a[:, :-1]
+            time_arr = a[:, -1]
+        else:
+            # Split format — spatial coord + separate time array
+            if a.shape[1] not in (1, 2, 3):
+                raise ValueError(
+                    f"Split coord must be (ngrid, ndim) with ndim=1,2,3, got {a.shape}"
+                )
+            spatial  = a
+            time_arr = np.asarray(time, dtype=np.float64).ravel()
+            if len(time_arr) != len(spatial):
+                raise ValueError(
+                    f"time length ({len(time_arr)}) != ngrid ({len(spatial)})"
+                )
+
+        coord_f = _coordS_to_fortran(spatial)
+        ngrid   = coord_f.shape[1]
+        time_f  = _farray(time_arr)
         rs_f    = _farray(rangescale  if rangescale  is not None else np.ones(ngrid))
         ln_f    = _farray(localnugget if localnugget is not None else np.zeros(ngrid))
 
@@ -864,9 +963,9 @@ def spacetime_kriging(
 
     Parameters
     ----------
-    obs_coord    : (nobs, 4)   observation coordinates — columns 0:3 spatial, column 3 time
-    obs_value    : (nobs,)     observed values
-    grid_coord   : (ngrid, 3)  prediction spatial coordinates
+    obs_coord    : (nobs, ndim+1)  observation coordinates — first ndim cols spatial, last col time
+    obs_value    : (nobs,)         observed values
+    grid_coord   : (ngrid, ndim)   prediction spatial coordinates
     grid_time    : (ngrid,)    prediction times
     spatial_spec : dict or list[dict]  spatial variogram structure(s)
     temporal_spec: dict or list[dict]  temporal variogram structure(s)
@@ -926,9 +1025,9 @@ def spacetime_cokriging(
 
     Parameters
     ----------
-    obs_coords   : list of (nobs_i, 4) arrays, one per variable — columns 0:3 spatial, column 3 time
+    obs_coords   : list of (nobs_i, ndim+1) arrays, one per variable — first ndim cols spatial, last col time
     obs_values   : list of (nobs_i,)   arrays
-    grid_coord   : (ngrid, 3)
+    grid_coord   : (ngrid, ndim)
     grid_time    : (ngrid,)
     spatial_specs : dict (ivar,jvar) -> dict or list[dict]
     temporal_specs: dict (ivar,jvar) -> dict or list[dict]

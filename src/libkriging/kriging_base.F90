@@ -1147,6 +1147,10 @@ contains
       call kriging_error(subname, 'Observations need to be set first.')
       return
     end if
+    if (any(self%obs(1:self%nvar)%nmax > int(huge(0)*0.001))) then
+      call kriging_error(subname, '`nmax` must be set for all observations for SGSIM.')
+      return
+    end if
 
     nb = self%block%n
     if (present(randpath)) then

@@ -78,15 +78,16 @@ contains
 
     character(len=64) :: blkstr
     character(len=KRIGING_MSG_LEN) :: formatted
+    character(len=1), parameter :: NL=new_line('A')
 
     if (present(iblock)) then
       write(blkstr, '(I0)') iblock
-      formatted = 'KRIGING ERROR: Location: ' // trim(context) // &
+      formatted = NL//'KRIGING ERROR: Location: ' // trim(context) // &
                   '; Block: ' // trim(blkstr) // &
-                  '; Description: ' // trim(msg)
+                  NL//'Description: ' // trim(msg)
     else
-      formatted = 'KRIGING ERROR: Location: ' // trim(context) // &
-                  '; Description: ' // trim(msg)
+      formatted = NL//'KRIGING ERROR: Location: ' // trim(context) // &
+                  NL//'Description: ' // trim(msg)
     end if
 
     ! Preserve the first failure in a call chain; later failures are usually

@@ -7,12 +7,25 @@ pykriging package directory so it can be found at import time.
 
 Usage
 -----
-    python build_lib.py                   # auto-detect compiler
+    python build_lib.py                   # auto-detect compiler, release mode
     python build_lib.py --compiler gfortran
     python build_lib.py --compiler ifx
     python build_lib.py --compiler ifort
     python build_lib.py --opt debug       # no optimisation, add -g
-    python build_lib.py --no-openmp       # Disable OpenMP parallelization
+    python build_lib.py --no-openmp       # disable OpenMP parallelisation
+    python build_lib.py --hcache 0        # disable multi-slot factor cache
+    python build_lib.py --hcache 1        # single-slot cache (overhead test)
+    python build_lib.py --no-cov-table    # analytic covariance (debug table accuracy)
+
+Preprocessor feature flags
+--------------------------
+All three flags below default to the production-optimal setting.  Pass the
+argument explicitly only when you need to override for debugging or testing.
+
+    Flag                Default   Makefile equivalent
+    --hcache N          64        HCACHE=N
+    --no-cov-table      off       USE_COV_TABLE=0
+    --no-openmp         off       OPENMP=0
 
 The compiled library is placed in:
     src/pykriging/libkriging.so   (Linux / macOS)
@@ -109,6 +122,13 @@ FLAGS = {
                       "/fpp", "/check:all"],
         debug_linux= ["-O0", "-g", "-real-size:64", "-qopenmp", "-traceback",
                       "-fpp", "-warn all", "-DDEBUG", "-check all"],
+        # /dll     — produce a shared library (equivalent to gfortran -shared)
+        # /libs:static — embed Intel Fortran runtime statically so the DLL
+        #               has no dependency on Intel redistributable packages.
+        #               Note: libiomp5md.dll (OpenMP) is STILL dynamically
+        #               linked when /Qopenmp is active; /libs:static cannot
+        #               affect it.  Remove /libs:static if you are willing to
+        #               require Intel oneAPI runtime on the target machine.
         shared_win = ["/dll", "/libs:static"],
         shared_linux = ["-shared", "-fPIC"],
     ),
@@ -135,6 +155,28 @@ def _module_flags(compiler: str, mod_dir: str) -> list:
             return ["-module", mod_dir, f"-I{mod_dir}"]
     else:
         return ["-J", mod_dir, "-I", mod_dir]
+
+
+def _build_define_flags(compiler: str, hcache: int, use_cov_table: bool) -> list:
+    """Return compiler-specific preprocessor define flags.
+
+    Mirrors the CACHE_FLAGS / COV_FLAGS logic in the Makefile.
+
+    Parameters
+    ----------
+    compiler      : 'gfortran', 'ifx', or 'ifort'
+    hcache        : number of multi-slot factor-cache entries (0 = disabled)
+    use_cov_table : True → -DUSE_COV_TABLE (lookup-table covariance)
+    """
+    # Intel on Windows uses /D; everything else uses -D
+    pfx = "/" if (_ON_WINDOWS and compiler in ("ifx", "ifort")) else "-"
+
+    flags = [f"{pfx}DPYKRIGING_HCACHE_SLOTS={hcache}"]
+    if hcache == 0:
+        flags.append(f"{pfx}DPYKRIGING_DISABLE_HCACHE")
+    if use_cov_table:
+        flags.append(f"{pfx}DUSE_COV_TABLE")
+    return flags
 
 
 def detect_compiler():
@@ -172,6 +214,13 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
         )
 
     _clean_mod_files(mod_dir)
+
+    # Build preprocessor define flags from CLI args
+    define_flags = _build_define_flags(
+        compiler,
+        hcache=arg.hcache,
+        use_cov_table=not arg.no_cov_table,
+    )
 
     if arg.no_openmp:
         # Strip the OpenMP flag from the chosen optimisation level in-place.
@@ -221,6 +270,7 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
     cmd = (
         [compiler]
         + flag_set[arg.opt]
+        + define_flags
         + flag_set["shared"]
         + _module_flags(compiler, str(mod_dir))
         + sources
@@ -260,13 +310,24 @@ def main():
     )
     parser.add_argument(
         "--no-openmp", action="store_true",
-        help="Disable OpenMP parallelization",
+        help="Disable OpenMP parallelisation",
+    )
+    parser.add_argument(
+        "--hcache", type=int, default=64, metavar="N",
+        help="Multi-slot factor cache size per thread (default 64; 0 = disabled)",
+    )
+    parser.add_argument(
+        "--no-cov-table", action="store_true",
+        help="Use analytic covariance instead of lookup table (omits -DUSE_COV_TABLE)",
     )
     args = parser.parse_args()
 
     compiler = args.compiler or detect_compiler()
-    print(f"Compiler: {compiler}")
-    print(f"Mode:     {args.opt}")
+    print(f"Compiler     : {compiler}")
+    print(f"Mode         : {args.opt}")
+    print(f"OpenMP       : {'off' if args.no_openmp else 'on'}")
+    print(f"HCACHE       : {args.hcache}")
+    print(f"USE_COV_TABLE: {'off' if args.no_cov_table else 'on'}")
 
     root        = Path(__file__).parent
     fortran_dir = root / "src" / "libkriging"

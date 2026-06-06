@@ -124,8 +124,8 @@ class TestSGSIM:
         grid = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]])
 
         k = Kriging(ndim=2, nvar=2, nsim=2, seed=123)
-        k.set_obs(ivar=1, coord=coord, value=np.array([1.0, 2.0, 1.5]))
-        k.set_obs(ivar=2, coord=coord, value=np.array([10.0, 20.0, 15.0]))
+        k.set_obs(ivar=1, coord=coord, value=np.array([1.0, 2.0, 1.5]),  nmax=3)
+        k.set_obs(ivar=2, coord=coord, value=np.array([10.0, 20.0, 15.0]), nmax=3)
         k.set_grid(coord=grid)
         nobs = len(coord)
         nnew = len(grid)

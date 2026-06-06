@@ -22,6 +22,7 @@
 !   - set_search builds an nlag-dimensional KD-tree with search-specific time transform.
 !   - SGSIM extends obs(:)%coord with all nlag rows
 !     to include prediction block coords for SGSIM conditioning.
+#include "cov_dispatch.fh"
 !==============================================================================
 module kriging_st
 
@@ -433,11 +434,11 @@ contains
             return
           end if
           !-- Build piecewise lookup tables now that ndim and all structures are final.
-          !   build_struct_table requires all non-nugget structures to share the same
-          !   anisotropy matrix (Level B: 1 aniso_h + 1 lookup regardless of nstruct).
-          !   If structures have incompatible matrices, fall through to build_all_tables.
-          call self%vgm(jvar, ivar,1)%build_struct_table( &
+          !   build_table tries Level B first (shared aniso, 1 lookup for all structs)
+          !   and falls back to Level A (per-component tables) when needed.
+          call self%vgm(jvar, ivar,1)%build_table( &
             h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
+          if (kriging_failed()) return
         end do
       end do
     end if
@@ -770,7 +771,7 @@ contains
               !-- Off-diagonal: C(lag) between neighbour i of kvar and neighbour j of lvar
               do j = jstart, nnear(lvar)
                 lag = (obs1%coord(:, inear(i,kvar)) - obs2%coord(:, inear(j,lvar)))
-                matA(istart(lvar)+j, istart(kvar)+i) = vgm%cov_tab_st(lag)
+                matA(istart(lvar)+j, istart(kvar)+i) = COV_ST(vgm, lag)
               end do
             end do
           end associate
@@ -794,9 +795,9 @@ contains
             do i = 1, nnear(kvar)
               do j = 1, nnear(lvar)
                 lag   = self%grad(givar)%coord(:,j) - obs1%coord(:, inear(i,kvar))
-                cov_g = vgm%cov_tab_st(lag)
+                cov_g = COV_ST(vgm, lag)
                 lag   = self%grad(givar)%coord2(:,j) - obs1%coord(:, inear(i,kvar))
-                matA(istart(lvar)+j, istart(kvar)+i) = cov_g - vgm%cov_tab_st(lag)
+                matA(istart(lvar)+j, istart(kvar)+i) = cov_g - COV_ST(vgm, lag)
               end do
             end do
           end associate
@@ -813,12 +814,12 @@ contains
             !-- Diagonal: 2*C(0) - 2*C(xs1-xs2) + grad variance
             lag = grad%coord(:,i) - grad%coord2(:,i)
             matA(is+i, is+i) = &
-              2.0 * vgm%cov0 - 2.0 * vgm%cov_tab_st(lag) + grad%variance(1,1,i)
+              2.0 * vgm%cov0 - 2.0 * COV_ST(vgm, lag) + grad%variance(1,1,i)
             do j = i+1, grad%n
-              lag = grad%coord (:,i) - grad%coord (:,j); c11 = vgm%cov_tab_st(lag)
-              lag = grad%coord (:,i) - grad%coord2(:,j); c12 = vgm%cov_tab_st(lag)
-              lag = grad%coord2(:,i) - grad%coord (:,j); c21 = vgm%cov_tab_st(lag)
-              lag = grad%coord2(:,i) - grad%coord2(:,j); c22 = vgm%cov_tab_st(lag)
+              lag = grad%coord (:,i) - grad%coord (:,j); c11 = COV_ST(vgm, lag)
+              lag = grad%coord (:,i) - grad%coord2(:,j); c12 = COV_ST(vgm, lag)
+              lag = grad%coord2(:,i) - grad%coord (:,j); c21 = COV_ST(vgm, lag)
+              lag = grad%coord2(:,i) - grad%coord2(:,j); c22 = COV_ST(vgm, lag)
               matA(is+j, is+i) = c11 - c12 - c21 + c22
             end do
           end do
@@ -888,7 +889,7 @@ contains
               tmp = 0.0
               do k = self%block%iblockpnt(ctx%iblock), self%block%iblockpnt(ctx%iblock)+self%block%nblockpnt(iblock)-1
                 lag = (obs%coord(:, inear(i, kvar)) - self%grid%coord(:, k))
-                tmp = tmp + vgm%cov_tab_st(lag) * self%grid%weight(k)
+                tmp = tmp + COV_ST(vgm, lag) * self%grid%weight(k)
               end do
               rhsB(ivar, istart(kvar)+i) = tmp
             end do
@@ -906,9 +907,9 @@ contains
               tmp2 = 0.0
               do k = self%block%iblockpnt(iblock), self%block%iblockpnt(iblock)+self%block%nblockpnt(iblock)-1
                 lag = self%grad(givar)%coord(:,igrad) - self%grid%coord(:,k)
-                tmp = tmp + vgm%cov_tab_st(lag) * self%grid%weight(k)
+                tmp = tmp + COV_ST(vgm, lag) * self%grid%weight(k)
                 lag = self%grad(givar)%coord2(:,igrad) - self%grid%coord(:,k)
-                tmp2 = tmp2 + vgm%cov_tab_st(lag) * self%grid%weight(k)
+                tmp2 = tmp2 + COV_ST(vgm, lag) * self%grid%weight(k)
               end do
               rhsB(ivar, istart(kgrad)+igrad) = tmp - tmp2
             end do
@@ -983,7 +984,7 @@ contains
                 base_cov = base_cov + vgm%cov0 * weight(k1+i) * weight(k1+i)
                 do j = i+1, nblockpnt
                   lag = coord(1:self%nlag, k1+i) - coord(1:self%nlag, k1+j)
-                  base_cov = base_cov + vgm%cov_tab_st(lag) * &
+                  base_cov = base_cov + COV_ST(vgm, lag) * &
                     weight(k1+i) * weight(k1+j) * 2.0
                 end do
               end do

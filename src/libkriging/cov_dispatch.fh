@@ -1,0 +1,20 @@
+! cov_dispatch.fh
+! Shared preprocessor macros for covariance dispatch.
+!
+! #include this file in every .F90 that calls covariance routines.
+! Toggle by defining USE_COV_TABLE at compile time (-DUSE_COV_TABLE).
+!
+!   COV(vgm, lag)    — for vgm_struct    (kriging.F90)
+!   COV_ST(vgm, lag) — for vgm_struct_st (kriging_st.F90)
+!
+! When USE_COV_TABLE is defined (default production build) both macros use
+! the table-accelerated path; otherwise both fall back to the analytic path
+! (useful for debugging or validating table accuracy).
+
+#ifdef USE_COV_TABLE
+#  define COV(vgm, lag)    vgm%cov_tab(lag)
+#  define COV_ST(vgm, lag) vgm%cov_tab(lag)
+#else
+#  define COV(vgm, lag)    vgm%cov_lag(lag)
+#  define COV_ST(vgm, lag) vgm%cov_lag(lag)
+#endif

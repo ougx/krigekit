@@ -36,7 +36,7 @@
 module variogram
 
   use common,          only: pi, DEG2RAD, EPSLON
-  use kriging_err,     only: kriging_error
+  use kriging_err,     only: kriging_error, kriging_failed, kriging_clear_error
   use vgm_func,        only: VGM_NUG, VGM_HOL, corefunc_fn, &
                              corefunc_has_analytic_tail, vtype_from_str
   implicit none
@@ -147,11 +147,12 @@ module variogram
     procedure :: add_args      => struct_add_args
     procedure :: add_comp      => struct_add_comp
     generic   :: add           => add_args, add_comp
-    procedure :: build_all_tables              ! Level A
-    procedure :: build_struct_table            ! Level B
-    procedure :: cov_h         => struct_cov_h     ! isotropic scalar h
-    procedure :: cov_lag       => struct_cov_lag   ! analytic, dx [,dy [,dz]]
-    procedure :: cov_tab       => struct_cov_tab   ! table, dx [,dy [,dz]]
+    procedure :: build_table   => struct_build_table  ! entry to build table, branch to build_all_tables or build_composite_table
+    procedure :: build_all_tables                     ! Level A (per-component)
+    procedure :: build_composite_table                ! Level B (whole-struct composite)
+    procedure :: cov_h         => struct_cov_h        ! isotropic scalar h
+    procedure :: cov_lag       => struct_cov_lag      ! analytic, dx [,dy [,dz]]
+    procedure :: cov_tab       => struct_cov_tab      ! table, dx [,dy [,dz]]
     procedure :: tostr         => struct_tostr
     procedure :: is_valid      => struct_is_valid
     procedure :: set_ndim      => struct_set_ndim
@@ -483,6 +484,43 @@ contains
     end do
   end subroutine struct_set_ndim
 
+  !-- Public entry point: try Level B first; fall back to Level A if the
+  !   non-nugget structures have incompatible anisotropy matrices.
+  subroutine struct_build_table(this, n_tab, hmax_factor, h_bounds, dh)
+    class(vgm_struct), intent(inout) :: this
+    integer, intent(in), optional :: n_tab
+    real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
+
+    integer :: iv, ref_idx
+    !-- Find first non-nugget structure; use its mat as the reference.
+    ref_idx = 0
+    do iv = 1, this%nstruct
+      if (this%structs(iv)%vtype_id == VGM_NUG) cycle
+      if (ref_idx == 0) then
+        ref_idx = iv
+        this%struct_aniso = this%structs(iv)%aniso
+      else
+        if (maxval(abs(this%structs(iv)%aniso%mat - this%struct_aniso%mat)) > MAT_TOL) then
+          write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
+          write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
+          write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
+          write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
+            '   Incompatible: structure ', iv
+          call this%build_all_tables(n_tab, hmax_factor, h_bounds, dh)
+          return
+        end if
+      end if
+    end do
+
+    if (ref_idx == 0) then
+      write(*,'(A)') 'WARNING build_table: all structures are nuggets. No table built.'
+    else
+      call this%build_composite_table(n_tab=n_tab, hmax_factor=hmax_factor, &
+                                    h_bounds=h_bounds, dh=dh)
+    end if
+  end subroutine struct_build_table
+
+
   !-- Level A: build per-component tables.
   subroutine build_all_tables(this, n_tab, hmax_factor, h_bounds, dh)
     class(vgm_struct), intent(inout) :: this
@@ -510,7 +548,7 @@ contains
   !   REQUIRES: all non-nugget structures share the same mat matrix.
   !   Nugget structures are skipped in the compatibility check because
   !   corefunc_fn(VGM_NUG, h) = 0 for all h > 0.
-  subroutine build_struct_table(this, n_tab, hmax_factor, h_bounds, dh)
+  subroutine build_composite_table(this, n_tab, hmax_factor, h_bounds, dh)
     class(vgm_struct), intent(inout) :: this
     integer, intent(in), optional :: n_tab
     real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
@@ -522,30 +560,6 @@ contains
     real :: factor, hmax, h_lo, step_k, rdist, val
 
     factor = 3.5;  if (present(hmax_factor)) factor = hmax_factor
-
-    !-- Find first non-nugget structure; use its mat as the reference.
-    ref_idx = 0
-    do iv = 1, this%nstruct
-      if (this%structs(iv)%vtype_id == VGM_NUG) cycle
-      if (ref_idx == 0) then
-        ref_idx = iv
-        this%struct_aniso = this%structs(iv)%aniso
-      else
-        if (maxval(abs(this%structs(iv)%aniso%mat - this%struct_aniso%mat)) > MAT_TOL) then
-          write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
-          write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
-          write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
-          write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
-            '   Incompatible: structure ', iv
-
-          call kriging_error('vgm_struct%add', 'component shape not allocated')
-          return
-        end if
-      end if
-    end do
-
-    if (ref_idx == 0) &
-      write(*,'(A)') 'WARNING build_struct_table: all structures are nuggets.'
 
     !-- Zone setup
     if (present(h_bounds) .and. present(dh)) then
@@ -603,7 +617,7 @@ contains
     call move_alloc(z_offset, this%struct_zone_offset)
     call move_alloc(z_n,      this%struct_zone_n)
     this%struct_tab_ready = .true.
-  end subroutine build_struct_table
+  end subroutine build_composite_table
 
 
   function cov_struct_tab_h(this, h) result(res)

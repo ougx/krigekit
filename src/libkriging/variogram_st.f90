@@ -45,7 +45,7 @@
 !   Joint sills (sum-metric): sill_st_12^2 <= sill_st_11 * sill_st_22
 !==============================================================================
 module variogram_st
-  use kriging_err, only: kriging_error
+  use kriging_err, only: kriging_error, kriging_failed
   use variogram
   use vgm_func, only: corefunc_fn, VGM_NUG, VGM_SPH, VGM_EXP, VGM_GAU, &
                       VGM_HOL, VGM_POW, VGM_BSQ, VGM_CIR, VGM_LIN
@@ -91,15 +91,14 @@ module variogram_st
     real              :: cov0      = 0.0   ! C(0,0) used for kriging matrix diagonal
   contains
     procedure :: f_time           => f_time_bound_vgm_st
-    procedure :: cov_lag_st       => cov_lag_vgm_st       ! analytic, ndim+1 vector
-    procedure :: cov_tab_st       => cov_tab_vgm_st       ! table,    ndim+1 vector
+    procedure :: cov_lag          => cov_lag_vgm_st       ! analytic, ndim+1 vector
+    procedure :: cov_tab          => cov_tab_vgm_st       ! table,    ndim+1 vector
     procedure :: add_spatial      => add_spatial_vgm_st
     procedure :: add_temporal     => add_temporal_vgm_st
     procedure :: set_joint_sills  => set_joint_sills_vgm_st
     procedure :: compute_cov0     => compute_cov0_vgm_st
     procedure :: is_valid_st      => is_valid_vgm_st
-    procedure :: build_all_tables  => build_all_tables_vgm_st   ! Level A: per-component
-    procedure :: build_struct_table => build_struct_table_vgm_st ! Level B: composite
+    procedure :: build_table      => build_table_vgm_st         ! entry to build table for different components
     procedure :: reset            => reset_vgm_st
     procedure :: reset_model      => reset_vgm_st   ! alias for spatial naming compat
   end type vgm_struct_st
@@ -172,6 +171,7 @@ contains
     !   cov_lag([|dt|, 0, 0]) = ct_sill * corefunc(|dt| / at_k).
     lag_t = [abs(lags(self%ndim+1)), 0.0, 0.0]
     lag_s = lags(1:self%ndim)
+    dt    = lags(self%ndim+1)
     select case (self%model)
 
       !------------------------------------------------------------------------
@@ -233,6 +233,7 @@ contains
     !-- Temporal lag as a 1D spatial vector (ct%ndim=1).
     lag_t = [abs(lags(self%ndim+1)), 0.0, 0.0]
     lag_s = lags(1:self%ndim)
+    dt    = lags(self%ndim+1)
 
     select case (self%model)
 
@@ -416,51 +417,24 @@ contains
 
 
   !=============================================================================
-  ! build_all_tables — Level A: build one table per component for cs and ct.
+  ! build_table — public entry point: delegates to cs%build_table then ct%build_table.
   !
-  ! Forwards all optional arguments verbatim to vgm_struct%build_all_tables so
-  ! both the spatial (cs%ndim from add_spatial) and temporal (ct%ndim=1 from
-  ! add_temporal) components get tables built with the same piecewise-zone
-  ! parameters.  Because both use normalised distances (h = ||mat*lag||, where
-  ! mat already encodes 1/range), hmax_factor=3.5 covers ≥3.5× the range for
-  ! any structure in either component.
+  ! Each sub-call tries Level B (composite struct table) first and falls back to
+  ! Level A (per-component tables) internally, so callers never need to know
+  ! which level was used.  For ct this is always Level B because all temporal
+  ! structures share the same 1D isotropic anisotropy matrix.
   !=============================================================================
-  subroutine build_all_tables_vgm_st(self, n_tab, hmax_factor, h_bounds, dh)
+  subroutine build_table_vgm_st(self, n_tab, hmax_factor, h_bounds, dh)
     class(vgm_struct_st), intent(inout) :: self
     integer, intent(in), optional :: n_tab
     real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
 
-    if (present(h_bounds) .and. present(dh)) then
-      call self%cs%build_all_tables(h_bounds=h_bounds, dh=dh)
-      call self%ct%build_all_tables(h_bounds=h_bounds, dh=dh)
-    else
-      call self%cs%build_all_tables(n_tab=n_tab, hmax_factor=hmax_factor)
-      call self%ct%build_all_tables(n_tab=n_tab, hmax_factor=hmax_factor)
-    end if
-  end subroutine build_all_tables_vgm_st
-
-
-  !=============================================================================
-  ! build_struct_table — Level B: build one composite table for cs and ct.
-  !
-  ! Requires all non-nugget structures in cs (and in ct) to share the same
-  ! anisotropy matrix.  For ct this is always satisfied because all temporal
-  ! structures are isotropic 1D (same mat).  If cs structures have different
-  ! rotation matrices, use build_all_tables instead.
-  !=============================================================================
-  subroutine build_struct_table_vgm_st(self, n_tab, hmax_factor, h_bounds, dh)
-    class(vgm_struct_st), intent(inout) :: self
-    integer, intent(in), optional :: n_tab
-    real,    intent(in), optional :: hmax_factor, h_bounds(:), dh(:)
-
-    if (present(h_bounds) .and. present(dh)) then
-      call self%cs%build_struct_table(h_bounds=h_bounds, dh=dh)
-      call self%ct%build_struct_table(h_bounds=h_bounds, dh=dh)
-    else
-      call self%cs%build_struct_table(n_tab=n_tab, hmax_factor=hmax_factor)
-      call self%ct%build_struct_table(n_tab=n_tab, hmax_factor=hmax_factor)
-    end if
-  end subroutine build_struct_table_vgm_st
+    call self%cs%build_table(n_tab=n_tab, hmax_factor=hmax_factor, &
+                              h_bounds=h_bounds, dh=dh)
+    if (kriging_failed()) return
+    call self%ct%build_table(n_tab=n_tab, hmax_factor=hmax_factor, &
+                              h_bounds=h_bounds, dh=dh)
+  end subroutine build_table_vgm_st
 
 
   !=============================================================================
