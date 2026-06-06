@@ -152,62 +152,51 @@ class TestSimpleOrdinaryKriging:
         assert (df["variance"] >= 0).all(), \
             f"Negative variance: {df['variance'].tolist()}"
 
-    def test_exact_match_at_observation_location(self, sparks):
+    def test_exact_match_at_observation_location(self, sparks, tmp_path):
         """Grid node co-located with an observation should return that value."""
         obs = pd.read_csv(_data("obs_simple.csv"))
         # Write a one-node grid at obs[0]
-        import tempfile
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False, dir=_DATA
-        ) as fh:
+        tmp = tmp_path / "exact_grid.csv"
+        with open(tmp, "w") as fh:
             fh.write("igrid,x,y\n")
             fh.write(f"1,{obs['x'].iloc[0]},{obs['y'].iloc[0]}\n")
-            tmp = fh.name
-        try:
-            vv = ("sph", "100.0", "0.09", "0.0")
-            cp = _run(
-                sparks,
-                "-d", "2", "5", "1", "0", "0",
-                "-of", _data("obs_simple.csv"),
-                "-bf", tmp,
-                "-v1", *vv,
-                "-u",
-            )
-            assert cp.returncode == 0
-            vals = _parse_values(cp.stdout)
-            assert vals[0] == pytest.approx(obs["z"].iloc[0], rel=1e-3)
-        finally:
-            os.remove(tmp)
+        
+        vv = ("sph", "100.0", "0.09", "0.0")
+        cp = _run(
+            sparks,
+            "-d", "2", "5", "1", "0", "0",
+            "-of", _data("obs_simple.csv"),
+            "-bf", str(tmp),
+            "-v1", *vv,
+            "-u",
+        )
+        assert cp.returncode == 0
+        vals = _parse_values(cp.stdout)
+        assert vals[0] == pytest.approx(obs["z"].iloc[0], rel=1e-3)
 
-    def test_constant_field_returns_constant(self, sparks):
+    def test_constant_field_returns_constant(self, sparks, tmp_path):
         """
         With a constant observation field, ordinary kriging must reproduce
         that constant at every grid node (weights sum to 1 under -u).
         """
-        import tempfile
         constant = 3.14
         obs_df = pd.read_csv(_data("obs_simple.csv"))
         obs_df = obs_df.copy()
         obs_df["z"] = constant
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False, dir=_DATA
-        ) as fh:
-            obs_df.to_csv(fh, index=False)
-            tmp = fh.name
-        try:
-            cp = _run(
-                sparks,
-                "-d", "2", "5", "3", "0", "0",
-                "-of", tmp,
-                "-bf", _data("grid_simple.csv"),
-                "-v1", *_VGM_SIMPLE,
-                "-u",
-            )
-            assert cp.returncode == 0
-            vals = _parse_values(cp.stdout)
-            assert vals == pytest.approx(constant, rel=1e-4)
-        finally:
-            os.remove(tmp)
+        tmp = tmp_path / "constant_obs.csv"
+        obs_df.to_csv(tmp, index=False)
+
+        cp = _run(
+            sparks,
+            "-d", "2", "5", "3", "0", "0",
+            "-of", str(tmp),
+            "-bf", _data("grid_simple.csv"),
+            "-v1", *_VGM_SIMPLE,
+            "-u",
+        )
+        assert cp.returncode == 0
+        vals = _parse_values(cp.stdout)
+        assert vals == pytest.approx(constant, rel=1e-4)
 
     def test_simple_kriging_without_unbias_flag(self, sparks):
         """Without -u (simple kriging, sk_mean=0) the program should still run."""

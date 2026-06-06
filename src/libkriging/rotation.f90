@@ -4,9 +4,13 @@
 !!   Construct and apply 3D anisotropic rotation matrices.
 !!
 !! Coordinate system:
-!!   - ang1: azimuth (clockwise from north, Z-axis rotation)
-!!   - ang2: dip (rotation about X-axis)
-!!   - ang3: twist about principal axis (Y-axis rotation in this setup)
+!!   - ang1: Azimuth angle (degrees clockwise from the positive Y axis)
+!!           specifying the horizontal orientation of the major continuity axis.
+!!   - ang2: Dip angle (degrees) of the major axis measured downward from
+!!           the horizontal plane.
+!!   - ang3: Rotation angle (degrees) about the major axis.
+!!           Defines the orientation of the minor continuity axes within
+!!           the plane perpendicular to the major axis.
 !!
 !! Anisotropy:
 !!   - anis1: scaling in X direction

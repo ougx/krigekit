@@ -194,32 +194,33 @@ def ck(obsloc0, obsloc1, obsval0, obsval1, newloc,
     v2 = vgms[1]
     vc = vgms[2]
 
-    rot0 = Rotation.from_euler('zyx', [v1["azimuth"], v1["dip"], v1["plunge"]], degrees=True)
     if not is3d:
         obsloc0 = np.column_stack([obsloc0, np.zeros(len(obsloc0))])
         obsloc1 = np.column_stack([obsloc1, np.zeros(len(obsloc1))])
         newloc  = np.column_stack([np.asarray(newloc), np.zeros(len(newloc))])
 
     # Apply shared rotation and range scaling
-    hh0 = np.array([[v1["a_minor1"], v1["a_major"], v1["a_minor2"]]])
-    obsloc0 = rot0.apply(obsloc0) / hh0
-    obsloc1 = rot0.apply(obsloc1) / hh0
-    newloc  = rot0.apply(newloc)  / hh0
 
     n1, n2, nnew = len(obsloc0), len(obsloc1), len(newloc)
     ntot = n1 + n2 + 1 + std_ck         # +1 for unbias
+    def cov_anis(xa, xb, v):
+        rot0 = Rotation.from_euler('zxy', [v["azimuth"], -v["dip"], -v["plunge"]], degrees=True)
+        h = xa[:, None, :] - xb[None, :, :]
+        hrot = rot0.apply(h.reshape(-1, 3)).reshape(h.shape)
+        ranges = np.array([v["a_minor1"], v["a_major"], v["a_minor2"]])
+        return _covfunc[v["vtype"]](np.sqrt(np.sum((hrot / ranges)**2, axis=2))) * v["sill"]
 
     # ---- obs-obs covariance blocks ----------------------------------------
-    C11 = _covfunc[v1["vtype"]](squareform(pdist(obsloc0))) * v1["sill"]
+    C11 = cov_anis(obsloc0, obsloc0, v1)
     np.fill_diagonal(C11, v1["nugget"] + v1["sill"])
 
-    C22 = _covfunc[v2["vtype"]](squareform(pdist(obsloc1))) * v2["sill"]
+    C22 = cov_anis(obsloc1, obsloc1, v2)
     np.fill_diagonal(C22, v2["nugget"] + v2["sill"])
 
-    C12 = _covfunc[vc["vtype"]](cdist(obsloc0, obsloc1)) * vc["sill"]  # (n1, n2), no diag fill
+    C12 =cov_anis(obsloc0, obsloc1, vc) # (n1, n2), no diag fill
 
-    c10 = _covfunc[v1["vtype"]](cdist(obsloc0, newloc)) * v1["sill"]   # (n1, nnew)
-    c20 = _covfunc[vc["vtype"]](cdist(obsloc1, newloc)) * vc["sill"]   # (n2, nnew)
+    c10 = cov_anis(obsloc0, newloc, v1)   # (n1, nnew)
+    c20 = cov_anis(obsloc1, newloc, vc)   # (n2, nnew)
     # ---- augmented CK matrix: [C11  C12  1] / [C21  C22  1] / [1ᵀ  1ᵀ  0] ---
     if std_ck:
         u1 = np.zeros((n1, 2)); u1[:, 0] = 1.0
@@ -355,6 +356,42 @@ class TestCoKrigingButte:
         e_atol = 5e-5 if vtype == "gau" else 1e-6
         np.testing.assert_allclose(v0, v1[:,0,0], rtol=rtol, atol=1e-6), "Variances do not match"
         np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=e_atol), "Estimates do not match"
+
+
+    @pytest.mark.parametrize("vtype", _covfunc.keys())
+    @pytest.mark.parametrize("aniso1",  [1.0, 0.1])
+    @pytest.mark.parametrize("aniso2",  [0.1, 0.01])
+    @pytest.mark.parametrize("azimuth", [0.0, 225])
+    @pytest.mark.parametrize("dip"   ,  [0.0, 5.0])
+    def test_result_exact_aniso3d(self, pc2d_obs, aem2d_small, pc2d_grid, vtype, aniso1, aniso2, azimuth, dip):
+        obsloc0, obsval0 = pc2d_obs
+        obsloc1, obsval1 = aem2d_small
+        newloc, _ = pc2d_grid
+        rng     = np.random.default_rng(42)
+        dz = 75
+        obsloc0 = np.column_stack([obsloc0, rng.uniform(-dz, dz, len(obsloc0))])
+        obsloc1 = np.column_stack([obsloc1, rng.uniform(-dz, dz, len(obsloc1))])
+        newloc  = np.column_stack([newloc, np.zeros(len(newloc))])
+        vs = vgms(vtype=vtype, a_minor1=5000.0*aniso1, a_minor2=5000.0*aniso2,
+                  azimuth=azimuth, dip=dip)
+        vgm_spec={
+            (1,1): vs[0],
+            (2,2): vs[1],
+            (1,2): vs[2],
+        }
+        std_ck = True
+
+        e1, v1 = cokriging(
+            [obsloc0, obsloc1],
+            [obsval0, obsval1],
+            newloc, vgm_spec, std_ck=std_ck)
+        e0, v0 = ck(obsloc0, obsloc1, obsval0, obsval1, newloc, vgms=vs, std_ck=std_ck, is3d=True)
+        rtol = 1e-3 if vtype == "gau" else 1e-4
+        # Gaussian aniso cases can compare estimates very close to zero, where
+        # tiny factorization/table differences dominate the relative error.
+        atol = 1e-2 if vtype == "gau" else 1e-4
+        np.testing.assert_allclose(e0, e1[:,0]  , rtol=rtol, atol=atol), "Estimates do not match"
+        np.testing.assert_allclose(v0, v1[:,0,0], rtol=rtol, atol=1e-6), "Variances do not match"
 
 
 class TestCoKrigingTextbook:
