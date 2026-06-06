@@ -515,12 +515,13 @@ contains
   ! krige_st_set_search — build ST KD-tree for variable ivar
   !=============================================================================
   integer(c_int) function krige_st_set_search(handle, ivar, &
-      time_at, anis1, anis2, azimuth, dip, plunge) &
+      time_at, anis1, anis2, azimuth, dip, plunge, sector_search) &
       bind(C, name='krige_st_set_search') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: ivar
     real(c_double),      intent(in), value :: time_at
     real(c_double),      intent(in), value :: anis1, anis2, azimuth, dip, plunge
+    integer(c_int),      intent(in), value :: sector_search
     type(t_kriging_st), pointer :: obj
     real :: f_time_at, f_anis1, f_anis2, f_azimuth, f_dip, f_plunge
     call kriging_clear_error()
@@ -544,7 +545,8 @@ contains
     obj%obs(int(ivar))%time_at = real(time_at)
     call obj%set_search(int(ivar), &
       anis1=f_anis1, anis2=f_anis2, &
-      azimuth=f_azimuth, dip=f_dip, plunge=f_plunge)
+      azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
+      sector_search=l(sector_search))
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_search
 

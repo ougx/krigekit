@@ -183,6 +183,7 @@ module kriging_base
     real,    allocatable :: x     (:,:)    ! [nvar, matsize]
     real,    allocatable :: matA  (:,:)    ! [matsize, matsize]
     real,    allocatable :: rhsB  (:,:)    ! [nvar, matsize]
+    type(kdtree2_result), allocatable :: results(:) ! [ncand_limit] candidate query buffer
     type(t_factor_cache) :: cache
     type(t_factor_hash_cache) :: hcache
   contains
@@ -213,6 +214,7 @@ module kriging_base
     real                 :: rotmat(3,3)
     logical              :: need_search = .false.
     logical              :: anisotropic_search = .false.
+    logical              :: sector_search = .false.
     logical              :: set_search = .false.
     type(kdtree2), pointer :: tree => null()
   end type t_obsgrid
@@ -327,7 +329,7 @@ module kriging_base
     integer :: matsize_max  = 0
     integer :: mmax         = 0
     ! --- ctx init helpers (allocated and populated by pre_solve) ---
-    integer, allocatable :: obs_nmax(:)   ! [nvar]
+    integer, allocatable :: obs_nmax(:)   ! [nvar]  ! total neighbours for each variable; obs%nmax could be the sector size if sector_search == .true.
     integer, allocatable :: grad_n(:)     ! [nvar]; filled from grad(:) when present
     type(t_obsgrid),   pointer :: obs(:) => null()
     type(t_grid),      pointer :: grid  => null()
@@ -1797,6 +1799,7 @@ contains
     if (allocated(self%x     )) deallocate(self%x)
     if (allocated(self%matA  )) deallocate(self%matA)
     if (allocated(self%rhsB  )) deallocate(self%rhsB)
+    if (allocated(self%results)) deallocate(self%results)
     if (allocated(self%cache%nnear))      deallocate(self%cache%nnear)
     if (allocated(self%cache%inear))      deallocate(self%cache%inear)
     if (allocated(self%cache%matA))       deallocate(self%cache%matA)
@@ -2176,6 +2179,20 @@ contains
         call ctx%cache%alloc(npp, krige%ndrift + krige%naug, nv, nb, mmax)
         if (safe_nslot > 0) &
           call ctx%hcache%alloc(safe_nslot, npp, krige%ndrift + krige%naug, nv, nb, mmax)
+        block
+          integer :: ncand_limit, ivar
+          ncand_limit = 0
+          do ivar = 1, nv
+            if (krige%obs(ivar)%sector_search) then
+              ncand_limit = max(ncand_limit, &
+                max(krige%obs(ivar)%n + merge(krige%block%n, 0, associated(krige%block) .and. krige%nsim > 0), &
+                    (2**krige%ndim) * krige%obs(ivar)%nmax * 4))
+            else
+              ncand_limit = max(ncand_limit, krige%obs(ivar)%nmax)
+            end if
+          end do
+          if (ncand_limit > 0) allocate(ctx%results(ncand_limit))
+        end block
       end if
       allocate(ctx%nnear (ng))
       allocate(ctx%inear (mmax, ng))
@@ -2309,13 +2326,10 @@ contains
   subroutine fill_ctx_sizing_common(self)
     class(t_kriging_base), intent(inout) :: self
     integer :: ivar
-    if (.not. allocated(self%obs_nmax)) allocate(self%obs_nmax(self%nvar))
     if (.not. allocated(self%grad_n))   allocate(self%grad_n(self%nvar))
     do ivar = 1, self%nvar
-      self%obs_nmax(ivar) = self%obs(ivar)%nmax
       self%grad_n(ivar)   = 0
     end do
-    self%mmax = maxval(self%obs%nmax)
   end subroutine fill_ctx_sizing_common
 
 
@@ -2503,10 +2517,18 @@ contains
     nv = self%nvar
     nb = self%block%n
     ng = self%ngroups
-    nm = maxval(self%obs(1:self%nvar)%nmax)
-    ! Extend nm to cover grad groups (their inear is sequential up to grad%n)
-    if (associated(self%grad)) &
-      nm = max(nm, maxval([(self%grad(q)%n, q=1,self%nvar)]))
+
+    if (.not. allocated(self%obs_nmax)) allocate(self%obs_nmax(self%nvar))
+    do q = 1, self%nvar
+      if (self%obs(q)%sector_search) then
+        self%obs_nmax(q) = (2**self%ndim) * self%obs(q)%nmax
+      else
+        self%obs_nmax(q) = self%obs(q)%nmax
+      end if
+    end do
+    self%mmax = maxval(self%obs_nmax)
+
+    nm = self%mmax
     if (nm <= 0) then
       call kriging_error(subname, 'call set_obs() before alloc_weight_store() so nmax is set')
       return
@@ -2629,7 +2651,7 @@ contains
 
     associate(ws => self%wstore)
       open(newunit=ifile, file=trim(self%weight_file), status='replace')
-      write(ifile, *) self%block%n, self%nvar, (self%obs(ivar)%nmax, ivar=1, self%nvar)
+      write(ifile, *) self%block%n, self%nvar, (self%obs_nmax(ivar), ivar=1, self%nvar) ! sizes
       do ib = 1, self%block%n
         write(ifile, "(I0,*(:2x,I0))") self%block%order(ib), ws%nnear(1:self%ngroups, ib)
         write(ifile, '(*(:2x,I0))') (ws%inear(1:ws%nnear(ii,ib), ii, ib), ii=1, self%ngroups)
@@ -2723,7 +2745,7 @@ contains
     nv = self%nvar
     nb = self%block%n
     ng = self%ngroups
-    nm = maxval(self%obs(1:self%nvar)%nmax)
+    nm = self%mmax
     if (nm <= 0) then
       call kriging_error(subname, 'call set_obs() before set_weights() so nmax is set')
       return
@@ -2779,6 +2801,17 @@ contains
       if (kriging_failed()) return
     end if
 
+    !-- Calculate self%obs_nmax and self%mmax once, taking sector_search into account
+    if (.not. allocated(self%obs_nmax)) allocate(self%obs_nmax(self%nvar))
+    do ivar = 1, self%nvar
+      if (self%obs(ivar)%sector_search) then
+        self%obs_nmax(ivar) = (2**self%ndim) * self%obs(ivar)%nmax
+      else
+        self%obs_nmax(ivar) = self%obs(ivar)%nmax
+      end if
+    end do
+    self%mmax = maxval(self%obs_nmax)
+
     !-- naug may be recomputed if unbias/nvar/std_ck changed since initialize.
     self%naug = merge(self%unbias * self%nvar, self%unbias, self%std_ck)
 
@@ -2786,7 +2819,7 @@ contains
     self%nppmax = 0
     self%ngrad  = 0
     do ivar = 1, self%nvar
-      self%nppmax = self%nppmax + self%obs(ivar)%nmax
+      self%nppmax = self%nppmax + self%obs_nmax(ivar)
       if (associated(self%grad)) then
         self%nppmax = self%nppmax + self%grad(ivar)%n
         self%ngrad  = self%ngrad  + self%grad(ivar)%n
@@ -2831,7 +2864,7 @@ contains
       end if
       if (.not. allocated(self%pf%L)) then
         call self%pf%alloc(self%nppmax, self%ndrift + self%naug, self%nvar, &
-                           self%ngroups_base, maxval(self%obs%nmax))
+                           self%ngroups_base, self%mmax)
       end if
     end if
 
@@ -2846,7 +2879,7 @@ contains
           call kriging_close_unit(self%ifile); return
         end if
         if (hdr_nblock /= self%block%n .or. hdr_nvar /= self%nvar .or. &
-            any(nmax /= self%obs%nmax)) then
+            any(nmax /= self%obs_nmax)) then
           call kriging_error(subname, 'weight_file dimensions do not match this kriging object.')
           call kriging_close_unit(self%ifile); return
         end if

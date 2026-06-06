@@ -299,7 +299,8 @@ SGSIM.  Python generates both arrays before calling.  Call after
 int krige_set_search(int64_t handle,
     int ivar,
     double anis1, double anis2,
-    double azimuth, double dip, double plunge)
+    double azimuth, double dip, double plunge,
+    int sector_search)
 ```
 
 Builds the KD-tree and configures the search ellipse for variable `ivar`.
@@ -312,6 +313,7 @@ Call once per variable after all observations are loaded.
 | `azimuth` | Major axis azimuth (degrees, clockwise from North) |
 | `dip` | Dip angle (degrees, positive downward) |
 | `plunge` | Plunge angle (degrees) |
+| `sector_search` | 0/1: enable sector (quadrant/octant) search limiting candidates per sector |
 
 ---
 
@@ -704,7 +706,8 @@ int krige_st_set_search(int64_t handle,
     double anis2,      // spatial vertical/major anisotropy ratio
     double azimuth,    // major-axis azimuth (degrees, clockwise from North)
     double dip,        // dip angle (degrees)
-    double plunge)     // plunge angle (degrees)
+    double plunge,     // plunge angle (degrees)
+    int sector_search) // 0/1: enable sector (octant) search
 ```
 
 Builds the 4D KD-tree for variable `ivar`.  The time axis is stored as
@@ -718,6 +721,10 @@ h_ST = sqrt(h_S^2 + (time_at * dt)^2)
 Pass `time_at` equal to `at` from `krige_st_set_st_model` to keep search and
 variogram scales consistent.  `maxdist` set in `krige_st_set_obs` is then a
 radius in km-equivalent (h_ST) units.
+
+When `sector_search` is `1`, candidate neighbours are partitioned into 8 spatial
+octants centered on the target location. At most `nmax` (from `krige_st_set_obs`)
+are selected per octant, leading to a maximum total of `8 * nmax` neighbours.
 
 ---
 

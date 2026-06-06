@@ -73,6 +73,21 @@ k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
           nmax=15, maxdist=50.0)
 ```
 
+### Sector search
+
+To prevent candidate neighbours from clustering in a single direction (which can happen when data is densely sampled along lines or clusters, leaving other directions unrepresented), you can enable **sector search**.
+
+When `sector_search=True` is passed to `set_search`, the search space is divided into sectors centered on the target prediction point:
+- **2D space**: Divided into 4 quadrants.
+- **3D space** (and **Space-Time** kriging): Divided into 8 octants.
+
+Under sector search, `nmax` (set in `set_obs`) acts as a limit **per sector** rather than a global limit. The search selects up to `nmax` closest neighbours from each quadrant/octant. This results in a maximum of `4 * nmax` neighbours in 2D, or `8 * nmax` in 3D/ST, ensuring a balanced spatial distribution around the estimation point.
+
+```python
+# Enable quadrant/octant sector search
+k.set_search(ivar=1, sector_search=True)
+```
+
 Observation coordinates are checked when `set_obs` is called.  Duplicate
 coordinate tuples within the same variable are rejected because the search tree
 and kriging system require unique observation locations.  Aggregate or remove

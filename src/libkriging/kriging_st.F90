@@ -318,11 +318,12 @@ contains
   ! If all observations fit within nmax, need_search=.false. and no tree is
   ! built; distances are computed directly in search_neighbors.
   !=============================================================================
-  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, time_at)
+  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, time_at, sector_search)
     class(t_kriging_st), intent(inout) :: self
     integer,             intent(in)    :: ivar
     real,    intent(in), optional      :: anis1, anis2, azimuth, dip, plunge
     real,    intent(in), optional      :: time_at
+    logical, intent(in), optional      :: sector_search
 
     real    :: a1, a2, az, dp, pl, ta
     real, allocatable :: tcoord(:,:)
@@ -367,6 +368,7 @@ contains
     end if
 
     associate(obs => self%obs(ivar))
+      if (present(sector_search)) obs%sector_search = sector_search
       obs%rotmat  = calc_rotmat(az, dp, pl, a1, a2)
       obs%time_at = ta
       obs%anisotropic_search = (abs(a1-1.0) > EPSLON .or. abs(a2-1.0) > EPSLON) &
@@ -392,7 +394,7 @@ contains
           tcoord(1:self%ndim,:) = obs%coord(1:self%ndim,:)
         end if
         tcoord(self%nlag,:) = time_search_coord(ta, obs%coord(self%nlag,:))
-        obs%tree => kdtree2_create(tcoord, sort=.false., rearrange=.true.)
+        obs%tree => kdtree2_create(tcoord, sort=obs%sector_search, rearrange=.true.)
         if (kriging_failed()) return
       end if
       obs%set_search = .true.
@@ -470,7 +472,6 @@ contains
     real                     :: newloc(self%nlag,1), block_t, block_ht
     real                     :: ta
     logical, allocatable     :: is_obs(:)
-    type(kdtree2_result), allocatable :: results(:)
     character(len=*), parameter :: subname = "t_kriging_st%search_neighbors"
 
     associate( &
@@ -507,18 +508,17 @@ contains
           nnearb => ctx%nnear(igsim), &
           distb  => ctx%sqdist(:, igsim))
 
-          allocate(results(nmax))
           if (nmax < nobs + iblock - 1) then
             call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, &
-                                          results, nobs + iblock - 1)
+                                          ctx%results, nobs + iblock - 1)
             if (kriging_failed()) return
-            allocate(is_obs, source = results%idx <= nobs)
+            allocate(is_obs, source = ctx%results(1:nmax)%idx <= nobs)
             nnear  = count(is_obs)
             nnearb = nmax - nnear
-            inear (1:nnear)  = pack(results%idx,  is_obs)
-            inearb(1:nnearb) = pack(results%idx, .not. is_obs) - nobs
-            dist  (1:nnear)  = pack(results%dis,  is_obs)
-            distb (1:nnearb) = pack(results%dis, .not. is_obs)
+            inear (1:nnear)  = pack(ctx%results(1:nmax)%idx,  is_obs)
+            inearb(1:nnearb) = pack(ctx%results(1:nmax)%idx, .not. is_obs) - nobs
+            dist  (1:nnear)  = pack(ctx%results(1:nmax)%dis,  is_obs)
+            distb (1:nnearb) = pack(ctx%results(1:nmax)%dis, .not. is_obs)
           else
             nnear  = nobs
             nnearb = iblock - 1
@@ -542,31 +542,104 @@ contains
       ! Standard kriging / cokriging search
       !----------------------------------------------------------------------
       else
-        allocate(results(nmax))
-        if (self%obs(ivar)%need_search) then
-          call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), nmax, results)
-          if (kriging_failed()) return
-          nnear          = nmax
-          inear(1:nnear) = results%idx
-          dist (1:nnear) = results%dis
-        else
-          nnear = nobs
-          call set_seq(inear(1:nnear), nnear)
-          dist(1:nnear) = rotated_dists(rotmat, self%ndim, xloc(1:self%ndim,1), &
-                            obsloc(1:self%ndim,1:nnear)) + &
-                            (time_search_coord(ta, obsloc(self%nlag,1:nnear)) - block_ht)**2
-        end if
+        if (self%obs(ivar)%sector_search) then
+          block_sector: block
+            use kdtree2_module, only: kdtree2_sort_results
+            integer :: ncand, sector, ix, iy, iz, idx
+            integer :: sector_count(8)
+            real :: pt_rotated(self%ndim, 1)
+            real :: dx, dy, dz
 
-        !-- Cross-validation: exclude target from its own neighbourhood
-        if (self%cross_validation) then
-          do i = 1, nnear
-            if (inear(i) == iblock) then
-              nnear = nnear - 1
-              inear(i:nnear) = inear(i+1:nnear+1)
-              dist (i:nnear) = dist (i+1:nnear+1)
-              exit
+            if (self%obs(ivar)%need_search) then
+              ncand = min(nobs, (2**self%ndim) * nmax * 4)
+              call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), ncand, ctx%results)
+              if (kriging_failed()) return
+              call kdtree2_sort_results(ncand, ctx%results)
+            else
+              ncand = nobs
+              ctx%results(1:ncand)%idx = [(i, i=1, ncand)]
+              ctx%results(1:ncand)%dis = rotated_dists(rotmat, self%ndim, xloc(1:self%ndim, 1), &
+                              obsloc(1:self%ndim, 1:ncand)) + &
+                              (time_search_coord(ta, obsloc(self%nlag, 1:ncand)) - block_ht)**2
+              call kdtree2_sort_results(ncand, ctx%results)
             end if
-          end do
+
+            nnear = 0
+            sector_count = 0
+            do i = 1, ncand
+              idx = ctx%results(i)%idx
+              if (self%cross_validation .and. idx == iblock) cycle
+              if (ctx%results(i)%dis > maxdist) cycle
+
+              if (self%obs(ivar)%anisotropic_search) then
+                call sub_rotate(rotmat, self%ndim, 1, obsloc(1:self%ndim, idx:idx), pt_rotated)
+              else
+                pt_rotated = obsloc(1:self%ndim, idx:idx)
+              end if
+
+              dx = pt_rotated(1, 1) - newloc(1, 1)
+              dy = pt_rotated(2, 1) - newloc(2, 1)
+              if (self%ndim == 3) then
+                dz = pt_rotated(3, 1) - newloc(3, 1)
+              else
+                dz = 0.0
+              end if
+
+              if (dx >= 0.0) then
+                ix = 0
+              else
+                ix = 1
+              end if
+              if (dy >= 0.0) then
+                iy = 0
+              else
+                iy = 1
+              end if
+              if (self%ndim == 3) then
+                if (dz >= 0.0) then
+                  iz = 0
+                else
+                  iz = 1
+                end if
+                sector = 1 + ix + 2 * iy + 4 * iz
+              else
+                sector = 1 + ix + 2 * iy
+              end if
+
+              if (sector_count(sector) < nmax) then
+                sector_count(sector) = sector_count(sector) + 1
+                nnear = nnear + 1
+                inear(nnear) = idx
+                dist(nnear)  = ctx%results(i)%dis
+              end if
+            end do
+          end block block_sector
+        else
+          if (self%obs(ivar)%need_search) then
+            call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), nmax, ctx%results)
+            if (kriging_failed()) return
+            nnear          = nmax
+            inear(1:nnear) = ctx%results(1:nmax)%idx
+            dist (1:nnear) = ctx%results(1:nmax)%dis
+          else
+            nnear = nobs
+            call set_seq(inear(1:nnear), nnear)
+            dist(1:nnear) = rotated_dists(rotmat, self%ndim, xloc(1:self%ndim,1), &
+                              obsloc(1:self%ndim,1:nnear)) + &
+                              (time_search_coord(ta, obsloc(self%nlag,1:nnear)) - block_ht)**2
+          end if
+
+          !-- Cross-validation: exclude target from its own neighbourhood
+          if (self%cross_validation) then
+            do i = 1, nnear
+              if (inear(i) == iblock) then
+                nnear = nnear - 1
+                inear(i:nnear) = inear(i+1:nnear+1)
+                dist (i:nnear) = dist (i+1:nnear+1)
+                exit
+              end if
+            end do
+          end if
         end if
       end if
 
@@ -647,6 +720,8 @@ contains
       matsize   => ctx%matsize, &
       ndrift    => self%ndrift, &
       naug      => self%naug)
+
+      matA(1:matsize, 1:matsize) = 0.0
 
       ivgm = 1
       ln   = self%block%localnugget(ctx%iblock)

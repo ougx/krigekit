@@ -614,12 +614,13 @@ contains
   !   dip     : dip angle (degrees, positive downward)
   !   plunge  : plunge angle (degrees)
   !=============================================================================
-  integer(c_int) function krige_set_search(handle, ivar, anis1, anis2, azimuth, dip, plunge) &
+  integer(c_int) function krige_set_search(handle, ivar, anis1, anis2, azimuth, dip, plunge, sector_search) &
       bind(C, name='krige_set_search') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
     integer(c_int),      intent(in), value :: ivar
     real(c_double),      intent(in), value :: anis1, anis2, azimuth, dip, plunge
+    integer(c_int),      intent(in), value :: sector_search
 
     type(t_kriging), pointer :: obj
     call kriging_clear_error()
@@ -629,7 +630,7 @@ contains
       return
     end if
     call obj%set_search(int(ivar), real(anis1), real(anis2), &
-      real(azimuth), real(dip), real(plunge))
+      real(azimuth), real(dip), real(plunge), sector_search = l(sector_search))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_search
 

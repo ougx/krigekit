@@ -107,7 +107,7 @@ _st_destroy    = _status_cfun("krige_st_destroy",    [_ptr_int64])
 _st_initialize = _status_cfun("krige_st_initialize", [
     ctypes.c_int64,
     _c_int, _c_int, _c_int, _c_int,        # nvar ndrift unbias nsim
-    _c_int, _c_int, _c_int, _c_int,        # aniso_search weight_corr use_old store_weight
+    _c_int, _c_int, _c_int, _c_int,         # aniso_search weight_corr use_old store_weight
     _c_int, _c_int, _c_int, _c_int,        # cross_val write_mat neglect_err verbose
     ctypes.c_char_p,                        # weight_file
     _ptr_dbl,                               # bounds[2]
@@ -168,6 +168,7 @@ _st_set_sim = _status_cfun("krige_st_set_sim", [
 _st_set_search = _status_cfun("krige_st_set_search", [
     ctypes.c_int64, _c_int,
     _c_double, _c_double, _c_double, _c_double, _c_double, _c_double,
+    _c_int,
 ])
 _st_prepare       = _status_cfun("krige_st_prepare",        [ctypes.c_int64])
 _st_reset_vgm     = _status_cfun("krige_st_reset_vgm",     [ctypes.c_int64, _c_int, _c_int])
@@ -658,21 +659,49 @@ class SpaceTimeKriging:
         azimuth: float = 0.0,
         dip: float = 0.0,
         plunge: float = 0.0,
+        sector_search: bool = False,
     ):
         """
-        Build ST KD-tree for variable ivar.
+        Build the space-time KD-tree and configure the search ellipse for variable ``ivar``.
 
-        ``time_at`` scales the time axis to km-equivalent units: the KD-tree
-        coordinate is ``t * time_at``.  This makes the L2 distance in the 4D
-        search space equal to the sum-metric ST distance h_ST = sqrt(h_S^2 +
-        (time_at * dt)^2).  Use the same value as ``set_st_model(at=...)``.
+        Call after :meth:`set_obs` (and after :meth:`set_sim` for ivar=1 in SGSIM).
 
-        Call after set_obs (and after set_sim for ivar=1 in SGSIM).
+        Parameters
+        ----------
+        ivar : int
+            Variable index (1-based).
+        time_at : float
+            Temporal scale factor (default 1.0) to convert the time axis into
+            km-equivalent search units: the search-tree time coordinate is
+            ``t * time_at``. This ensures that L2 distance in the 4D search
+            space matches the sum-metric space-time distance:
+            ``h_ST = sqrt(h_S^2 + (time_at * dt)^2)``. Normally, you should pass
+            the same value as ``at`` in :meth:`set_st_model`.
+        anis1 : float
+            Spatial minor/major anisotropy ratio (default 1.0).
+        anis2 : float
+            Spatial vertical/major anisotropy ratio (default 1.0).
+        azimuth : float
+            Azimuth of the spatial major axis in degrees (default 0.0, clockwise from North).
+        dip : float
+            Dip angle of the spatial major axis in degrees (default 0.0, positive downward).
+        plunge : float
+            Plunge angle of the spatial major axis in degrees (default 0.0).
+        sector_search : bool
+            Enable sector (octant) search limiting candidates per sector.
+            If ``True``, candidate neighbours are partitioned into 8 spatial
+            octants centered on the prediction location. At most ``nmax``
+            (from :meth:`set_obs`) candidates are selected per octant.
+            This ensures a balanced spatial distribution of neighbours and prevents
+            clustering artifacts. The maximum total neighbours selected is ``8 * nmax``.
+            If search anisotropy is enabled, spatial coordinates are rotated/scaled
+            according to the anisotropy parameters before sector assignment.
         """
         _st_set_search(_h(self._handle), _c_int(ivar),
                        _c_double(time_at),
                        _c_double(anis1), _c_double(anis2),
-                       _c_double(azimuth), _c_double(dip), _c_double(plunge))
+                       _c_double(azimuth), _c_double(dip), _c_double(plunge),
+                       _c_int(int(sector_search)))
 
     # ------------------------------------------------------------------
     def solve(self, nthread: int = 0, ncache: Optional[int] = None):

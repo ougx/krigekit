@@ -1,4 +1,4 @@
-﻿!==============================================================================
+!==============================================================================
 ! Module: kriging
 !
 ! Purpose
@@ -320,12 +320,13 @@ contains
   ! If all observations fit within nmax, need_search=.false. and no tree is
   ! built; distances are computed directly in search_neighbors.
   !============================================================================
-  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge)
+  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, sector_search)
     use rotation,       only: calc_rotmat, sub_rotate
     use kdtree2_module, only: kdtree2_create
     class(t_kriging)   :: self
     integer, intent(in) :: ivar
     real,    intent(in) :: anis1, anis2, azimuth, dip, plunge
+    logical, intent(in), optional :: sector_search
     character(len=*), parameter :: subname = "t_kriging%set_search"
 
     real, allocatable :: rcoord(:,:)   ! rotated coordinates for anisotropic tree
@@ -354,6 +355,8 @@ contains
       need_search        => self%obs(ivar)%need_search, &
       anisotropic_search => self%obs(ivar)%anisotropic_search)
 
+      if (present(sector_search)) obs%sector_search = sector_search
+
       !-- Activate anisotropic search only when there is meaningful anisotropy
       anisotropic_search = (abs(anis1 - 1.0) > EPSLON .or. abs(anis2 - 1.0) > EPSLON) &
                            .and. self%anisotropic_search
@@ -377,10 +380,10 @@ contains
           !-- Project coordinates into anisotropically scaled space before indexing
           allocate(rcoord, mold = obs%coord)
           call sub_rotate(obs%rotmat, ndim, size(obs%coord, 2), obs%coord, rcoord)
-          obs%tree => kdtree2_create(rcoord, sort = .false., rearrange = .true.)
+          obs%tree => kdtree2_create(rcoord, sort = obs%sector_search, rearrange = .true.)
           if (kriging_failed()) return
         else
-          obs%tree => kdtree2_create(obs%coord, sort = .false., rearrange = .true.)
+          obs%tree => kdtree2_create(obs%coord, sort = obs%sector_search, rearrange = .true.)
           if (kriging_failed()) return
         end if
       end if
@@ -406,24 +409,27 @@ contains
       if (kriging_failed()) return
     end if
     self%vgm%ndim     = self%ndim
+    !!!! no tabular for varying vgm, table storage become too big for entire grid
     !-- Build piecewise lookup tables now that ndim and all structures are final.
     !   Level B (build_struct_table) is tried first: 1 aniso_h + 1 table lookup
     !   regardless of nstruct.  Requires all non-nugget structures to share the
     !   same anisotropy matrix.  If they don't, fall back to Level A
     !   (build_all_tables): one table per component, always valid.
-    do ib = 1, merge(self%block%n, 1, self%varying_vgm)
-      do iv = 1, self%nvar
-        do jv = iv, self%nvar
-          call self%vgm(iv, jv, ib)%build_struct_table( &
-            h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
-          if (kriging_failed()) then
-            call kriging_clear_error()
-            call self%vgm(iv, jv, ib)%build_all_tables( &
+    if (.not. self%varying_vgm) then
+      do ib = 1, merge(self%block%n, 1, self%varying_vgm)
+        do iv = 1, self%nvar
+          do jv = iv, self%nvar
+            call self%vgm(iv, jv, ib)%build_struct_table( &
               h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
-          end if
+            if (kriging_failed()) then
+              call kriging_clear_error()
+              call self%vgm(iv, jv, ib)%build_all_tables( &
+                h_bounds=[0.0, 0.1, 0.5, 3.5], dh=[1e-5, 1e-4, 1e-3])
+            end if
+          end do
         end do
       end do
-    end do
+    end if
     call self%prepare_common(subname)
   end subroutine prepare
 
@@ -499,7 +505,6 @@ contains
     integer                     :: i, ig_sim
     real                        :: newloc(self%ndim, 1)
     logical, allocatable        :: is_obs(:)
-    type(kdtree2_result)        :: results(self%obs(ivar)%nmax)
     character(len=*), parameter :: subname = "t_kriging%search_neighbors"
 
     !-- Obs group index = ivar (groups 1:nvar map directly to obs variables 1:nvar).
@@ -536,17 +541,39 @@ contains
           nnearb => ctx%nnear(ig_sim), &
           distb  => ctx%sqdist(:, self%nvar + ivar))
 
-          if (nmax < nobs + iblock - 1) then
+          if (self%obs(ivar)%sector_search) then
+            !-- Sector search for SGSIM: same quadrant/octant logic as standard kriging
+            !   but applied to the combined obs+prior-block pool.
+            !   obsloc contains both obs (1:nobs) and block centres (nobs+1:end),
+            !   so sector assignment works identically for both; we just split
+            !   accepted candidates by idx <= nobs afterward.
+            nnear  = 0
+            nnearb = 0
+            if (nobs + iblock - 1 > 0) then
+              block
+                integer :: ncand
+                ncand = min(nobs + iblock - 1, (2**ndim) * nmax * 4)
+                call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), ncand, ctx%results, nobs+iblock-1)
+                if (kriging_failed()) return
+                call apply_sector_filter( &
+                  ctx%results, ncand, ndim, nmax, nobs, &
+                  newloc(:,1), obsloc, rotmat, self%obs(ivar)%anisotropic_search, &
+                  maxdist, 0, &
+                  inear, dist, nnear, inearb, distb, nnearb)
+              end block
+            end if
+
+          else if (nmax < nobs + iblock - 1) then
             !-- k-d tree query with max_idx filter: only returns entries < nobs+iblock
-            call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, results, nobs+iblock-1)
+            call kdtree2_n_nearest_maxidx(self%obs(ivar)%tree, newloc(:,1), nmax, ctx%results, nobs+iblock-1)
             if (kriging_failed()) return
-            allocate(is_obs, source = results%idx <= nobs)
+            allocate(is_obs, source = ctx%results(1:nmax)%idx <= nobs)
             nnear              = count(is_obs)
             nnearb             = nmax - nnear
-            inear (1:nnear)    = pack(results%idx, is_obs)
-            inearb(1:nnearb)   = pack(results%idx, .not. is_obs) - nobs  ! shift to 1-based block index
-            dist  (1:nnear)    = pack(results%dis, is_obs)
-            distb (1:nnearb)   = pack(results%dis, .not. is_obs)
+            inear (1:nnear)    = pack(ctx%results(1:nmax)%idx, is_obs)
+            inearb(1:nnearb)   = pack(ctx%results(1:nmax)%idx, .not. is_obs) - nobs  ! shift to 1-based block index
+            dist  (1:nnear)    = pack(ctx%results(1:nmax)%dis, is_obs)
+            distb (1:nnearb)   = pack(ctx%results(1:nmax)%dis, .not. is_obs)
           else
             !-- All obs + prior blocks fit within nmax: compute distances directly
             nnear  = nobs
@@ -563,12 +590,28 @@ contains
       ! Standard kriging / cokriging neighbour search
       !------------------------------------------------------------------------
       else
-        if (nmax < nobs) then
-          call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), nmax, results)
+        if (self%obs(ivar)%sector_search .and. self%obs(ivar)%need_search) then
+          block
+            integer :: ncand, cv_skip, dummy_nnearb
+            integer :: dummy_inearb(1)
+            real    :: dummy_distb(1)
+            ncand = min(nobs, (2**ndim) * nmax * 4)
+            call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), ncand, ctx%results)
+            if (kriging_failed()) return
+            nnear   = 0
+            cv_skip = merge(iblock, 0, self%cross_validation)
+            call apply_sector_filter( &
+              ctx%results, ncand, ndim, nmax, huge(0), &
+              newloc(:,1), obsloc, rotmat, self%obs(ivar)%anisotropic_search, &
+              maxdist, cv_skip, &
+              inear, dist, nnear, dummy_inearb, dummy_distb, dummy_nnearb)
+          end block
+        else if (nmax < nobs) then
+          call kdtree2_n_nearest(self%obs(ivar)%tree, newloc(:,1), nmax, ctx%results)
           if (kriging_failed()) return
           nnear          = nmax
-          inear(1:nnear) = results%idx
-          dist (1:nnear) = results%dis
+          inear(1:nnear) = ctx%results(1:nmax)%idx
+          dist (1:nnear) = ctx%results(1:nmax)%dis
         else
           !-- All observations fit: compute distances directly
           nnear = nobs
@@ -663,6 +706,7 @@ contains
       naug      => self%naug, &
       ndim      => self%ndim)
 
+      matA(1:matsize, 1:matsize) = 0.0
 
       ivgm = merge(ctx%iblock, 1, self%varying_vgm)
       rs   = self%block%rangescale(ctx%iblock)
@@ -1001,6 +1045,88 @@ contains
     if (associated(self%vgm)) deallocate(self%vgm)
   end subroutine finalize
 
+
+  !=============================================================================
+  ! apply_sector_filter — private helper for sector (quadrant/octant) search
+  !
+  ! Parameters
+  !   results     : kdtree2 query results, already sorted by ascending distance
+  !   ncand       : number of valid entries in results
+  !   ndim        : 2 or 3
+  !   nmax        : maximum neighbours per sector
+  !   nobs_split  : threshold index; idx <= nobs_split → obs (inear), else → block (inearb).
+  !                 Pass huge(0) when there are no simulated blocks in the tree.
+  !   newloc      : target location, already rotated if aniso (length ndim)
+  !   obsloc      : combined obs + block coordinate array (ndim x *)
+  !   rotmat      : rotation matrix handle (for aniso)
+  !   aniso       : apply rotation before computing sector offsets
+  !   maxdist     : squared-distance cutoff; candidates beyond this are skipped
+  !   skip_idx    : index to skip unconditionally (cross-validation); 0 = none
+  !   inear, dist, nnear   : accepted observation neighbours (output)
+  !   inearb, distb, nnearb: accepted prior-block neighbours (output; unused for nsim==0)
+  !=============================================================================
+  subroutine apply_sector_filter(results, ncand, ndim, nmax, nobs_split, &
+                                  newloc, obsloc, rotmat, aniso, maxdist, skip_idx, &
+                                  inear, dist, nnear, &
+                                  inearb, distb, nnearb)
+    type(kdtree2_result), intent(in)  :: results(*)
+    integer,              intent(in)  :: ncand, ndim, nmax, nobs_split, skip_idx
+    real,                 intent(in)  :: newloc(ndim), maxdist
+    real,                 intent(in)  :: obsloc(ndim, *)
+    real,                 intent(in)  :: rotmat(3, 3)
+    logical,              intent(in)  :: aniso
+    integer,              intent(out) :: inear(*), nnear
+    real,                 intent(out) :: dist(*)
+    integer,              intent(out) :: inearb(*), nnearb
+    real,                 intent(out) :: distb(*)
+
+    integer :: i, idx, sector, ix, iy, iz
+    integer :: sector_count(8)
+    real    :: pt_rotated(ndim, 1), dx, dy, dz
+
+    nnear  = 0
+    nnearb = 0
+    sector_count = 0
+
+    do i = 1, ncand
+      idx = results(i)%idx
+      if (idx == skip_idx) cycle
+      if (results(i)%dis > maxdist) cycle
+
+      if (aniso) then
+        call sub_rotate(rotmat, ndim, 1, obsloc(:, idx:idx), pt_rotated)
+      else
+        pt_rotated(:, 1) = obsloc(:, idx)
+      end if
+
+      dx = pt_rotated(1, 1) - newloc(1)
+      dy = pt_rotated(2, 1) - newloc(2)
+      dz = 0.0
+      if (ndim == 3) dz = pt_rotated(3, 1) - newloc(3)
+
+      ix = merge(1, 0, dx < 0.0)
+      iy = merge(1, 0, dy < 0.0)
+      if (ndim == 3) then
+        iz     = merge(1, 0, dz < 0.0)
+        sector = 1 + ix + 2*iy + 4*iz
+      else
+        sector = 1 + ix + 2*iy
+      end if
+
+      if (sector_count(sector) < nmax) then
+        sector_count(sector) = sector_count(sector) + 1
+        if (idx <= nobs_split) then
+          nnear         = nnear + 1
+          inear(nnear)  = idx
+          dist(nnear)   = results(i)%dis
+        else
+          nnearb         = nnearb + 1
+          inearb(nnearb) = idx - nobs_split   ! shift to 1-based block index
+          distb(nnearb)  = results(i)%dis
+        end if
+      end if
+    end do
+  end subroutine apply_sector_filter
 
 
   ! get_persistent_factor_info and get_persistent_factor_matrices have moved

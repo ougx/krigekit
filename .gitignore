@@ -77,3 +77,4 @@ src/sparks/00_compile_sparks.bat
 tests_py/log
 src/pykriging/kriging.exp
 src/pykriging/kriging.pdb
+/scratch

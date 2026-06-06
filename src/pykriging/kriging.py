@@ -217,6 +217,7 @@ _krige_set_sim     = _status_cfun("krige_set_sim", [
 _krige_set_search  = _status_cfun("krige_set_search", [
     ctypes.c_int64, _c_int,                      # handle, ivar
     _c_double, _c_double, _c_double, _c_double, _c_double,  # anis1, anis2, az, dip, plunge
+    _c_int,                                      # sector_search
 ])
 _krige_set_grad    = _status_cfun("krige_set_grad", [
     ctypes.c_int64,                              # handle
@@ -1092,32 +1093,44 @@ class _SpatialKriging:
         azimuth: float = 0.0,
         dip: float = 0.0,
         plunge: float = 0.0,
-    ):
-        """
-        Build the KD-tree and configure the search ellipse for variable ``ivar``.
-        Call once per variable after :meth:`set_obs` (and :meth:`set_sim` for SGSIM).
-
-        Parameters
-        ----------
-        ivar : int
-            Variable index (1-based).
-        anis1 : float
-            Horizontal anisotropy ratio (minor / major range). 1.0 = isotropic.
-        anis2 : float
-            Vertical anisotropy ratio (vertical / major range). 1.0 = isotropic.
-        azimuth : float
-            Azimuth of the major axis (degrees, clockwise from North).
-        dip : float
-            Dip angle (degrees, positive downward).
-        plunge : float
-            Plunge angle (degrees).
-        """
-        _krige_set_search(_h(self._handle),
-            _c_int(ivar),
-            _c_double(anis1), _c_double(anis2),
-            _c_double(azimuth), _c_double(dip), _c_double(plunge),
-        )
-        self._set_search[ivar-1] = True
+        sector_search: bool = False,
+     ):
+         """
+         Build the KD-tree and configure the search ellipse for variable ``ivar``.
+         Call once per variable after :meth:`set_obs` (and :meth:`set_sim` for SGSIM).
+ 
+         Parameters
+         ----------
+         ivar : int
+             Variable index (1-based).
+         anis1 : float
+             Horizontal anisotropy ratio (minor / major range). 1.0 = isotropic.
+         anis2 : float
+             Vertical anisotropy ratio (vertical / major range). 1.0 = isotropic.
+         azimuth : float
+             Azimuth of the major axis (degrees, clockwise from North).
+         dip : float
+             Dip angle (degrees, positive downward).
+         plunge : float
+             Plunge angle (degrees).
+         sector_search : bool
+             Enable sector (quadrant in 2D, octant in 3D) search limiting candidates per sector.
+             If ``True``, the search space is divided into quadrants/octants centered on
+             the prediction location. Candidates are sorted by distance, and at most
+             ``nmax`` (from :meth:`set_obs`) are selected from each sector.
+             This ensures a balanced spatial distribution of neighbours and prevents
+             clustering artifacts. The maximum total neighbours selected is ``4 * nmax``
+             in 2D or ``8 * nmax`` in 3D.
+             If search anisotropy is enabled, coordinates are rotated and scaled
+             according to the anisotropy parameters before sector assignment.
+         """
+         _krige_set_search(_h(self._handle),
+             _c_int(ivar),
+             _c_double(anis1), _c_double(anis2),
+             _c_double(azimuth), _c_double(dip), _c_double(plunge),
+             _c_int(int(sector_search)),
+         )
+         self._set_search[ivar-1] = True
 
     # ------------------------------------------------------------------
     def set_grad(
