@@ -50,17 +50,20 @@ debug builds, `--no-openmp`, and docs dependencies.
 
 ```python
 import numpy as np
-from pykriging import ordinary_kriging
+from pykriging import Kriging
 
 obs_coord  = np.array([[0,0],[1,0],[0,1],[1,1],[0.5,0.5]], dtype=float)
 obs_value  = np.array([1.0, 2.0, 3.0, 4.0, 2.5])
 grid_coord = np.mgrid[0:1.1:0.25, 0:1.1:0.25].reshape(2,-1).T
 
-est, var = ordinary_kriging(
-    obs_coord, obs_value, grid_coord,
-    vgm_spec=dict(vtype="sph", nugget=0.0, sill=1.0, a_major=1.0),
-    nmax=5,
-)
+k = Kriging()
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
+k.set_grid(coord=grid_coord)
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=1.0)
+k.set_search()
+k.solve()
+df = k.get_result_df()
+del k
 ```
 
 For the full class API, co-kriging, SGSIM, space-time kriging, indicator
