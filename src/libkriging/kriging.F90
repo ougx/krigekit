@@ -446,7 +446,7 @@ contains
             call kriging_error(subname, trim(msg))
             return
           end if
-          if (.not. self%vgm(jvar, ivar, ib)%is_valid()) then
+          if (.not. self%vgm(jvar, ivar, ib)%is_valid(allow_neg_sill=(ivar /= jvar))) then
             write(msg, '(A,I0,A,I0,A,I0,A)') &
               't_kriging_sva: variogram is not valid for block ', ib, &
               ', ivar=', ivar, ', jvar=', jvar, &

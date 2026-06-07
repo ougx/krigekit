@@ -382,7 +382,8 @@ contains
     integer :: k
     character(256) :: msg
 
-    ok = self%cs%is_valid() .and. self%ct%is_valid()
+    ok = self%cs%is_valid(allow_neg_sill=(ivar /= jvar)) .and. &
+         self%ct%is_valid(allow_neg_sill=(ivar /= jvar))
 
     if (self%model == ST_MODEL_SUM_METRIC) then
       !-- Joint sills must be set and non-negative

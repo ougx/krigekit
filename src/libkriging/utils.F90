@@ -299,6 +299,26 @@ subroutine r8vec_normal_01 ( n, x )
     return
   end subroutine
 
+  !============================================================================
+  ! r8vec_uniform_01 — fill X(1:N) with U(0,1) pseudorandom values.
+  !
+  ! Uses Fortran's intrinsic random_number (range [0,1)).  Exact zero is
+  ! clamped to epsilon so the result is safe for inverse-CDF operations
+  ! (e.g. finding which threshold interval contains the draw).
+  !============================================================================
+  subroutine r8vec_uniform_01(n, x)
+    integer, intent(in)  :: n
+    real,    intent(out) :: x(n)
+
+    if (n < 1) then
+      call kriging_error('r8vec_uniform_01', 'N must be larger than 0')
+      return
+    end if
+
+    call random_number(harvest = x)
+    where (x <= 0.0) x = epsilon(0.0)   ! clamp exact zero; random_number never returns 1.0
+  end subroutine r8vec_uniform_01
+
   !=============================================================
 ! Randomly select a subset from an integer array
 !

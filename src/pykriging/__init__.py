@@ -44,11 +44,16 @@ from pykriging.kriging_st import (   # noqa: F401
     spacetime_cokriging,
 )
 
+from pykriging.kriging_indicator import (   # noqa: F401
+    IndicatorKriging,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # concrete classes (for isinstance checks and direct use)
     "Kriging",
     "SpaceTimeKriging",
+    "IndicatorKriging",
     # convenience functions
     "ordinary_kriging",
     "cokriging",

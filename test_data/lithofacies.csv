@@ -1,0 +1,101 @@
+point_id,x_pixel,y_pixel,y_pixel0,lithologic_code,lithology_interpretation,interpretation_note
+1,131,-85,85,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+2,242,-117,117,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+3,346,-35,35,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+4,455,-28,28,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+5,542,-89,89,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+6,655,-50,50,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+7,759,-33,33,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+8,861,-69,69,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+9,973,-61,61,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+10,1098,-57,57,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+11,1250,-105,105,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+12,1380,-49,49,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+13,1495,-28,28,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+14,1622,-47,47,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+48,73,-458,458,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+50,288,-471,471,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+79,82,-644,644,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+81,493,-627,627,C,Cobble,Visual estimate from image; verify with field/lab grain-size data if available.
+16,1807,-119,119,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+20,381,-167,167,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+23,730,-169,169,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+24,941,-190,190,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+25,1054,-162,162,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+27,1352,-158,158,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+28,1480,-154,154,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+30,1702,-176,176,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+31,1972,-147,147,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+49,180,-430,430,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+54,630,-409,409,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+55,726,-412,412,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+57,921,-433,433,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+58,1026,-427,427,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+63,1661,-427,427,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+66,1945,-408,408,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+68,384,-583,583,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+69,653,-596,596,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+72,1008,-589,589,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+76,1625,-567,567,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+80,301,-687,687,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+82,584,-691,691,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+85,919,-653,653,Cl,Silt & Clay,Visual estimate from image; verify with field/lab grain-size data if available.
+18,185,-226,226,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+19,290,-225,225,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+21,465,-194,194,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+22,617,-207,207,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+26,1154,-210,210,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+29,1577,-228,228,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+32,77,-351,351,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+34,208,-343,343,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+37,584,-312,312,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+38,690,-308,308,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+43,1279,-253,253,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+45,1564,-350,350,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+47,1893,-259,259,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+52,443,-377,377,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+56,803,-379,379,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+59,1126,-383,383,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+60,1262,-428,428,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+61,1367,-391,391,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+64,1832,-361,361,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+92,1950,-645,645,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+100,1460,-730,730,FS,Fine Sand,Visual estimate from image; verify with field/lab grain-size data if available.
+15,1745,-30,30,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+17,1932,-45,45,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+33,79,-240,240,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+35,336,-330,330,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+36,473,-273,273,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+39,790,-256,256,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+40,970,-309,309,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+41,1072,-277,277,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+42,1242,-324,324,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+44,1447,-286,286,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+46,1719,-312,312,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+51,400,-476,476,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+53,514,-476,476,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+62,1489,-453,453,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+65,1863,-476,476,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+67,196,-568,568,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+70,746,-531,531,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+71,870,-581,581,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+73,1088,-516,516,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+74,1217,-528,528,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+75,1383,-520,520,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+77,1762,-508,508,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+78,1955,-531,531,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+83,798,-621,621,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+84,807,-714,714,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+86,1107,-635,635,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+87,1218,-643,643,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+88,1344,-646,646,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+89,1490,-618,618,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+90,1688,-657,657,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+91,1790,-612,612,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+93,142,-739,739,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+94,448,-727,727,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+95,694,-725,725,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+96,950,-729,729,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+97,1056,-736,736,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+98,1163,-737,737,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.
+99,1298,-741,741,G,Sand & Gravel,Visual estimate from image; verify with field/lab grain-size data if available.

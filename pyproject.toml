@@ -27,12 +27,15 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24",
+    "pandas>=1.5",
+    "scipy>=1.10",
+    "matplotlib>=3.6",
+    "scikit-learn>=1.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pandas>=1.5",
 ]
 docs = [
     "sphinx>=7.0",
@@ -41,6 +44,8 @@ docs = [
     "sphinx-autoapi>=3.0",
     "sphinx-copybutton>=0.5",
     "sphinx-design>=0.5",
+    "sphinx-gallery>=0.15",
+    "Pillow>=9.0",
 ]
 
 [project.urls]

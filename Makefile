@@ -83,8 +83,10 @@ ifneq ($(origin FC),command line)
           FIND_FC_CMD = for %%c in (ifx gfortran ifort) do @where %%c >nul 2>nul && @echo %%c
       endif
   else
-      # Linux / macOS
-      FIND_FC_CMD = for c in ifx gfortran ifort; do command -v $$c >/dev/null 2>&1 && echo $$c; done
+      # Linux / macOS — use 'which' instead of 'command -v': dash (Ubuntu's /bin/sh) has a bug
+      # where 'command -v' inside a for loop silently drops stdout to the terminal when a
+      # subsequent iteration fails, so $(shell ...) captures nothing.  'which' is unaffected.
+      FIND_FC_CMD = for c in ifx gfortran ifort; do which $$c >/dev/null 2>&1 && echo $$c; done
   endif
 
   # Capture the first valid path found and strip it down to just the executable name
@@ -209,6 +211,10 @@ ifeq ($(FC),gfortran)
     # natively when they appear as linker inputs.
     DLL_EXTRA := $(DEF_FILE) -static -static-libgcc -static-libgfortran
   else
+    # Linux/macOS: all object files must be compiled with -fPIC for a shared library.
+    # (harmless for the sparks executable, and conventional on Linux)
+    FFLAGS_release += -fPIC
+    FFLAGS_debug   += -fPIC
     DLL_EXTRA :=
   endif
 
@@ -264,6 +270,7 @@ LIB_SRCS := \
   $(_CORE_SRCS) \
   src/libkriging/variogram_st.f90    \
   src/libkriging/kriging_capi_common.F90    \
+  src/libkriging/kriging_indicator.F90 \
   src/libkriging/kriging_capi.F90    \
   src/libkriging/kriging_st.F90      \
   src/libkriging/kriging_st_capi.f90

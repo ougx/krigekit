@@ -78,7 +78,7 @@ Pass `--no-openmp` to disable OpenMP if your compiler or environment does not
 support it.  Single-threaded performance is unaffected for most workloads.
 :::
 
-### Step 3 — Install the Python package
+## Step 3 — Install the Python package
 
 ```bash
 pip install -e .        # editable install (recommended for development)
@@ -86,7 +86,7 @@ pip install -e .        # editable install (recommended for development)
 pip install .
 ```
 
-### Step 4 — Verify
+## Step 4 — Verify
 
 ```bash
 pip install -e ".[dev]"
@@ -96,7 +96,7 @@ pytest
 All tests should pass.  If the shared library is missing, you will get an
 `OSError` when importing `pykriging`.
 
-### Docs dependencies (optional)
+## Docs dependencies (optional)
 
 To build this documentation locally:
 

@@ -21,6 +21,7 @@ Run with::
 import io
 import os
 import subprocess
+import sys
 import textwrap
 
 import numpy as np
@@ -36,7 +37,12 @@ _DATA    = os.path.join(_ROOT, "test_data")
 
 
 def _exe_path():
-    for name in ("sparks.exe", "sparks"):
+    # Prefer the platform-native binary: on Windows check .exe first, on Linux/macOS check plain name first.
+    if sys.platform == "win32":
+        names = ("sparks.exe", "sparks")
+    else:
+        names = ("sparks", "sparks.exe")
+    for name in names:
         p = os.path.join(_BIN_DIR, name)
         if os.path.isfile(p):
             return p

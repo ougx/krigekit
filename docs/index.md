@@ -36,6 +36,7 @@ Coordinate shapes, dtype expectations, and result array layouts.
 | Sequential Gaussian Simulation | Reproducible random paths, multi-realisation |
 | Space-time kriging | Sum-metric and product-sum ST covariance models |
 | Spatially Varying Anisotropy | Per-block variogram (SVA mode) |
+| Multiple Indicator Kriging / SIS | Categorical variables; uniform, proportional, or independent cross-variogram strategies |
 | Cross-validation | Leave-one-out |
 | Kriging weight reuse | Store and replay weights for fast value updates |
 | OpenMP parallelism | Thread count controllable per `solve()` call |

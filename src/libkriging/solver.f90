@@ -334,63 +334,99 @@ contains
   end subroutine kriging_solve
 
 
-  subroutine ssysv_fallback(n, p, q, matA, rhsB, x, info)
-    ! Fallback solver using LAPACK SSYSV (Bunch-Kaufman LDLᵀ factorisation).
-    ! Called when Cholesky fails — the full augmented kriging system
-    !   [ K   F ]
-    !   [ Fᵀ  0 ]
-    ! is symmetric indefinite, which is exactly the class SSYSV handles.
+  subroutine ssytrf_setup(n, p, matA, Afac, ipiv, info)
+    ! Factorize the full augmented kriging system  [ K   F ]
+    !                                              [ Fᵀ  0 ]
+    ! using Bunch-Kaufman (LDLᵀ) decomposition via SSYTRF.
     !
-    ! Advantages over gaussian_elimination:
-    !   - Exploits symmetry: only the upper triangle of matA is read,
-    !     roughly halving the flop count vs full LU.
-    !   - Bunch-Kaufman diagonal pivoting is more stable than partial
-    !     pivoting for symmetric indefinite systems.
-    !   - Uses optimised BLAS-3 kernels from the system LAPACK.
+    ! Call once per unique neighbourhood when Cholesky fails.
+    ! The resulting Afac / ipiv can be reused by ssytrs_solve for every
+    ! estimation block that shares the same neighbourhood, reducing the
+    ! per-block cost from O((n+p)³) to O((n+p)²).
+    !
+    ! Array layout (same upper-triangle convention as the rest of solver):
+    !   matA : (n+p, n+p) — assembled augmented matrix (read-only)
+    !   Afac : (n+p, n+p) — receives the LDLᵀ overwrite
+    !   ipiv : (n+p)       — receives the Bunch-Kaufman pivot array
+    implicit none
+    integer, intent(in)  :: n, p
+    real,    intent(in)  :: matA(:, :)
+    real,    intent(out) :: Afac(:, :)
+    integer, intent(out) :: ipiv(:)
+    integer, intent(out) :: info
+
+    integer :: m, lwork
+    real, allocatable :: work(:)
+
+    m = n + p
+    Afac(1:m, 1:m) = matA(1:m, 1:m)
+
+    ! Workspace query then actual factorization.
+    lwork = -1
+    allocate(work(1))
+    call ssytrf(uplo, m, Afac, m, ipiv, work, lwork, info)
+    if (info /= 0) return
+    lwork = max(1, int(work(1)))
+    deallocate(work)
+    allocate(work(lwork))
+    call ssytrf(uplo, m, Afac, m, ipiv, work, lwork, info)
+  end subroutine ssytrf_setup
+
+
+  subroutine ssytrs_solve(n, p, q, Afac, ipiv, rhsB, x, info)
+    ! Solve the augmented kriging system for q right-hand sides using a
+    ! previously computed SSYTRF factorization (Bunch-Kaufman LDLᵀ).
+    !
+    ! O((n+p)²) per call — use after one ssytrf_setup call per neighbourhood.
+    ! Same array layout as kriging_solve: rhsB(q, n+p), x(q, n+p).
+    implicit none
+    integer, intent(in)  :: n, p, q
+    real,    intent(in)  :: Afac(:, :)
+    integer, intent(in)  :: ipiv(:)
+    real,    intent(in)  :: rhsB(:, :)
+    real,    intent(out) :: x(:, :)
+    integer, intent(out) :: info
+
+    integer :: m, i
+    real, allocatable :: B(:, :)
+
+    m = n + p
+    allocate(B(m, q))
+    do i = 1, q
+      B(:, i) = rhsB(i, 1:m)
+    end do
+
+    call ssytrs(uplo, m, q, Afac, m, ipiv, B, m, info)
+
+    if (info == 0) then
+      do i = 1, q
+        x(i, 1:m) = B(:, i)
+      end do
+    end if
+  end subroutine ssytrs_solve
+
+
+  subroutine ssysv_fallback(n, p, q, matA, rhsB, x, info)
+    ! One-shot Bunch-Kaufman fallback: factorize + solve in a single call.
+    ! Used as a last resort when Cholesky fails and no cached SSYTRF exists.
+    ! Prefer ssytrf_setup + ssytrs_solve when the same neighbourhood repeats.
     !
     ! Same array layout as kriging_solve: matA(n+p,n+p), rhsB(q,n+p), x(q,n+p).
     implicit none
-
     integer, intent(in)  :: n, p, q
     real,    intent(in)  :: matA(:, :)
     real,    intent(in)  :: rhsB(:, :)
     real,    intent(out) :: x(:, :)
     integer, intent(out) :: info
 
-    integer :: m, lwork
-    real,    allocatable :: Acopy(:,:), B(:,:), work(:)
+    integer :: m
+    real,    allocatable :: Afac(:, :)
     integer, allocatable :: ipiv(:)
-    integer :: i
 
     m = n + p
-
-    allocate(Acopy(m,m), B(m,q), ipiv(m))
-
-    ! SSYSV overwrites its matrix and RHS in place — copy both.
-    Acopy = matA(1:m,1:m)
-
-    ! Transpose rhsB(q,m) -> B(m,q) for LAPACK column-major RHS.
-    do i = 1, q
-      B(:, i) = rhsB(i, 1:m)
-    end do
-
-    ! Workspace query.
-    lwork = -1
-    allocate(work(1))
-    call ssysv(uplo, m, q, Acopy, m, ipiv, B, m, work, lwork, info)
-    lwork = int(work(1))
-    deallocate(work)
-    allocate(work(lwork))
-
-    ! Solve.
-    call ssysv(uplo, m, q, Acopy, m, ipiv, B, m, work, lwork, info)
-
-    ! Transpose solution B(m,q) -> x(q,m).
-    if (info == 0) then
-      do i = 1, q
-        x(i, 1:m) = B(:, i)
-      end do
-    end if
+    allocate(Afac(m, m), ipiv(m))
+    call ssytrf_setup(n, p, matA, Afac, ipiv, info)
+    if (info == 0) call ssytrs_solve(n, p, q, Afac, ipiv, rhsB, x, info)
   end subroutine ssysv_fallback
 
 

@@ -123,10 +123,11 @@ _st_set_obs = _status_cfun("krige_st_set_obs", [
     _ptr_dbl, _ptr_dbl, _ptr_dbl,  # coord[ndim+1,nobs], value[nobs], variance[nobs]
     _c_int, _c_double, _c_double,  # nmax, maxdist, sk_mean
 ])
-_st_update_obs_value = _status_cfun("krige_st_update_obs_value", [
+# --- Shared with spatial kriging (implemented in kriging_capi_common) ---
+_st_update_obs_value = _status_cfun("krige_update_obs_value", [
     ctypes.c_int64, _c_int, _c_int, _ptr_dbl,
 ])
-_st_set_obs_drift = _status_cfun("krige_st_set_obs_drift", [
+_st_set_obs_drift = _status_cfun("krige_set_obs_drift", [
     ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl,
 ])
 _st_set_grad = _status_cfun("krige_st_set_grad", [
@@ -158,52 +159,56 @@ _st_set_grid_block = _status_cfun("krige_st_set_grid_block", [
     _ptr_dbl, _ptr_dbl, _ptr_dbl,   # blockcoord, blocktime, pointweight
     _ptr_dbl, _ptr_dbl,              # rangescale, localnugget
 ])
-_st_set_grid_cv    = _status_cfun("krige_st_set_grid_cv",    [ctypes.c_int64])
+_st_set_grid_cv    = _status_cfun("krige_set_grid_cv",    [ctypes.c_int64])
 _st_set_grid_drift = _status_cfun("krige_st_set_grid_drift", [
     ctypes.c_int64, _c_int, _c_int, _ptr_dbl,
 ])
 _st_set_sim = _status_cfun("krige_st_set_sim", [
-    ctypes.c_int64, _c_int, _ptr_int, _c_int, _ptr_dbl,
+    ctypes.c_int64, _c_int, ctypes.c_void_p, _c_int, ctypes.c_void_p,
 ])
 _st_set_search = _status_cfun("krige_st_set_search", [
     ctypes.c_int64, _c_int,
     _c_double, _c_double, _c_double, _c_double, _c_double, _c_double,
     _c_int,
 ])
-_st_prepare       = _status_cfun("krige_st_prepare",        [ctypes.c_int64])
-_st_reset_vgm     = _status_cfun("krige_st_reset_vgm",     [ctypes.c_int64, _c_int, _c_int])
-_st_solve         = _status_cfun("krige_st_solve",          [ctypes.c_int64, _c_int, _c_int])
-_st_get_nblocks   = _status_cfun("krige_st_get_nblocks",   [ctypes.c_int64, _ptr_int])
-_st_get_nsim      = _status_cfun("krige_st_get_nsim",      [ctypes.c_int64, _ptr_int])
-_st_get_block_coord = _status_cfun("krige_st_get_block_coord", [
+_st_prepare       = _status_cfun("krige_prepare",        [ctypes.c_int64])
+_st_reset_vgm     = _status_cfun("krige_st_reset_vgm",  [ctypes.c_int64, _c_int, _c_int])
+_st_solve         = _status_cfun("krige_solve",          [ctypes.c_int64, _c_int, _c_int])
+_st_get_nblocks   = _status_cfun("krige_get_nblocks",   [ctypes.c_int64, _ptr_int])
+_st_get_nsim      = _status_cfun("krige_get_nsim",      [ctypes.c_int64, _ptr_int])
+_st_get_block_coord = _status_cfun("krige_get_block_coord", [
     ctypes.c_int64, _c_int, _c_int, _ptr_dbl,
 ])
-_st_get_estimate     = _status_cfun("krige_st_get_estimate",      [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
-_st_get_estimate_all = _status_cfun("krige_st_get_estimate_all",  [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
-_st_get_variance     = _status_cfun("krige_st_get_variance",      [ctypes.c_int64, _c_int, _ptr_dbl])
-_st_get_variance_all = _status_cfun("krige_st_get_variance_all",  [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
-_st_to_str           = _cfun("krige_st_to_str",                   [ctypes.c_int64], _ptr_void)
-_st_get_factor_info  = _status_cfun("krige_st_get_factor_info",   [
+_st_get_estimate     = _status_cfun("krige_get_estimate",      [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_get_estimate_all = _status_cfun("krige_get_estimate_all",  [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl])
+_st_get_variance     = _status_cfun("krige_get_variance",      [ctypes.c_int64, _c_int, _ptr_dbl])
+_st_get_variance_all = _status_cfun("krige_get_variance_all",  [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_to_str           = _cfun("krige_to_str",                   [ctypes.c_int64], _ptr_void)
+_st_get_factor_info  = _status_cfun("krige_get_factor_info",   [
     ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int,
 ])
-_st_get_factor_matrices = _status_cfun("krige_st_get_factor_matrices", [
+_st_get_factor_matrices = _status_cfun("krige_get_factor_matrices", [
     ctypes.c_int64, _c_int, _c_int, _ptr_dbl, _ptr_dbl, _ptr_dbl,
 ])
-_st_get_factor_system = _status_cfun("krige_st_get_factor_system", [
+_st_get_factor_system = _status_cfun("krige_get_factor_system", [
     ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl, _ptr_dbl,
 ])
-_st_free_weight_store  = _status_cfun("krige_st_free_weight_store",  [ctypes.c_int64])
-_st_get_weight_dims    = _status_cfun("krige_st_get_weight_dims",    [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int])
-_st_get_weight_nnear   = _status_cfun("krige_st_get_weight_nnear",   [ctypes.c_int64, _c_int, _c_int, _ptr_int])
-_st_get_weight_inear   = _status_cfun("krige_st_get_weight_inear",   [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_int])
-_st_get_weight_data    = _status_cfun("krige_st_get_weight_data",    [ctypes.c_int64, _c_int, _c_int, _c_int, _c_int, _ptr_dbl])
-_st_get_weight_var     = _status_cfun("krige_st_get_weight_var",     [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
-_st_set_weights        = _status_cfun("krige_st_set_weights",        [
+_st_free_weight_store  = _status_cfun("krige_free_weight_store",  [ctypes.c_int64])
+_st_get_weight_dims    = _status_cfun("krige_get_weight_dims",    [ctypes.c_int64, _ptr_int, _ptr_int, _ptr_int])
+_st_get_weight_nnear   = _status_cfun("krige_get_weight_nnear",   [ctypes.c_int64, _c_int, _c_int, _ptr_int])
+_st_get_weight_inear   = _status_cfun("krige_get_weight_inear",   [ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_int])
+_st_get_weight_data    = _status_cfun("krige_get_weight_data",    [ctypes.c_int64, _c_int, _c_int, _c_int, _c_int, _ptr_dbl])
+_st_get_weight_var     = _status_cfun("krige_get_weight_var",     [ctypes.c_int64, _c_int, _c_int, _ptr_dbl])
+_st_set_weights        = _status_cfun("krige_set_weights",        [
     ctypes.c_int64, _c_int, _c_int, _c_int, _c_int,
     _ptr_int, _ptr_int, _ptr_dbl, _ptr_int, _ptr_dbl,
 ])
 _st_get_max_threads  = _cfun("krige_st_get_max_threads", [_ptr_int])
 _st_get_num_threads  = _cfun("krige_st_get_num_threads", [_ptr_int])
+# krige_solver_stats(handle, out[3])  — shared with spatial kriging (in kriging_capi_common)
+# out[0]=n_chol_ok  out[1]=n_ssytrf_fact  out[2]=n_ssytrf_reuse
+_st_solver_stats     = _cfun("krige_solver_stats",
+                              [ctypes.c_int64, ctypes.POINTER(ctypes.c_int)])
 _get_last_error      = _cfun("krige_get_last_error", [_ptr_char, _c_int], _c_int)
 
 # ---------------------------------------------------------------------------
@@ -724,29 +729,41 @@ class SpaceTimeKriging:
         """
         Prepare SGSIM random path and pre-drawn N(0,1) samples.
         Call after set_grid() and set_obs() but before set_search().
-        If randpath/sample are None, they are generated internally.
+        When randpath/sample are None, Fortran generates them internally.
         """
-        import random as _random
-        nb = self._get_nblocks_raw()
-        if nb == 0:
-            raise RuntimeError("set_grid must be called before set_sim")
+        rp_ptr = ctypes.c_void_p(0)
+        s_ptr  = ctypes.c_void_p(0)
+        nblocks = 0
+        nsim_c  = 0
 
-        if randpath is None:
-            rp = np.arange(1, nb + 1, dtype=np.int32)
-            _random.shuffle(rp)
-        else:
-            rp = np.asarray(randpath, dtype=np.int32)
+        if randpath is not None:
+            nblocks = self._get_nblocks_raw()
+            if nblocks == 0:
+                raise RuntimeError("set_grid must be called before set_sim")
+            rp_f = np.ascontiguousarray(
+                np.asarray(randpath, dtype=np.int32).ravel(), dtype=np.int32)
+            if rp_f.size != nblocks:
+                raise ValueError(
+                    f"randpath length ({rp_f.size}) must match nblocks ({nblocks})")
+            if not np.array_equal(np.sort(rp_f),
+                                  np.arange(1, nblocks + 1, dtype=np.int32)):
+                raise ValueError("randpath must be a 1-based permutation of 1..nblocks")
+            rp_ptr = ctypes.c_void_p(rp_f.ctypes.data)
 
-        if sample is None:
-            rng = np.random.default_rng()
-            samp = rng.standard_normal((self.nsim, nb)).astype(np.float64, order='F')
-        else:
-            samp = _farray(sample)
+        if sample is not None:
+            samp_f = _farray(np.asarray(sample, dtype=np.float64))
+            if samp_f.ndim != 2:
+                raise ValueError("sample must be 2-D (nsim, nblocks)")
+            nsim_c, n_s = samp_f.shape[0], samp_f.shape[1]
+            if nblocks == 0:
+                nblocks = n_s
+            if nsim_c != self.nsim or n_s != nblocks:
+                raise ValueError(
+                    f"sample shape ({nsim_c}, {n_s}) must be ({self.nsim}, {nblocks})")
+            s_ptr = ctypes.c_void_p(samp_f.ctypes.data)
 
-        rp_f   = np.asfortranarray(rp, dtype=np.int32)
-        samp_f = _farray(samp)
-        _st_set_sim(_h(self._handle), _c_int(nb),
-                    _iptr(rp_f), _c_int(self.nsim), _dptr(samp_f))
+        _st_set_sim(_h(self._handle), _c_int(nblocks),
+                    rp_ptr, _c_int(nsim_c), s_ptr)
 
     # ------------------------------------------------------------------
     def set_search(
@@ -869,6 +886,42 @@ class SpaceTimeKriging:
         )
 
     # ------------------------------------------------------------------
+    @property
+    def solver_stats(self) -> dict:
+        """Solver statistics from the most recent :meth:`solve` call.
+
+        Returns a dict with three integer counts that are reset to zero at the
+        start of every ``solve()``:
+
+        ``chol_ok``
+            Blocks solved by Cholesky factorization (either a fresh factorize
+            or a cache hit that reused a previously computed Cholesky factor).
+        ``ssytrf_fact``
+            Number of SSYTRF (Bunch-Kaufman LDL^T) factorizations performed.
+            Each one is O(n³) but occurs only once per unique neighbourhood.
+            A non-zero value means Cholesky failed for at least one
+            neighbourhood; a value equal to 1 with global search means the
+            factorization was done once and cached for all blocks.
+        ``ssytrf_reuse``
+            Blocks solved by a *cached* SSYTRF factorization using SSYTRS,
+            which is O(n²).  When this is large relative to ``ssytrf_fact``
+            the SSYTRF caching is working effectively.
+
+        Example — global neighbourhood, Cholesky fails, 10 000 grid blocks::
+
+            k.solve()
+            s = k.solver_stats
+            # Expected: chol_ok=0, ssytrf_fact=1, ssytrf_reuse=9999
+        """
+        buf = (ctypes.c_int * 3)(0, 0, 0)
+        _st_solver_stats(_h(self._handle), buf)
+        return {
+            "chol_ok":      buf[0],
+            "ssytrf_fact":  buf[1],
+            "ssytrf_reuse": buf[2],
+        }
+
+    # ------------------------------------------------------------------
     def get_results(self, copy: bool = False, squeeze: bool = True) -> "tuple[np.ndarray, np.ndarray]":
         """
         Retrieve kriging estimate and variance.
@@ -884,7 +937,7 @@ class SpaceTimeKriging:
         Returns
         -------
         estimate : ndarray, shape (ngrid,) when ``nsim == 1 and squeeze``;
-            otherwise shape (nsim, ngrid)
+            otherwise shape (ngrid, nsim)  [block first]
         variance : ndarray, shape (ngrid,)
         """
         nb = ctypes.c_int(0)
@@ -892,16 +945,20 @@ class SpaceTimeKriging:
         _st_get_nblocks(_h(self._handle), ctypes.byref(nb))
         _st_get_nsim   (_h(self._handle), ctypes.byref(ns))
         nb, ns = nb.value, ns.value
+        ns = max(ns, 1)  # plain kriging returns nsim=0; treat as 1 sim
 
-        estimate = _fempty((ns, nb), dtype=np.float64)
+        # Fortran fills out(nblocks, nsim_c) with block index first (see
+        # krige_get_estimate in kriging_capi_common.F90).  Python receives a
+        # Fortran-order (nb, ns) array where estimate[block, sim].
+        estimate = _fempty((nb, ns), dtype=np.float64)
         variance = _fempty(nb, dtype=np.float64)
         _st_get_estimate(_h(self._handle), _c_int(ns), _c_int(nb), _dptr(estimate))
         _st_get_variance(_h(self._handle), _c_int(nb),              _dptr(variance))
 
         if squeeze and ns == 1:
-            est = estimate[0]
+            est = estimate[:, 0]   # shape (nb,) — all blocks, first sim
         else:
-            est = estimate
+            est = estimate         # shape (nb, ns)
 
         if copy:
             est = np.array(est, order="C", copy=True)

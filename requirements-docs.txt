@@ -1,0 +1,22 @@
+# Documentation build dependencies
+# Install with: pip install -r requirements-docs.txt
+#
+# After installing, build the docs with:
+#   cd docs && make html        (Linux/macOS)
+#   cd docs && _build.bat       (Windows)
+
+-r requirements.txt
+
+# Sphinx core
+sphinx>=7.0
+pydata-sphinx-theme>=0.15
+
+# Sphinx extensions used in conf.py
+myst-parser>=3.0            # Markdown source files
+sphinx-autoapi>=3.0         # API reference without importing the package
+sphinx-copybutton>=0.5      # Copy button on code blocks
+sphinx-design>=0.5          # Grid cards and badges on the index page
+sphinx-gallery>=0.15        # Auto-generates the examples gallery
+
+# sphinx-gallery requires Pillow to create thumbnails from example figures
+Pillow>=9.0

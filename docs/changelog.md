@@ -4,6 +4,83 @@
 
 Initial release.
 
+### New — Multiple Indicator Kriging and SIS
+
+#### `IndicatorKriging` class
+
+New {py:class}`~pykriging.IndicatorKriging` class implementing Multiple Indicator
+Kriging (MIK) and Sequential Indicator Simulation (SIS) for categorical variables.
+Extends `Kriging` — all setup, solve, and results methods are inherited.
+
+**Constructor parameters:**
+
+- `ncat` — number of categories K (indicator variables ivar = 1..K)
+- `nvar` — total co-kriging variables; defaults to `ncat` (pure MIS); set
+  `nvar = ncat + M` to add M secondary continuous co-variates
+- All other kwargs passed through to `Kriging`
+
+**New methods:**
+
+- `set_categorical_obs(coord, categories, category_labels, nmax, maxdist)` —
+  converts raw category labels into K binary indicator datasets in one call,
+  automatically computing `I_k = (categories == label_k)` for each indicator
+- `set_indicator_vgm(vtype, nugget, sill, a_major, ...)` — sets all K² variogram
+  pairs in one call; the `cross` parameter selects the cross-sill strategy:
+  - `"same"` *(default)* — single shared sill for all pairs
+  - `"proportional"` — auto sills = p_k (1 − p_k); cross sills = √(s_k · s_l);
+    LMC positive-definite; requires `proportions`
+  - `"independent"` — cross sills = 0 (K separate ordinary-kriging systems)
+
+**Fortran/C API additions:**
+
+- `krige_ind_create(handle)` — allocates a `t_kriging_indicator` object
+- `krige_ind_set_ncat(handle, ncat)` — separates indicator count from total
+  variable count for co-kriging MIS
+
+**Usage example:**
+
+```python
+from pykriging import IndicatorKriging
+
+ik = IndicatorKriging(ncat=4, ndim=2, nsim=50, seed=42)
+ik.set_categorical_obs(coord=obs_coord, categories=obs_cats,
+                       category_labels=["A", "B", "C", "D"], nmax=20)
+ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
+                     a_major=500, a_minor1=80, azimuth=90,
+                     cross="proportional",
+                     proportions=np.array([0.18, 0.23, 0.21, 0.38]))
+ik.set_grid(coord=grid_coord)
+ik.set_sim()
+for k in range(1, 5):
+    ik.set_search(ivar=k, anis1=80/500, azimuth=90)
+ik.solve()
+sims, _ = ik.get_results()        # shape (ngrid, 4, 50) — one-hot
+cat_idx = np.argmax(sims, axis=1) # shape (ngrid, 50)
+```
+
+See the {doc}`../auto_examples/s_sis_lithofacies` gallery example for a
+full lithofacies SIS with side-by-side strategy comparison.
+
+### New — `solver_stats` property
+
+Both `Kriging` and `SpaceTimeKriging` now expose a `solver_stats` property
+that returns counts from the most recent `solve()` call:
+
+```python
+k.solve()
+print(k.solver_stats)
+# {'chol_ok': 9950, 'ssytrf_fact': 1, 'ssytrf_reuse': 49}
+```
+
+| Key | Meaning |
+|---|---|
+| `chol_ok` | Blocks solved via Cholesky (fast path) |
+| `ssytrf_fact` | Bunch-Kaufman LDL^T factorizations (O(n³), once per neighbourhood) |
+| `ssytrf_reuse` | Blocks solved via cached SSYTRF (O(n²)) |
+
+A non-zero `ssytrf_fact` means the kriging matrix was not positive-definite
+for at least one neighbourhood (singular or near-duplicate observations).
+
 ### Breaking changes
 
 #### ST search time coordinate — linear scaling replaces variogram transform

@@ -68,7 +68,7 @@ module kriging_base
   use common,        only: version
   use kriging_err,   only: kriging_error, kriging_failed
   use progress_bar,  only: progress
-  use utils,         only: set_seq, random_seed_initialize, r8vec_normal_01, yesno
+  use utils,         only: set_seq, random_seed_initialize, r8vec_normal_01, r8vec_uniform_01, yesno
   use gaussian_quadrature
   use kdtree2_module
   implicit none
@@ -111,9 +111,16 @@ module kriging_base
   !   self%pf    (t_kriging_base): inter-solve, shared across threads (pf_cache).
   !============================================================================
   type :: t_factor_cache
-    logical  :: valid       = .false.
-    logical  :: hit         = .false.
+    logical  :: valid        = .false.
+    logical  :: hit          = .false.
     logical  :: system_valid = .false.
+    !-- When Cholesky fails, the solver falls back to SSYTRF (Bunch-Kaufman LDLᵀ).
+    !   used_ssysv flags which factorization is live in this slot.
+    !   Afac / ipiv are lazily allocated only when SSYTRF is actually needed,
+    !   so the common Cholesky path carries zero extra memory overhead.
+    logical  :: used_ssysv   = .false.
+    real,    allocatable :: Afac(:,:)   ! LDLᵀ of full augmented [K F;Fᵀ 0] — (m,m) lazy
+    integer, allocatable :: ipiv(:)     ! Bunch-Kaufman pivot array            — (m)   lazy
     integer  :: npp         = 0
     integer  :: p           = 0
     real     :: rangescale  = 1.0
@@ -328,6 +335,12 @@ module kriging_base
     integer :: nppmax       = 0
     integer :: matsize_max  = 0
     integer :: mmax         = 0
+    ! --- solver statistics (reset at start of each solve()) ---
+    integer :: n_fail         = 0  ! blocks solve failed. Solve continue to next block when neglect_error=.true.
+    integer :: n_chol_fact    = 0  ! blocks solved by Cholesky (fresh factorize)
+    integer :: n_chol_reuse   = 0  ! blocks solved by Cholesky (cache hit)
+    integer :: n_ssytrf_fact  = 0  ! SSYTRF factorizations performed (O(n³), one per unique neighbourhood)
+    integer :: n_ssytrf_reuse = 0  ! blocks solved by a cached SSYTRF (O(n²) SSYTRS)
     ! --- ctx init helpers (allocated and populated by pre_solve) ---
     integer, allocatable :: obs_nmax(:)   ! [nvar]  ! total neighbours for each variable; obs%nmax could be the sector size if sector_search == .true.
     integer, allocatable :: grad_n(:)     ! [nvar]; filled from grad(:) when present
@@ -354,7 +367,7 @@ module kriging_base
     procedure, non_overridable :: set_grid_block      => set_grid_block_base
     procedure, non_overridable :: set_grid_cv         => set_grid_cv_base
     procedure, non_overridable :: set_grid_drift      => set_grid_drift_base
-    procedure, non_overridable :: set_sim             => set_sim_base
+    procedure :: set_sim             => set_sim_base
     procedure, non_overridable :: finalize_common
     procedure, non_overridable :: finish_grid_setup_common
     procedure, non_overridable :: set_grid_point_common
@@ -374,6 +387,8 @@ module kriging_base
     procedure, non_overridable :: write_matrix => write_matrix_base
     procedure, non_overridable :: reorder_sgsim => reorder_sgsim_base
     procedure :: post_grid_setup => post_grid_setup_base
+    procedure :: post_solve      => post_solve_base   ! no-op; subclasses override for post-solve processing (e.g. indicator normalization)
+    procedure :: sim_draw        => sim_draw_base     ! Gaussian perturbation; subclasses override for alternative draws (e.g. indicator CDF draw)
     procedure, non_overridable :: fill_ctx_sizing_common
     procedure, non_overridable :: validate_pre_solve_common
     procedure, non_overridable :: prepare_common
@@ -803,6 +818,8 @@ contains
     if (allocated(self%pf%L))          deallocate(self%pf%L)
     if (allocated(self%pf%kinv_drift)) deallocate(self%pf%kinv_drift)
     if (allocated(self%pf%schur))      deallocate(self%pf%schur)
+    if (allocated(self%pf%Afac))       deallocate(self%pf%Afac)
+    if (allocated(self%pf%ipiv))       deallocate(self%pf%ipiv)
     self%pf%valid = .false.
 
     call kriging_close_unit(self%ifile)
@@ -1506,11 +1523,26 @@ contains
     class(t_factor_cache), intent(in)    :: self
     type(t_factor_cache),  intent(inout) :: dst
     integer, intent(in) :: npp, p
-    integer :: pg
+    integer :: pg, m
     pg = max(1, p)
-    dst%L         (1:npp, 1:npp) = self%L         (1:npp, 1:npp)
-    dst%kinv_drift(1:npp, 1:pg ) = self%kinv_drift(1:npp, 1:pg )
-    dst%schur     (1:pg,  1:pg ) = self%schur     (1:pg,  1:pg )
+    dst%used_ssysv = self%used_ssysv
+    if (self%used_ssysv) then
+      ! SSYSV path: copy LDLᵀ factors. Allocate destination lazily —
+      ! hcache slots and ctx%cache only pay this memory when SSYTRF fires.
+      m = npp + p
+      if (.not. allocated(dst%Afac) .or. size(dst%Afac, 1) < m) then
+        if (allocated(dst%Afac)) deallocate(dst%Afac, dst%ipiv)
+        allocate(dst%Afac(m, m))
+        allocate(dst%ipiv(m))
+      end if
+      dst%Afac(1:m, 1:m) = self%Afac(1:m, 1:m)
+      dst%ipiv(1:m)       = self%ipiv(1:m)
+    else
+      ! Cholesky path: copy block factors.
+      dst%L         (1:npp, 1:npp) = self%L         (1:npp, 1:npp)
+      dst%kinv_drift(1:npp, 1:pg ) = self%kinv_drift(1:npp, 1:pg )
+      dst%schur     (1:pg,  1:pg ) = self%schur     (1:pg,  1:pg )
+    end if
   end subroutine fcache_copy_to
 
   !----------------------------------------------------------------------------
@@ -1532,11 +1564,26 @@ contains
     !-- Inline copy_to body (L, kinv_drift, schur) to avoid any implicit
     !   TYPE→CLASS conversion when src is type(t_factor_cache), which can
     !   trigger null-descriptor crashes in Intel ifort/ifx.
-    associate(pg => max(1, src%p))
-    self%L         (1:src%npp, 1:src%npp) = src%L         (1:src%npp, 1:src%npp)
-    self%kinv_drift(1:src%npp, 1:pg     ) = src%kinv_drift(1:src%npp, 1:pg     )
-    self%schur     (1:pg,      1:pg     ) = src%schur     (1:pg,      1:pg     )
-    end associate
+    self%used_ssysv = src%used_ssysv
+    if (src%used_ssysv) then
+      ! SSYSV path: copy LDLᵀ factors into self (lazy allocation).
+      associate(m => src%npp + src%p)
+      if (.not. allocated(self%Afac) .or. size(self%Afac, 1) < m) then
+        if (allocated(self%Afac)) deallocate(self%Afac, self%ipiv)
+        allocate(self%Afac(m, m))
+        allocate(self%ipiv(m))
+      end if
+      self%Afac(1:m, 1:m) = src%Afac(1:m, 1:m)
+      self%ipiv(1:m)       = src%ipiv(1:m)
+      end associate
+    else
+      ! Cholesky path: copy block factors.
+      associate(pg => max(1, src%p))
+      self%L         (1:src%npp, 1:src%npp) = src%L         (1:src%npp, 1:src%npp)
+      self%kinv_drift(1:src%npp, 1:pg     ) = src%kinv_drift(1:src%npp, 1:pg     )
+      self%schur     (1:pg,      1:pg     ) = src%schur     (1:pg,      1:pg     )
+      end associate
+    end if
     self%npp         = src%npp
     self%p           = src%p
     self%rangescale  = src%rangescale
@@ -1811,6 +1858,8 @@ contains
     if (allocated(self%cache%L))          deallocate(self%cache%L)
     if (allocated(self%cache%kinv_drift)) deallocate(self%cache%kinv_drift)
     if (allocated(self%cache%schur))      deallocate(self%cache%schur)
+    if (allocated(self%cache%Afac))       deallocate(self%cache%Afac)
+    if (allocated(self%cache%ipiv))       deallocate(self%cache%ipiv)
     call self%hcache%free()
     self%iblock       = 0
     self%npp          = 0
@@ -1953,6 +2002,13 @@ contains
     end if
 #endif
 
+    ! Reset solver statistics so every solve() call gets a clean slate.
+    self%n_fail         = 0
+    self%n_chol_fact    = 0
+    self%n_chol_reuse   = 0
+    self%n_ssytrf_fact  = 0
+    self%n_ssytrf_reuse = 0
+
     call self%pre_solve()
     if (kriging_failed()) goto 900
 
@@ -2030,7 +2086,17 @@ contains
 #endif
     if (self%verbose) print '(A)', 'Kriging completed.'
 
+    if (self%verbose) then
+      print '(A)', "Solver Stats"
+      print '(A,I0)', 'Solver failure       = ', self%n_fail
+      print '(A,I0)', 'Cholesky factorize   = ', self%n_chol_fact
+      print '(A,I0)', 'Cholesky reuse       = ', self%n_chol_reuse
+      print '(A,I0)', 'SSYTRF factorize     = ', self%n_ssytrf_fact
+      print '(A,I0)', 'SSYTRF reuse (O(n²)) = ', self%n_ssytrf_reuse
+    end if
+
     if (self%nsim > 0) call self%reorder_sgsim()
+    call self%post_solve()
 
 900 continue
     self%factor_cache_size = prev_ncache
@@ -2131,6 +2197,42 @@ contains
   subroutine post_grid_setup_base(self)
     class(t_kriging_base), intent(inout) :: self
   end subroutine post_grid_setup_base
+
+
+  !============================================================================
+  ! post_solve_base — no-op default called once after solve() completes.
+  !
+  ! Subclasses override to apply post-solve corrections to block%value, e.g.:
+  !   - indicator kriging: normalize K probability estimates to sum to 1
+  !   - order relation correction across thresholds
+  !============================================================================
+  subroutine post_solve_base(self)
+    class(t_kriging_base), intent(inout) :: self
+  end subroutine post_solve_base
+
+
+  !============================================================================
+  ! sim_draw_base — default simulation draw: Gaussian perturbation.
+  !
+  ! Called from estimate_block_base once per (block, isim) after sim-block
+  ! conditioning has been added to val.  On entry val holds the conditional
+  ! mean (kriging estimate + previously-simulated-block contributions); on
+  ! exit val holds the final simulated value for this realisation.
+  !
+  ! Subclasses override for alternative draws, e.g.:
+  !   - indicator simulation: apply order correction then draw from CDF
+  ! The pre-computed L_chol (lower Cholesky of conditional variance) is
+  ! provided so subclasses that do not need it can simply ignore it.
+  !============================================================================
+  subroutine sim_draw_base(self, ctx, val, L_chol, isim)
+    class(t_kriging_base), intent(inout) :: self
+    type(t_kriging_ctx),   intent(in)    :: ctx
+    real,                  intent(inout) :: val(:)      ! [nvar] conditional mean in, simulated value out
+    real,                  intent(in)    :: L_chol(:,:) ! [nvar, nvar] lower Cholesky of conditional variance
+    integer,               intent(in)    :: isim
+    val = val + matmul(L_chol, self%block%sample(isim, :, ctx%iblock))
+  end subroutine sim_draw_base
+
 
   !============================================================================
   ! init_defaults_base — no-op default; derived types override for type-specific
@@ -2861,6 +2963,8 @@ contains
           if (allocated(self%pf%L))          deallocate(self%pf%L)
           if (allocated(self%pf%kinv_drift)) deallocate(self%pf%kinv_drift)
           if (allocated(self%pf%schur))      deallocate(self%pf%schur)
+          if (allocated(self%pf%Afac))       deallocate(self%pf%Afac)
+          if (allocated(self%pf%ipiv))       deallocate(self%pf%ipiv)
           if (allocated(self%pf%nnear))      deallocate(self%pf%nnear)
           if (allocated(self%pf%inear))      deallocate(self%pf%inear)
           self%pf%valid = .false.
@@ -3043,12 +3147,12 @@ contains
   ! type-specific kriging variance via calc_variance().
   !============================================================================
   subroutine solve_linear_system_base(self, ctx)
-    use solver, only: kriging_setup, kriging_solve_prepared, ssysv_fallback
+    use solver, only: kriging_setup, kriging_solve_prepared, ssytrf_setup, ssytrs_solve
     implicit none
     class(t_kriging_base), intent(inout) :: self
     type(t_kriging_ctx),   intent(inout) :: ctx
 
-    integer :: info, p, q, npp_obs
+    integer :: info, p, q, npp_obs, m
     character(len=*), parameter :: subname = "t_kriging_base%solve_linear_system"
 
     associate( &
@@ -3061,31 +3165,87 @@ contains
       q = self%nvar
       p = self%ndrift + self%naug
 
+      !--------------------------------------------------------------------
+      ! Cache hit: reuse previously stored factorization.
+      ! Dispatch to the right solver depending on which factorization is
+      ! cached — Cholesky (common) or Bunch-Kaufman LDLᵀ (SSYTRF fallback).
+      !--------------------------------------------------------------------
       if (ctx%cache%hit) then
-        call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
-                                    ctx%cache%schur, rhsB, x, info)
+        if (ctx%cache%used_ssysv) then
+          call ssytrs_solve(npp, p, q, ctx%cache%Afac, ctx%cache%ipiv, &
+                            rhsB, x, info)
+          !$OMP ATOMIC
+          self%n_ssytrf_reuse = self%n_ssytrf_reuse + 1
+        else
+          call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
+                                      ctx%cache%schur, rhsB, x, info)
+          !$OMP ATOMIC
+          self%n_chol_reuse = self%n_chol_reuse + 1
+        end if
       else
+        !------------------------------------------------------------------
+        ! Cache miss: try Cholesky first (fast, cacheable, SPD path).
+        !------------------------------------------------------------------
         call kriging_setup(npp, p, matA, ctx%cache%L, ctx%cache%kinv_drift, &
                            ctx%cache%schur, info)
         if (info == 0) then
+          ctx%cache%used_ssysv = .false.
           call fcache_save_key(ctx%cache, ctx)
-          !-- Mark that ctx%matA/rhsB still match ctx%cache's factors.  The
-          !   assembled system is copied to self%pf only once after the loop.
+          !-- Mark that ctx%matA/rhsB still match ctx%cache's factors.
           ctx%cache%system_valid = .true.
           call kriging_solve_prepared(npp, p, q, ctx%cache%L, ctx%cache%kinv_drift, &
                                       ctx%cache%schur, rhsB, x, info)
           if (info == 0) then
             call fhcache_insert(ctx, self)
+            !$OMP ATOMIC
+            self%n_chol_fact = self%n_chol_fact + 1
           end if
         end if
       end if
 
+      !--------------------------------------------------------------------
+      ! Fallback: Cholesky (or cached solve) failed.
+      ! Run SSYTRF on the full augmented system and cache the LDLᵀ factors
+      ! so every subsequent block with the same neighbourhood calls the
+      ! cheap SSYTRS (O(n²)) rather than refactorizing (O(n³)).
+      ! This is critical when n is large and the neighbourhood is reused
+      ! for many estimation blocks (e.g. global neighbourhood, n > 1000).
+      !--------------------------------------------------------------------
       if (info /= 0) then
-        ctx%cache%valid = .false.
-        ctx%cache%system_valid = .false.
-        call ssysv_fallback(npp, p, q, matA, rhsB, x, info)
-        if (self%verbose) &
-          print*, "Cholesky fails. Fallback SSYSV is used for block", iblock
+        m = npp + p
+        !-- Lazy allocation: Afac/ipiv are not pre-allocated in fcache_alloc
+        !   so the common Cholesky path pays zero extra memory.
+        if (.not. allocated(ctx%cache%Afac) .or. size(ctx%cache%Afac, 1) < m) then
+          if (allocated(ctx%cache%Afac)) deallocate(ctx%cache%Afac, ctx%cache%ipiv)
+          allocate(ctx%cache%Afac(m, m))
+          allocate(ctx%cache%ipiv(m))
+        end if
+        call ssytrf_setup(npp, p, matA, ctx%cache%Afac, ctx%cache%ipiv, info)
+        if (info == 0) then
+          ctx%cache%used_ssysv   = .true.
+          ctx%cache%valid        = .true.
+          ctx%cache%system_valid = .true.
+          call fcache_save_key(ctx%cache, ctx)
+          call ssytrs_solve(npp, p, q, ctx%cache%Afac, ctx%cache%ipiv, &
+                            rhsB, x, info)
+          if (info == 0) then
+            call fhcache_insert(ctx, self)
+            !$OMP ATOMIC
+            self%n_ssytrf_fact = self%n_ssytrf_fact + 1
+            if (self%verbose) then
+              !$OMP CRITICAL(solver_print)
+              print '(A,I0,A,I0,A)', &
+                "  [solver] Cholesky failed — SSYTRF factorized (block ", iblock, &
+                ", n=", npp, "); subsequent matching blocks use cached LDLᵀ"
+              !$OMP END CRITICAL(solver_print)
+            end if
+          end if
+        else
+          ctx%cache%valid        = .false.
+          ctx%cache%system_valid = .false.
+          if (self%verbose) print '(A,I0)', &
+            "  Both Cholesky and SSYTRF failed for block ", iblock
+        end if
       end if
 
       if (info /= 0) then
@@ -3096,6 +3256,8 @@ contains
           x = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
           ctx%nnear = 1
           npp = self%nvar
+          !$OMP ATOMIC
+          self%n_fail = self%n_fail + 1
         else
           call kriging_error(subname, 'Singular matrix', iblock=ctx%iblock)
           return
@@ -3134,7 +3296,6 @@ contains
     real    :: target_mean(self%nvar)
     real    :: L_chol(self%nvar, self%nvar)
     real    :: avg
-    real    :: perturbation(self%nvar)
     logical :: ck_isa
 
     associate( &
@@ -3211,8 +3372,7 @@ contains
             end do
           end do
 
-          perturbation = matmul(L_chol, self%block%sample(isim, :, iblock))
-          val(isim, :) = val(isim, :) + perturbation
+          call self%sim_draw(ctx, val(isim, :), L_chol, isim)
         end do
       end if
 

@@ -1,0 +1,23 @@
+name: pykriging
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # --- runtime ---
+  - python>=3.10
+  - numpy>=1.24
+  - pandas>=1.5
+  - scipy>=1.10
+  - matplotlib>=3.6
+  - scikit-learn>=1.2
+  # --- testing ---
+  - pytest>=7.0
+  # --- docs ---
+  - sphinx>=7.0
+  - pydata-sphinx-theme>=0.15
+  - myst-parser>=3.0
+  - sphinx-autoapi>=3.0
+  - sphinx-copybutton>=0.5
+  - sphinx-design>=0.5
+  - sphinx-gallery>=0.15
+  - pillow>=9.0

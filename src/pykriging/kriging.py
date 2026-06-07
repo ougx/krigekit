@@ -139,8 +139,10 @@ def _optional_status_cfun(name, argtypes):
         return _stub
 
 _ptr_int64 = ctypes.POINTER(ctypes.c_int64)
-_krige_create      = _status_cfun("krige_create",      [_ptr_int64])
-_krige_destroy     = _status_cfun("krige_destroy",     [_ptr_int64])
+_krige_create       = _status_cfun("krige_create",       [_ptr_int64])
+_krige_ind_create   = _status_cfun("krige_ind_create",   [_ptr_int64])
+_krige_ind_set_ncat = _status_cfun("krige_ind_set_ncat", [ctypes.c_int64, _c_int])
+_krige_destroy      = _status_cfun("krige_destroy",      [_ptr_int64])
 _krige_initialize  = _status_cfun("krige_initialize",  [
     ctypes.c_int64,                              # handle
     _c_int, _c_int, _c_int, _c_int, _c_int,     # ndim, nvar, ndrift, unbias, nsim
@@ -211,8 +213,8 @@ _krige_set_grid_drift = _status_cfun("krige_set_grid_drift", [
 ])
 _krige_set_sim     = _status_cfun("krige_set_sim", [
     ctypes.c_int64,                              # handle
-    _c_int, _ptr_int,                            # nblocks, randpath[nblocks]
-    _c_int, _c_int, _ptr_dbl,                    # nsim_c, nvar_c, sample[nsim_c, nvar_c, nblocks]
+    _c_int, ctypes.c_void_p,                     # nblocks, randpath_ptr (NULL=Fortran generates)
+    _c_int, _c_int, ctypes.c_void_p,             # nsim_c, nvar_c, sample_ptr (NULL=Fortran generates)
 ])
 _krige_set_search  = _status_cfun("krige_set_search", [
     ctypes.c_int64, _c_int,                      # handle, ivar
@@ -261,6 +263,11 @@ _krige_set_weights        = _optional_status_cfun("krige_set_weights",
      # handle, nmax, ngroups, nvar, nblock, nnear, inear, weight, order, var
 
 _krige_get_last_error = _cfun("krige_get_last_error", [_ptr_char, _c_int], _c_int)
+# krige_solver_stats(handle, out[5])  — shared with ST kriging (in kriging_capi_common)
+# out[0]=n_fail  out[1]=n_chol_fact  out[2]=n_chol_reuse
+# out[3]=n_ssytrf_fact  out[4]=n_ssytrf_reuse
+_krige_solver_stats   = _cfun("krige_solver_stats",
+                               [ctypes.c_int64, ctypes.POINTER(ctypes.c_int)])
 
 _krige_to_str      = _cfun("krige_to_str"   , [ctypes.c_int64], _ptr_void)
 
@@ -1018,43 +1025,41 @@ class Kriging:
         Parameters
         ----------
         randpath : ndarray of int, shape (nblocks,), optional
-            Random visiting order for the block loop.
-            Generated with a random permutation if omitted.
+            1-based random visiting order for the block loop.
+            When ``None``, Fortran generates a random permutation.
         sample : ndarray, shape (nblocks, nvar, nsim), optional
-            Pre-drawn standard-normal samples used to add simulated variability.
-            Drawn from N(0,1) if omitted.
+            Pre-drawn samples.  When ``None``, Fortran generates them via the
+            object's ``set_sim`` override: N(0,1) for :class:`Kriging`,
+            U(0,1) for :class:`IndicatorKriging`.
         """
-        # Python generates defaults so Fortran always receives concrete arrays.
-        # We need the block count; retrieve it from the Fortran object.
         assert self.nsim > 0, ("nsim must be > 0 when setting SGSIM parameters.")
-        nb = _c_int(0)
-        _krige_get_nblocks(_h(self._handle), ctypes.byref(nb))
-        nblocks = nb.value
-        rng = np.random.default_rng(self.seed)
+
+        rp_ptr  = ctypes.c_void_p(0)
+        s_ptr   = ctypes.c_void_p(0)
+        nblocks = 0
+        nsim_c  = 0
+        nvar_c  = 0
+
         if randpath is not None:
+            nb = _c_int(0)
+            _krige_get_nblocks(_h(self._handle), ctypes.byref(nb))
+            nblocks = nb.value
             rp_f = np.ascontiguousarray(
                 np.asarray(randpath, dtype=np.int32).ravel(), dtype=np.int32)
-            # randpath is consumed as a 1-based Fortran permutation of blocks.
-            # Validate both length and membership before exposing the buffer.
             if rp_f.size != nblocks:
                 raise ValueError(
                     f"randpath length ({rp_f.size}) must match nblocks ({nblocks})")
-            expected_path = np.arange(1, nblocks + 1, dtype=np.int32)
-            if not np.array_equal(np.sort(rp_f), expected_path):
+            if not np.array_equal(np.sort(rp_f),
+                                  np.arange(1, nblocks + 1, dtype=np.int32)):
                 raise ValueError("randpath must be a 1-based permutation of 1..nblocks")
-        else:
-            # random permutation of 1..nblocks (1-based for Fortran)
-            rp_f = np.ascontiguousarray(
-                rng.permutation(nblocks) + 1, dtype=np.int32)
+            rp_ptr = ctypes.c_void_p(rp_f.ctypes.data)
 
         if sample is not None:
             sample_a = np.asarray(sample, dtype=np.float64)
             if sample_a.ndim == 1:
-                # (nblocks) shorthand when nvar==1
-                sample_a = sample_a[:, np.newaxis, np.newaxis]  # → (nblocks, 1, 1, )
+                sample_a = sample_a[:, np.newaxis, np.newaxis]
             elif sample_a.ndim == 2:
-                # (nsim, nblocks) shorthand when nvar==1
-                sample_a = sample_a[:, np.newaxis, :]  # → (nblocks, 1 ,nsim)
+                sample_a = sample_a[:, np.newaxis, :]
             elif sample_a.ndim != 3:
                 raise ValueError(
                     f"sample must be 2-D (nblocks, nsim) or 3-D (nblocks, nvar, nsim), "
@@ -1063,19 +1068,17 @@ class Kriging:
             nsim_c = s_f.shape[0]
             nvar_c = s_f.shape[1]
             n_s    = s_f.shape[2]
+            if nblocks == 0:
+                nblocks = n_s
             if nsim_c != self.nsim or nvar_c != self.nvar or n_s != nblocks:
                 raise ValueError(
                     f"sample shape ({nsim_c}, {nvar_c}, {n_s}) must be "
                     f"({self.nsim}, {self.nvar}, {nblocks})")
-        else:
-            nsim_c = self.nsim
-            nvar_c = self.nvar
-            n_s    = nblocks
-            s_f    = _farray(rng.standard_normal((nsim_c, nvar_c, n_s)))
+            s_ptr = ctypes.c_void_p(s_f.ctypes.data)
 
         _krige_set_sim(_h(self._handle),
-            _c_int(nblocks), _iptr(rp_f),         # nblocks covers both randpath and sample
-            _c_int(nsim_c), _c_int(nvar_c), _dptr(s_f),
+            _c_int(nblocks), rp_ptr,
+            _c_int(nsim_c), _c_int(nvar_c), s_ptr,
         )
         self._set_sim = True
 
@@ -1219,6 +1222,41 @@ class Kriging:
             get_omp_info()
         ncache_c = -1 if ncache is None else int(ncache)
         _krige_solve(_h(self._handle), ctypes.c_int(nthread), ctypes.c_int(ncache_c))
+
+    # ------------------------------------------------------------------
+    @property
+    def solver_stats(self) -> dict:
+        """Solver statistics from the most recent :meth:`solve` call.
+
+        Returns a dict with five integer counts, reset to zero at the start
+        of every ``solve()``:
+
+        ``fail``
+            Blocks where both Cholesky and SSYTRF failed; solution set to
+            NaN (only possible when *neglect_error* is ``True``).
+        ``chol_fact``
+            Fresh Cholesky factorizations performed — O(n³) each, one per
+            unique neighbourhood on a cache miss.
+        ``chol_reuse``
+            Blocks solved via a *cached* Cholesky factorization — O(n²)
+            each.  A large value relative to ``chol_fact`` means the
+            neighbourhood cache is working effectively.
+        ``ssytrf_fact``
+            SSYTRF (Bunch-Kaufman LDL^T) factorizations performed — O(n³)
+            each, once per unique neighbourhood.  Non-zero means Cholesky
+            failed for at least one neighbourhood (e.g. a non-SPD system).
+        ``ssytrf_reuse``
+            Blocks solved by a *cached* SSYTRF via SSYTRS — O(n²) each.
+        """
+        buf = (ctypes.c_int * 5)(0, 0, 0, 0, 0)
+        _krige_solver_stats(_h(self._handle), buf)
+        return {
+            "fail":         buf[0],
+            "chol_fact":    buf[1],
+            "chol_reuse":   buf[2],
+            "ssytrf_fact":  buf[3],
+            "ssytrf_reuse": buf[4],
+        }
 
     # ------------------------------------------------------------------
     def get_results(self, copy: bool = False, squeeze: bool = True):

@@ -501,11 +501,11 @@ contains
         this%struct_aniso = this%structs(iv)%aniso
       else
         if (maxval(abs(this%structs(iv)%aniso%mat - this%struct_aniso%mat)) > MAT_TOL) then
-          write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
-          write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
-          write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
-          write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
-            '   Incompatible: structure ', iv
+          ! write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
+          ! write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
+          ! write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
+          ! write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
+          !   '   Incompatible: structure ', iv
           call this%build_all_tables(n_tab, hmax_factor, h_bounds, dh)
           return
         end if
@@ -513,7 +513,7 @@ contains
     end do
 
     if (ref_idx == 0) then
-      write(*,'(A)') 'WARNING build_table: all structures are nuggets. No table built.'
+      ! write(*,'(A)') 'WARNING build_table: all structures are nuggets. No table built.'
     else
       call this%build_composite_table(n_tab=n_tab, hmax_factor=hmax_factor, &
                                     h_bounds=h_bounds, dh=dh)
@@ -704,11 +704,17 @@ contains
   end function struct_tostr
 
   !-- Heuristic positive-definiteness check.
-  function struct_is_valid(this) result(ok)
-    class(vgm_struct), intent(in) :: this
-    logical :: ok
+  function struct_is_valid(this, allow_neg_sill) result(ok)
+    class(vgm_struct), intent(in)           :: this
+    logical,           intent(in), optional :: allow_neg_sill
+    ! allow_neg_sill: when .true., skip the sill >= 0 check.
+    ! Cross-variograms (ivar /= jvar) may have negative partial sills in a
+    ! valid LMC, so callers should pass allow_neg_sill=.true. for those pairs.
+    logical :: ok, neg_sill_ok
     integer :: iv
     character(256) :: msg
+    neg_sill_ok = .false.
+    if (present(allow_neg_sill)) neg_sill_ok = allow_neg_sill
     ok = .true.
     if (this%ndim < 1 .or. this%ndim > 3) then
       write(*,'(A,I0)') 'WARNING: ndim must be 1, 2 or 3, got ', this%ndim; ok = .false.
@@ -721,7 +727,7 @@ contains
             'WARNING vgm_struct: structure ', iv, ': negative nugget'
           ok = .false.
         end if
-        if (c%sill < 0.0) then
+        if (c%sill < 0.0 .and. .not. neg_sill_ok) then
           write(*,'(A,I0,A)') &
             'WARNING vgm_struct: structure ', iv, ': negative sill'
           ok = .false.

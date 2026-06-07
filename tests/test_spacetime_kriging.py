@@ -531,7 +531,7 @@ class TestSGSIM:
         k.solve()
         sims, var = k.get_results()
 
-        assert sims.shape == (nsim, len(gtime)), \
+        assert sims.shape == (len(gtime), nsim), \
             f"SGSIM shape mismatch: {sims.shape}"
         assert np.all(var >= 0)
         # Simulations should differ across realisations
