@@ -42,6 +42,46 @@ $\rho(1) \approx 0$ (spherical reaches exactly 0; exponential and Gaussian
 reach $\approx 5\%$), so `a_major` is the distance at which spatial
 correlation is effectively zero.
 
+```{plot}
+:include-source: false
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+r  = np.linspace(0, 1.5, 400)
+rc = np.clip(r, 0, 1)
+
+models = {
+    "sph": np.where(r < 1, 1 - 1.5*r + 0.5*r**3, 0),
+    "exp": np.exp(-3*r),
+    "gau": np.exp(-3.0625*r**2),
+    "hol": np.cos(np.pi*r),
+    "pow": np.where(r < 1, 1 - r**1.5, 0),
+    "bsq": np.where(r < 1, (1 - r**2)**2, 0),
+    "cir": np.where(r < 1, 1 - 2/np.pi*(rc*np.sqrt(1 - rc**2) + np.arcsin(rc)), 0),
+    "lin": np.where(r < 1, 1 - r, 0),
+    "cyc": np.exp(-2*np.sin(np.pi*r)**2),
+    "dco": np.exp(-3*r)*np.cos(np.pi*r),
+}
+
+fig, axes = plt.subplots(2, 5, figsize=(12, 4.8), sharex=True, sharey=True,
+                          gridspec_kw={"hspace": 0.45, "wspace": 0.12})
+for ax, (name, rho) in zip(axes.flat, models.items()):
+    ax.plot(r, rho, lw=1.8, color="steelblue")
+    ax.axhline(0, color="k", lw=0.6, ls="--")
+    ax.axvline(1, color="gray", lw=0.6, ls=":", alpha=0.7)
+    ax.set_title(f"``{name}``", fontsize=10)
+    ax.set_xlim(0, 1.5)
+    ax.set_ylim(-0.25, 1.05)
+for ax in axes[1]:
+    ax.set_xlabel("r = h / a", fontsize=8.5)
+for ax in axes[:, 0]:
+    ax.set_ylabel("ρ(r)", fontsize=8.5)
+fig.suptitle("Correlation functions ρ(r) — dotted line at r = 1 (practical range)",
+             fontsize=11)
+plt.show()
+```
+
 ## Model notes
 
 ### Hole effect (`hol`)

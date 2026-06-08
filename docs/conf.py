@@ -27,6 +27,7 @@ extensions = [
     "sphinx_copybutton",        # Copy button on code blocks
     "sphinx_design",            # Grid cards, tabs, badges on index page
     "sphinx_gallery.gen_gallery",
+    "matplotlib.sphinxext.plot_directive",  # {plot} directive for inline figures
 ]
 
 # ---------------------------------------------------------------------------
@@ -133,3 +134,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pykriging import *
 """
+
+# matplotlib.sphinxext.plot_directive: hide source by default; readers can
+# find exact formulas in the variogram_models reference page.
+plot_include_source       = False
+plot_html_show_source_link = False
