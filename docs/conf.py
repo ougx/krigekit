@@ -45,6 +45,18 @@ autoapi_options = [
 autoapi_keep_files       = True
 autoapi_add_toctree_entry = False   # we add it manually in index.md
 
+
+def _autoapi_skip_undoc_attrs(app, what, name, obj, skip, options):
+    # Suppress bare attribute listings (e.g. "ndim = 2") that have no docstring.
+    # Documented attributes and all other member types are unaffected.
+    if what == "attribute" and not obj.docstring:
+        return True
+    return skip
+
+
+def setup(app):
+    app.connect("autoapi-skip-member", _autoapi_skip_undoc_attrs)
+
 # ---------------------------------------------------------------------------
 # MyST — enable useful Markdown extensions
 # ---------------------------------------------------------------------------

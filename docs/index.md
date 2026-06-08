@@ -19,10 +19,10 @@ Full reference for every class, method, and convenience function.
 :link-type: doc
 Task-oriented walkthroughs for ordinary kriging, co-kriging, SGSIM, and more.
 :::
-:::{grid-item-card} Array conventions
-:link: array_conventions
+:::{grid-item-card} Examples
+:link: auto_examples/index
 :link-type: doc
-Coordinate shapes, dtype expectations, and result array layouts.
+Gallery of runnable scripts — ordinary kriging, co-kriging, SGSIM, and more.
 :::
 ::::
 
