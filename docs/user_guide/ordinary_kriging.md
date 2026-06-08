@@ -23,10 +23,11 @@ est, var = ordinary_kriging(
 # est.shape → (441,)   var.shape → (441,)
 ```
 
-```{plot}
+```{eval-rst}
+.. plot::
 
-x = np.linspace(0, 2 * np.pi, 100)
-plt.plot(x, np.sin(x))
+   x = np.linspace(0, 2 * np.pi, 100)
+   plt.plot(x, np.sin(x))
 ```
 
 ## Simple kriging
@@ -195,6 +196,6 @@ observations.
 
 ## See also
 
-- [Variogram models](../variogram_models.md) — model types, nesting, anisotropy
+- [Variogram models](../variogram_models.rst) — model types, nesting, anisotropy
 - [Array conventions](../array_conventions.md) — coordinate and result shapes
 - [API reference](../api/index.md) — full `Kriging` class documentation

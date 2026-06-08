@@ -10,10 +10,11 @@ sys.path.insert(0, os.path.abspath("../src"))
 # ---------------------------------------------------------------------------
 # Project metadata
 # ---------------------------------------------------------------------------
+from importlib.metadata import version as _version
 project   = "pyKriging"
 copyright = "2026, Michael Ou, mou@sspa.com"
 author    = "Michael Ou"
-release   = "0.1.0"
+release   = _version("pykriging")
 
 # ---------------------------------------------------------------------------
 # Extensions

@@ -71,6 +71,6 @@ In standard mode the order of `set_vgm` and `set_grid` is flexible.
 ## What's next?
 
 - [Array conventions](array_conventions.md) — coordinate shapes and result layouts
-- [Variogram models](variogram_models.md) — types, parameters, nested structures
+- [Variogram models](variogram_models.rst) — types, parameters, nested structures
 - [Ordinary kriging user guide](user_guide/ordinary_kriging.md) — anisotropy, reuse, and more
 - [API reference](api/index.md) — full method signatures

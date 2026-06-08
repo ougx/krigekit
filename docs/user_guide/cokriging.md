@@ -196,7 +196,7 @@ k.set_grid_drift(drift=grid_elevation_var2, ivar=2)
 
 ## See also
 
-- [Variogram models](../variogram_models.md) — model types, nesting, anisotropy
+- [Variogram models](../variogram_models.rst) — model types, nesting, anisotropy
 - [Array conventions](../array_conventions.md) — coordinate and result shapes
 - [C API reference](../developer_guide/capi.md) — `krige_initialize`, `krige_set_grid_drift`
 - [API reference](../api/index.md) — full `Kriging` class documentation

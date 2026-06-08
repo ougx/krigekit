@@ -56,12 +56,11 @@ no JIT compilation step.
 installation
 quickstart
 auto_examples/index
-array_conventions
 variogram_models
 user_guide/index
 api/index
+array_conventions
 developer_guide/index
 changelog
-variogram_guide
 ```
 

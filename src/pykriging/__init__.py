@@ -48,7 +48,11 @@ from pykriging.kriging_indicator import (   # noqa: F401
     IndicatorKriging,
 )
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+try:
+    __version__ = version("pykriging")
+except PackageNotFoundError:
+    __version__ = "unknown"
 __all__ = [
     # concrete classes (for isinstance checks and direct use)
     "Kriging",
