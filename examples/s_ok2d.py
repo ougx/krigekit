@@ -13,7 +13,7 @@ data = pd.read_csv("../test_data/pc2d.csv")
 grid = pd.read_csv("../test_data/grid2d.csv")
 
 # default is 2D univariate ordinary Kriging
-k = Kriging(verbose=True) 
+k = Kriging()
 k.set_obs(ivar=1, coord=data[["x", "y"]], value=data["pc"], nmax=30) 
 k.set_grid(coord=grid[["x", "y"]])
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=0.12, a_major=5000.0)

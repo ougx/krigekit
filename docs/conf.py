@@ -102,12 +102,17 @@ napoleon_google_docstring  = False
 napoleon_use_rtype         = False
 napoleon_use_param         = True
 
+_lib_so = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "../src/pykriging/libkriging.so")
+_lib_dll = _lib_so.replace("libkriging.so", "kriging.dll")
+_lib_available = os.path.exists(_lib_so) or os.path.exists(_lib_dll)
+
 sphinx_gallery_conf = {
     "examples_dirs": "../examples",
     "gallery_dirs": "auto_examples",
     "filename_pattern": r".*\.py",
-    # RTD cannot build the Fortran library, so disable execution there.
-    "plot_gallery": not os.environ.get("READTHEDOCS"),
+    # Only execute gallery scripts when the compiled library is present.
+    "plot_gallery": _lib_available,
 }
 
 plot_pre_code = """

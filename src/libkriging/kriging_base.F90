@@ -1987,6 +1987,7 @@ contains
     integer, intent(in), optional :: ncache
     type(t_kriging_ctx), allocatable :: ctx
     integer :: ib, nb, prev_nthread, nthread_local, prev_ncache
+    character(len=*), parameter :: subname = "t_kriging_base%solve_base"
 
     prev_nthread  = 0
     nthread_local = 0
@@ -2103,6 +2104,9 @@ contains
 #ifdef _OPENMP
     if (prev_nthread > 0) call omp_set_num_threads(prev_nthread)
 #endif
+#ifdef DEBUG
+    print *, subname, " Finished."
+#endif
   end subroutine solve_base
 
 
@@ -2208,6 +2212,11 @@ contains
   !============================================================================
   subroutine post_solve_base(self)
     class(t_kriging_base), intent(inout) :: self
+    character(len=*), parameter :: subname = "t_kriging_base%post_solve_base"
+
+#ifdef DEBUG
+    print *, subname, " Finished."
+#endif
   end subroutine post_solve_base
 
 
@@ -3032,6 +3041,8 @@ contains
   subroutine pre_solve_base(self)
     class(t_kriging_base), intent(inout) :: self
     integer :: ivar
+    character(len=*), parameter :: subname = "t_kriging_base%pre_solve_base"
+
     call self%prepare()
     if (kriging_failed()) return
     call self%fill_ctx_sizing_common()
@@ -3249,9 +3260,9 @@ contains
       end if
 
       if (info /= 0) then
-        !$OMP CRITICAL(write_matrix_io)
-        call self%write_matrix(ctx)
-        !$OMP END CRITICAL(write_matrix_io)
+        ! !$OMP CRITICAL(write_matrix_io)
+        ! call self%write_matrix(ctx)
+        ! !$OMP END CRITICAL(write_matrix_io)
         if (self%neglect_error) then
           x = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
           ctx%nnear = 1
@@ -3396,7 +3407,8 @@ contains
     do i = 2, n
       tmp = a(i)
       j   = i - 1
-      do while (j >= 1 .and. a(j) > tmp)
+      do while (j >= 1)
+        if (a(j) <= tmp) exit
         a(j+1) = a(j)
         j = j - 1
       end do

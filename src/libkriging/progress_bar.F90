@@ -14,7 +14,7 @@ subroutine progress(i, n)
 #ifdef __INTEL_COMPILER
   write(unit=6,fmt="(a1,a1,x,a17)") '+',char(13), bar
 #else
-  write(unit=6,fmt="(a1,a1,x,a17)",advance="no") '+',char(13), bar
+  write(unit=6,fmt="(a1,x,a17)",advance="no") char(13), bar
 #endif
   return
 end subroutine progress

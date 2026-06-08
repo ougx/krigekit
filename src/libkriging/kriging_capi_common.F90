@@ -244,7 +244,7 @@ contains
     call kriging_clear_error()
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
-    out = real(obj%block%coord(1:ndim_c, 1:nblocks), c_double)
+    out = obj%block%coord(1:ndim_c, 1:nblocks)
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_block_coord
 
@@ -267,7 +267,7 @@ contains
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%value)) then
-      out = real(transpose(obj%block%value(1:nsim_c, 1, 1:nblocks)), c_double)
+      out = transpose(obj%block%value(1:nsim_c, 1, 1:nblocks))
     else
       out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)
     end if
@@ -295,8 +295,7 @@ contains
       return
     end if
     do ib = 1, nblocks
-      out(ib, 1:nvar_c, 1:nsim_c) = &
-        real(transpose(obj%block%value(1:nsim_c, 1:nvar_c, ib)), c_double)
+      out(ib, 1:nvar_c, 1:nsim_c) = transpose(obj%block%value(1:nsim_c, 1:nvar_c, ib))
     end do
     ierr = int(kriging_ierr(), c_int)
   end function krige_get_estimate_all
@@ -312,7 +311,7 @@ contains
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%variance)) then
-      out = real(obj%block%variance(1, 1, 1:nblocks), c_double)
+      out = obj%block%variance(1, 1, 1:nblocks)
     else
       out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)
     end if
@@ -337,8 +336,7 @@ contains
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%variance)) then
       do ib = 1, nblocks
-        out(ib, 1:nvar_c, 1:nvar_c) = &
-          real(obj%block%variance(1:nvar_c, 1:nvar_c, ib), c_double)
+        out(ib, 1:nvar_c, 1:nvar_c) = obj%block%variance(1:nvar_c, 1:nvar_c, ib)
       end do
     else
       out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)

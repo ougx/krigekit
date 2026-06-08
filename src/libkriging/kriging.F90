@@ -626,7 +626,7 @@ contains
       call filter_by_maxlag(inear, dist, nnear, maxdist)
     end associate
 #ifdef DEBUG
-    print *, subname, " Finished.", ivar, ctx%iblock
+    print *, subname, " Finished.", ctx%iblock, ivar
 #endif
   end subroutine search_neighbors
 
