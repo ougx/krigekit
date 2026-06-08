@@ -52,6 +52,8 @@ module variogram
 
   !-- Tolerance for anisotropy compatibility check in build_struct_table
   real, parameter :: MAT_TOL = 1.0e-6
+  !-- Tolerance (degrees) for rotation-angle check when product members have different ranges
+  real, parameter :: ANG_TOL = 1.0e-4
 
 
 
@@ -95,6 +97,10 @@ module variogram
     integer        :: vtype_id  = VGM_NUG
     character(3)   :: vtype     = 'nug'
     type(vgm_aniso) :: aniso
+
+    !-- Product-group flag: when .true. this component multiplies the previous one.
+    !   False (default) means additive nesting (the standard geostatistics convention).
+    logical :: is_product = .false.
 
     !-- Piecewise-uniform lookup table
     real,    allocatable :: tab(:)
@@ -379,10 +385,11 @@ contains
     class(vgm_component), intent(in) :: this
     character(:), allocatable :: s
     character(256) :: buf
-    write(buf,'(A3,"  sill=",G13.6,"  nug=",G13.6, &
+    write(buf,'(A5,"  sill=",G13.6,"  nug=",G13.6, &
              &"  az=",F7.2,"  dip=",F7.2,"  pl=",F7.2, &
              &"  a=",3(G13.6,1X))') &
-      this%vtype, this%sill, this%nugget, &
+      merge('x '//this%vtype, '  '//this%vtype, this%is_product), &
+      this%sill, this%nugget, &
       this%aniso%azimuth, this%aniso%dip, this%aniso%plunge, &
       this%aniso%a_major, this%aniso%a_minor1, this%aniso%a_minor2
     s = trim(buf)
@@ -409,18 +416,13 @@ contains
     this%struct_tab_ready = .false.
   end subroutine struct_reset
 
-   subroutine struct_add_comp(this, comp)
+  subroutine struct_add_comp(this, comp)
     class(vgm_struct),   intent(inout) :: this
     type(vgm_component), intent(in)    :: comp
-    ! if (this%ndim ==0) then
-    !   call kriging_error('vgm_struct%struct_add_comp', 'ndim was not set; call vgm_struct%set_ndim()')
-    !   return
-    ! end if
     if (this%nstruct >= maxvgm) then
       call kriging_error('vgm_struct%struct_add_comp', 'exceeded maxvgm nested structures')
       return
     end if
-
     if (comp%vtype_id < 0) then
       call kriging_error('vgm_struct%struct_add_comp', 'invalid vgm_id')
       return
@@ -429,49 +431,55 @@ contains
       call kriging_error('vgm_struct%struct_add_comp', 'aniso matrix not built; call aniso%build()')
       return
     end if
+    if (comp%is_product .and. this%nstruct == 0) then
+      call kriging_error('vgm_struct%struct_add_comp', &
+        'first structure cannot be a product member (is_product must be .false.)')
+      return
+    end if
     this%nstruct = this%nstruct + 1
     this%structs(this%nstruct) = comp
-    this%cov0 = this%cov0 + comp%sill + comp%nugget
+    call struct_recompute_cov0(this)
   end subroutine struct_add_comp
 
   subroutine struct_add_args(this, vtype, nugget, sill, &
-                              a_major, a_minor1, a_minor2, azimuth, dip, plunge)
+                              a_major, a_minor1, a_minor2, azimuth, dip, plunge, product)
     class(vgm_struct), intent(inout) :: this
     character(*),      intent(in)    :: vtype
     real,              intent(in)    :: nugget, sill
     real,              intent(in)    :: a_major, a_minor1, a_minor2
     real,              intent(in)    :: azimuth, dip, plunge
+    logical, optional, intent(in)    :: product   ! .true. = multiply with preceding structure
     integer :: id
-    ! if (this%ndim ==0) then
-    !   call kriging_error('vgm_struct%struct_add_comp', 'ndim was not set; call vgm_struct%set_ndim()')
-    !   return
-    ! end if
     if (this%nstruct >= maxvgm) then
       call kriging_error('vgm_struct%add', 'exceeded maxvgm nested structures')
       return
     end if
-
-      id = vtype_from_str(vtype)
-      if (id < 0) then
-        call kriging_error('vgm_struct%struct_add_comp', 'Unknown variogram type: '//trim(vtype))
-        return
-      end if
-
-      this%nstruct = this%nstruct + 1
-      associate(cc => this%structs(this%nstruct))
-        cc%sill            = sill
-        cc%nugget          = nugget
-        cc%vtype_id        = id
-        cc%vtype           = vtype
-        cc%aniso%ndim      = this%ndim
-        cc%aniso%azimuth   = azimuth;  cc%aniso%dip      = dip
-        cc%aniso%plunge    = plunge
-        cc%aniso%a_major   = a_major;  cc%aniso%a_minor1 = a_minor1
-        cc%aniso%a_minor2  = a_minor2
-        call cc%aniso%build()
-        this%cov0 = this%cov0 + sill + nugget
-      end associate
-
+    id = vtype_from_str(vtype)
+    if (id < 0) then
+      call kriging_error('vgm_struct%struct_add_comp', 'Unknown variogram type: '//trim(vtype))
+      return
+    end if
+    if (present(product) .and. product .and. this%nstruct == 0) then
+      call kriging_error('vgm_struct%add', &
+        'first structure cannot be a product member (product=.true. requires a preceding structure)')
+      return
+    end if
+    this%nstruct = this%nstruct + 1
+    associate(cc => this%structs(this%nstruct))
+      cc%sill            = sill
+      cc%nugget          = nugget
+      cc%vtype_id        = id
+      cc%vtype           = vtype(1:min(3,len_trim(vtype)))
+      cc%aniso%ndim      = this%ndim
+      cc%aniso%azimuth   = azimuth;  cc%aniso%dip      = dip
+      cc%aniso%plunge    = plunge
+      cc%aniso%a_major   = a_major;  cc%aniso%a_minor1 = a_minor1
+      cc%aniso%a_minor2  = a_minor2
+      cc%is_product      = .false.
+      if (present(product)) cc%is_product = product
+      call cc%aniso%build()
+    end associate
+    call struct_recompute_cov0(this)
   end subroutine struct_add_args
 
   subroutine struct_set_ndim(self, ndim)
@@ -500,15 +508,23 @@ contains
         ref_idx = iv
         this%struct_aniso = this%structs(iv)%aniso
       else
-        if (maxval(abs(this%structs(iv)%aniso%mat - this%struct_aniso%mat)) > MAT_TOL) then
-          ! write(*,'(A)') 'ERROR build_struct_table: incompatible anisotropy matrices.'
-          ! write(*,'(A)') '  All non-nugget structures must share the same mat (same ranges,'
-          ! write(*,'(A)') '  rotation angles, and ndim).  Use build_all_tables() instead.'
-          ! write(*,'(A,I0,A,I0)') '  Reference: structure ', ref_idx, &
-          !   '   Incompatible: structure ', iv
-          call this%build_all_tables(n_tab, hmax_factor, h_bounds, dh)
-          return
-        end if
+        associate(cc => this%structs(iv), ref => this%struct_aniso)
+          if (cc%is_product) then
+            ! Product members may have a different a_major (independent decay / period).
+            ! Only rotation must match — the composite table loop adjusts rdist per component.
+            if (abs(cc%aniso%azimuth - ref%azimuth) > ANG_TOL .or. &
+                abs(cc%aniso%dip     - ref%dip    ) > ANG_TOL .or. &
+                abs(cc%aniso%plunge  - ref%plunge  ) > ANG_TOL) then
+              call this%build_all_tables(n_tab, hmax_factor, h_bounds, dh)
+              return
+            end if
+          else
+            if (maxval(abs(cc%aniso%mat - ref%mat)) > MAT_TOL) then
+              call this%build_all_tables(n_tab, hmax_factor, h_bounds, dh)
+              return
+            end if
+          end if
+        end associate
       end if
     end do
 
@@ -542,12 +558,17 @@ contains
 
   !-- Level B: build composite struct-level table.
   !
-  !   Stores: tab(0)   = cov0 = sum_k (sill_k + nugget_k)
-  !           tab(i>0) = sum_k sill_k * corefunc_fn(vtype_k, h_i)
+  !   Stores: tab(0)   = cov0  (computed by struct_recompute_cov0)
+  !           tab(i>0) = sum of product-groups evaluated at rdist_i
   !
-  !   REQUIRES: all non-nugget structures share the same mat matrix.
-  !   Nugget structures are skipped in the compatibility check because
-  !   corefunc_fn(VGM_NUG, h) = 0 for all h > 0.
+  !   Product groups: consecutive components with is_product=.true. are
+  !   multiplied together before being added to the sum.  Each component's
+  !   rdist is scaled by a_major_ref / comp%a_major so that components in
+  !   the same product group can have independent ranges (e.g. exp × hol
+  !   with separate decay length and oscillation period).
+  !
+  !   REQUIRES: all non-nugget non-product structures share the same mat;
+  !   product members must share the same rotation angles as the reference.
   subroutine build_composite_table(this, n_tab, hmax_factor, h_bounds, dh)
     class(vgm_struct), intent(inout) :: this
     integer, intent(in), optional :: n_tab
@@ -557,7 +578,7 @@ contains
     integer, allocatable :: n_zone(:)
     real,    allocatable :: z_bounds(:), z_inv_dh(:), h_b(:), d_h(:)
     integer, allocatable :: z_offset(:), z_n(:)
-    real :: factor, hmax, h_lo, step_k, rdist, val
+    real :: factor, hmax, h_lo, step_k, rdist, rdist_k, a_major_ref, val, group_val
 
     factor = 3.5;  if (present(hmax_factor)) factor = hmax_factor
 
@@ -586,19 +607,43 @@ contains
     call alloc_zones(h_b, d_h, hmax, &
       nzones_local, ntab_total, n_zone, z_bounds, z_inv_dh, z_offset, z_n)
 
+    !-- Reference a_major for per-component rdist scaling.
+    ref_idx = 0
+    do iv = 1, this%nstruct
+      if (this%structs(iv)%vtype_id /= VGM_NUG) then; ref_idx = iv; exit; end if
+    end do
+    a_major_ref = merge(this%struct_aniso%a_major, 1.0, ref_idx > 0)
+
     allocate(this%struct_tab(0:ntab_total))
-    this%struct_tab(0) = this%cov0   ! includes all sills + nuggets
+    this%struct_tab(0) = this%cov0
 
     do k = 1, nzones_local
       h_lo   = z_bounds(k-1)
       step_k = 1.0 / z_inv_dh(k)
       do i = 1, n_zone(k)
-        rdist = h_lo + real(i) * step_k
+        rdist = h_lo + real(i) * step_k   ! dimensionless lag relative to a_major_ref
         val   = 0.0
-        do iv = 1, this%nstruct
+        iv    = 1
+        do while (iv <= this%nstruct)
           associate(cc => this%structs(iv))
-            val = val + cc%sill * corefunc_fn(cc%vtype_id, rdist)
+            if (cc%vtype_id == VGM_NUG) then
+              iv = iv + 1
+              cycle
+            end if
+            rdist_k   = rdist * a_major_ref / cc%aniso%a_major
+            group_val = cc%sill * corefunc_fn(cc%vtype_id, rdist_k)
           end associate
+          ! Absorb any subsequent product members into this group.
+          do while (iv < this%nstruct)
+            if (.not. this%structs(iv+1)%is_product) exit
+            iv = iv + 1
+            associate(cc => this%structs(iv))
+              rdist_k   = rdist * a_major_ref / cc%aniso%a_major
+              group_val = group_val * cc%sill * corefunc_fn(cc%vtype_id, rdist_k)
+            end associate
+          end do
+          val = val + group_val
+          iv  = iv  + 1
         end do
         this%struct_tab(z_offset(k)+i) = val
       end do
@@ -608,9 +653,23 @@ contains
     this%struct_n      = ntab_total
     this%struct_hmax   = hmax
     this%struct_analytic_tail = .false.
-    do iv = 1, this%nstruct
-      this%struct_analytic_tail = this%struct_analytic_tail .or. &
-        corefunc_has_analytic_tail(this%structs(iv)%vtype_id)
+    iv = 1
+    do while (iv <= this%nstruct)
+      if (corefunc_has_analytic_tail(this%structs(iv)%vtype_id)) then
+        ! A product group has an analytic tail when ALL members have one.
+        if (this%structs(iv)%vtype_id /= VGM_NUG) then
+          block
+            logical :: group_tail
+            group_tail = corefunc_has_analytic_tail(this%structs(iv)%vtype_id)
+            do while (iv < this%nstruct .and. this%structs(iv+1)%is_product)
+              iv = iv + 1
+              group_tail = group_tail .and. corefunc_has_analytic_tail(this%structs(iv)%vtype_id)
+            end do
+            this%struct_analytic_tail = this%struct_analytic_tail .or. group_tail
+          end block
+        end if
+      end if
+      iv = iv + 1
     end do
     call move_alloc(z_bounds, this%struct_zone_bounds)
     call move_alloc(z_inv_dh, this%struct_zone_inv_dh)
@@ -654,22 +713,36 @@ contains
   function struct_cov_h(this, h) result(res)
     class(vgm_struct), intent(in) :: this
     real,              intent(in) :: h
-    real :: res
+    real :: res, group_val
     integer :: iv
     res = 0.0
-    do iv = 1, this%nstruct
-      res = res + this%structs(iv)%cov_h(h)
+    iv  = 1
+    do while (iv <= this%nstruct)
+      group_val = this%structs(iv)%cov_h(h)
+      do while (iv < this%nstruct .and. this%structs(iv+1)%is_product)
+        iv        = iv + 1
+        group_val = group_val * this%structs(iv)%cov_h(h)
+      end do
+      res = res + group_val
+      iv  = iv  + 1
     end do
   end function struct_cov_h
 
   function struct_cov_lag(this, lag) result(res)
     class(vgm_struct), intent(in) :: this
     real,              intent(in) :: lag(3)
-    real :: res
+    real :: res, group_val
     integer :: iv
     res = 0.0
-    do iv = 1, this%nstruct
-      res = res + this%structs(iv)%cov_lag(lag(1), lag(2), lag(3))
+    iv  = 1
+    do while (iv <= this%nstruct)
+      group_val = this%structs(iv)%cov_lag(lag(1), lag(2), lag(3))
+      do while (iv < this%nstruct .and. this%structs(iv+1)%is_product)
+        iv        = iv + 1
+        group_val = group_val * this%structs(iv)%cov_lag(lag(1), lag(2), lag(3))
+      end do
+      res = res + group_val
+      iv  = iv  + 1
     end do
   end function struct_cov_lag
 
@@ -677,15 +750,22 @@ contains
   function struct_cov_tab(this, lag) result(res)
     class(vgm_struct), intent(in) :: this
     real,              intent(in) :: lag(3)
-    real :: res
+    real :: res, group_val
     integer :: iv
     if (this%struct_tab_ready) then
       res = this%cov_struct_tab_h( &
         this%struct_aniso%h_iso(lag(1), lag(2), lag(3)))
     else
       res = 0.0
-      do iv = 1, this%nstruct
-        res = res + this%structs(iv)%cov_tab(lag(1), lag(2), lag(3))
+      iv  = 1
+      do while (iv <= this%nstruct)
+        group_val = this%structs(iv)%cov_tab(lag(1), lag(2), lag(3))
+        do while (iv < this%nstruct .and. this%structs(iv+1)%is_product)
+          iv        = iv + 1
+          group_val = group_val * this%structs(iv)%cov_tab(lag(1), lag(2), lag(3))
+        end do
+        res = res + group_val
+        iv  = iv  + 1
       end do
     end if
   end function struct_cov_tab
@@ -767,6 +847,26 @@ contains
       end if
     end do
   end function struct_is_valid
+
+  !-- Recompute cov0 = C(0) from all structures, respecting product groups.
+  !   Called after each struct_add_comp / struct_add_args.
+  subroutine struct_recompute_cov0(this)
+    class(vgm_struct), intent(inout) :: this
+    real    :: group_c0, total
+    integer :: iv
+    total = 0.0
+    iv    = 1
+    do while (iv <= this%nstruct)
+      group_c0 = this%structs(iv)%sill + this%structs(iv)%nugget
+      do while (iv < this%nstruct .and. this%structs(iv+1)%is_product)
+        iv       = iv + 1
+        group_c0 = group_c0 * (this%structs(iv)%sill + this%structs(iv)%nugget)
+      end do
+      total = total + group_c0
+      iv    = iv + 1
+    end do
+    this%cov0 = total
+  end subroutine struct_recompute_cov0
 
 end module variogram
 

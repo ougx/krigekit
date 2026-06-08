@@ -20,6 +20,7 @@ release   = "0.1.0"
 # ---------------------------------------------------------------------------
 extensions = [
     "myst_parser",              # Markdown source files
+    "sphinx.ext.mathjax",       # MathJax rendering for $ and $$ math
     "autoapi.extension",        # API reference (no import needed)
     "sphinx.ext.napoleon",      # NumPy/Google docstring styles
     "sphinx.ext.intersphinx",   # Cross-links to numpy, python docs
@@ -51,6 +52,8 @@ myst_enable_extensions = [
     "colon_fence",   # ::: directive syntax
     "deflist",       # definition lists
     "fieldlist",     # field lists
+    "dollarmath",    # $...$ inline and $$...$$ display math
+    "amsmath",       # \begin{align} ... \end{align} environments
 ]
 
 # ---------------------------------------------------------------------------
@@ -70,6 +73,11 @@ source_suffix = {
 }
 
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# RST substitutions available in all pages, including autoapi-generated ones.
+rst_prolog = """
+.. |dt| replace:: :math:`\\Delta t`
+"""
 
 # ---------------------------------------------------------------------------
 # HTML output — pydata-sphinx-theme
@@ -98,6 +106,8 @@ sphinx_gallery_conf = {
     "examples_dirs": "../examples",
     "gallery_dirs": "auto_examples",
     "filename_pattern": r".*\.py",
+    # RTD cannot build the Fortran library, so disable execution there.
+    "plot_gallery": not os.environ.get("READTHEDOCS"),
 }
 
 plot_pre_code = """

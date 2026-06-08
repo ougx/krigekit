@@ -181,6 +181,7 @@ _krige_set_vgm     = _status_cfun("krige_set_vgm",  [
     _c_double, _c_double,                        # nugget, sill
     _c_double, _c_double, _c_double,             # a_major, a_minor1, a_minor2
     _c_double, _c_double, _c_double,             # azimuth, dip, plunge
+    _c_int,                                      # is_product (0=additive, 1=multiply previous)
 ])
 _krige_set_vgm_block = _status_cfun("krige_set_vgm_block", [
     ctypes.c_int64,                              # handle
@@ -189,6 +190,7 @@ _krige_set_vgm_block = _status_cfun("krige_set_vgm_block", [
     _c_double, _c_double,                        # nugget, sill
     _c_double, _c_double, _c_double,             # a_major, a_minor1, a_minor2
     _c_double, _c_double, _c_double,             # azimuth, dip, plunge
+    _c_int,                                      # is_product
 ])
 _krige_set_grid    = _status_cfun("krige_set_grid", [
     ctypes.c_int64,                              # handle
@@ -711,6 +713,7 @@ class Kriging:
         a_minor2: Optional[float] = None,
         azimuth: float = 0.0, dip: float = 0.0, plunge: float = 0.0,
         append: bool = True,
+        product: bool = False,
     ):
         """
         Add one nested variogram structure for the (ivar, jvar) pair.
@@ -727,7 +730,9 @@ class Kriging:
             b12² ≤ b11 × b22 must be satisfied for each nested structure.
         vtype : str
             Variogram type: one of ``sph``, ``exp``, ``gau``, ``pow``,
-            ``lin``, ``hol``, ``bsq``, ``cir``, ``nug``.
+            ``lin``, ``hol``, ``bsq``, ``cir``, ``nug``, ``cyc``, ``dco``.
+            ``cyc`` is the GP periodic (exp-sine-squared) kernel where
+            ``a_major`` is the period; ``dco`` is a damped cosine.
         nugget : float
             Nugget contribution of this structure (default 0).
         sill : float
@@ -741,6 +746,21 @@ class Kriging:
             Range along the second minor axis. Defaults to ``a_minor1``.
         azimuth, dip, plunge : float
             Rotation angles in degrees (default 0).
+        append : bool
+            ``True`` (default) appends this structure to any existing ones.
+            ``False`` clears the current model before adding.
+        product : bool
+            ``False`` (default) adds this structure to the previous ones
+            (standard additive nesting).  ``True`` **multiplies** this
+            structure with the immediately preceding one, forming a product
+            group.  The Schur product of two positive-definite covariances
+            is also positive-definite, so products are always valid.
+
+            Example — damped cosine with independent decay and period::
+
+                k.set_vgm(1, 1, vtype="exp", sill=1.0, a_major=5.0)   # decay over 5 yr
+                k.set_vgm(1, 1, vtype="hol", sill=1.0, a_major=0.5,   # 1-yr period
+                          product=True)
 
         Example
         -------
@@ -766,6 +786,7 @@ class Kriging:
             vtype.lower()[:3].encode("utf-8"),
             nugget, sill, a_major, a_minor1, a_minor2,
             azimuth, dip, plunge,
+            _c_int(1 if product else 0),
         )
         self._nvgm_struct[ivar-1, jvar-1] += 1
         if (ivar!=jvar):
@@ -797,7 +818,7 @@ class Kriging:
             Variable indices (1-based).
         vtype : str
             Variogram type: ``sph``, ``exp``, ``gau``, ``pow``, ``lin``,
-            ``hol``, ``bsq``, ``cir``, or ``nug``.
+            ``hol``, ``bsq``, ``cir``, ``nug``, ``cyc``, or ``dco``.
         nugget : float
             Nugget contribution (default 0).
         sill : float
@@ -821,6 +842,7 @@ class Kriging:
             vtype.encode("utf-8"),
             nugget, sill, a_major, a_minor1, a_minor2,
             azimuth, dip, plunge,
+            _c_int(0),   # product not supported for per-block vgm
         )
 
     # ------------------------------------------------------------------

@@ -244,7 +244,7 @@ contains
 
   integer(c_int) function krige_set_vgm(handle, ivar, jvar, vtype, &
                             nugget, sill, a_major, a_minor1, a_minor2, &
-                            azimuth, dip, plunge) &
+                            azimuth, dip, plunge, is_product) &
       bind(C, name='krige_set_vgm') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
@@ -252,6 +252,7 @@ contains
     character(kind=c_char), intent(in) :: vtype(*)
     real(c_double), intent(in), value :: nugget, sill, a_major, a_minor1, a_minor2
     real(c_double), intent(in), value :: azimuth, dip, plunge
+    integer(c_int), intent(in), value :: is_product   ! 0 = additive (default), 1 = multiply previous
 
     class(t_kriging), pointer :: obj
     call kriging_clear_error()
@@ -263,14 +264,15 @@ contains
     call obj%set_vgm(int(ivar), int(jvar), c2fstr(vtype), &
                      real(nugget), real(sill), real(a_major), &
                      real(a_minor1), real(a_minor2), &
-                     real(azimuth), real(dip), real(plunge))
+                     real(azimuth), real(dip), real(plunge), &
+                     product = (is_product /= 0))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_vgm
 
   !-- Per-block variogram (requires varying_vgm=1 and set_grid called first).
   integer(c_int) function krige_set_vgm_block(handle, ivar, jvar, ib, vtype, &
                                   nugget, sill, a_major, a_minor1, a_minor2, &
-                                  azimuth, dip, plunge) &
+                                  azimuth, dip, plunge, is_product) &
       bind(C, name='krige_set_vgm_block') result(ierr)
 
     integer(c_intptr_t), intent(in), value :: handle
@@ -278,6 +280,7 @@ contains
     character(kind=c_char), intent(in) :: vtype(*)
     real(c_double), intent(in), value :: nugget, sill, a_major, a_minor1, a_minor2
     real(c_double), intent(in), value :: azimuth, dip, plunge
+    integer(c_int), intent(in), value :: is_product
 
     class(t_kriging), pointer :: obj
     call kriging_clear_error()
@@ -296,7 +299,8 @@ contains
                      azimuth  = real(azimuth), &
                      dip      = real(dip), &
                      plunge   = real(plunge), &
-                     ib       = int(ib))
+                     ib       = int(ib), &
+                     product  = (is_product /= 0))
     ierr = int(kriging_ierr(), c_int)
   end function krige_set_vgm_block
 

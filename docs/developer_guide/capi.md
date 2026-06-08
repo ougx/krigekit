@@ -488,9 +488,9 @@ Call this first to obtain `npp` and `p` before allocating buffers for
 ```c
 int krige_get_factor_matrices(int64_t handle,
     int npp, int p,
-    double *L_out,       // [npp × npp]       upper-tri Cholesky of K
-    double *kinv_out,    // [npp × max(1,p)]   K^{-1} F
-    double *schur_out)   // [max(1,p) × max(1,p)]  Cholesky of F'K^{-1}F
+    double *L_out,       // [npp * npp]       upper-tri Cholesky of K
+    double *kinv_out,    // [npp * max(1,p)]   K^{-1} F
+    double *schur_out)   // [max(1,p) * max(1,p)]  Cholesky of F'K^{-1}F
 ```
 
 Copies the three persistent factor matrices into caller-allocated arrays.

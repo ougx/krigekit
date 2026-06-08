@@ -20,17 +20,17 @@ For example, ordinary kriging may be insufficient if:
 
 In these cases, the observed value can be understood as:
 
-```math
+```{math}
 Z(\mathbf{s}) = m(\mathbf{s}) + \varepsilon(\mathbf{s})
 ```
 
 where:
 
-* (Z(\mathbf{s})) is the variable observed at location (\mathbf{s});
-* (m(\mathbf{s})) is the deterministic mean or drift;
-* (\varepsilon(\mathbf{s})) is a spatially correlated residual with mean zero.
+* $Z(\mathbf{s})$ is the variable observed at location $\mathbf{s}$;
+* $m(\mathbf{s})$ is the deterministic mean or drift;
+* $\varepsilon(\mathbf{s})$ is a spatially correlated residual with mean zero.
 
-The goal is to estimate (Z(\mathbf{s}_0)) at an unsampled location (\mathbf{s}_0), while accounting for both the deterministic drift and the spatial covariance of the residuals.
+The goal is to estimate $Z(\mathbf{s}_0)$ at an unsampled location $\mathbf{s}_0$, while accounting for both the deterministic drift and the spatial covariance of the residuals.
 
 ## Ordinary kriging, universal kriging, and KED
 
@@ -40,11 +40,11 @@ The three methods differ mainly in how they represent the mean.
 
 Ordinary kriging assumes an unknown but locally constant mean:
 
-```math
+```{math}
 Z(\mathbf{s}) = \mu + \varepsilon(\mathbf{s})
 ```
 
-The mean (\mu) is not known, but it is assumed to be constant within the local search neighborhood.
+The mean $\mu$ is not known, but it is assumed to be constant within the local search neighborhood.
 
 Ordinary kriging is appropriate when there is no strong deterministic trend, or when the search neighborhood is small enough that the mean can reasonably be treated as locally constant.
 
@@ -52,17 +52,17 @@ Ordinary kriging is appropriate when there is no strong deterministic trend, or 
 
 Universal kriging assumes that the mean is a function of spatial coordinates:
 
-```math
+```{math}
 Z(\mathbf{s}) = \sum_{k=0}^{p} \beta_k f_k(\mathbf{s}) + \varepsilon(\mathbf{s})
 ```
 
-where (f_k(\mathbf{s})) are known drift functions, such as:
+where $f_k(\mathbf{s})$ are known drift functions, such as:
 
-```math
+```{math}
 1,\ x,\ y,\ x^2,\ xy,\ y^2
 ```
 
-The coefficients (\beta_k) are unknown and estimated implicitly through the kriging system.
+The coefficients $\beta_k$ are unknown and estimated implicitly through the kriging system.
 
 Universal kriging is useful when the trend can be represented directly from coordinates, such as a linear regional gradient or a smooth polynomial surface.
 
@@ -70,11 +70,11 @@ Universal kriging is useful when the trend can be represented directly from coor
 
 Kriging with external drift uses one or more auxiliary variables to describe the trend:
 
-```math
+```{math}
 Z(\mathbf{s}) = \sum_{k=0}^{p} \beta_k q_k(\mathbf{s}) + \varepsilon(\mathbf{s})
 ```
 
-where (q_k(\mathbf{s})) are external drift variables known at both observation locations and prediction locations.
+where $q_k(\mathbf{s})$ are external drift variables known at both observation locations and prediction locations.
 
 Examples of external drift variables include:
 
@@ -130,7 +130,7 @@ column 2: distance_to_river
 
 The simplest universal kriging model uses an intercept plus linear coordinate terms:
 
-```math
+```{math}
 m(x, y) = \beta_0 + \beta_1 x + \beta_2 y
 ```
 
@@ -286,23 +286,23 @@ Adding many drift terms can make the kriging system unstable, especially when lo
 
 Universal kriging and KED add unbiasedness constraints to the ordinary kriging system.
 
-For a prediction location (\mathbf{s}_0), the estimator is:
+For a prediction location $\mathbf{s}_0$, the estimator is:
 
-```math
+```{math}
 \hat{Z}(\mathbf{s}_0) = \sum_{i=1}^{n} \lambda_i Z(\mathbf{s}_i)
 ```
 
-The weights (\lambda_i) are chosen so that the estimator is unbiased for the specified drift functions:
+The weights $\lambda_i$ are chosen so that the estimator is unbiased for the specified drift functions:
 
-```math
+```{math}
 \sum_{i=1}^{n} \lambda_i f_k(\mathbf{s}_i) = f_k(\mathbf{s}_0)
 ```
 
-for each drift term (k).
+for each drift term $k$.
 
 The resulting system can be written as:
 
-```math
+```{math}
 \begin{bmatrix}
 C & F \\
 F^T & 0
@@ -320,12 +320,12 @@ f_0
 
 where:
 
-* (C) is the covariance matrix among neighboring observations;
-* (F) is the drift matrix at neighboring observation locations;
-* (c_0) is the covariance vector between observations and the prediction location;
-* (f_0) is the drift vector at the prediction location;
-* (\lambda) are kriging weights;
-* (\mu) are Lagrange multipliers for the drift constraints.
+* $C$ is the covariance matrix among neighboring observations;
+* $F$ is the drift matrix at neighboring observation locations;
+* $c_0$ is the covariance vector between observations and the prediction location;
+* $f_0$ is the drift vector at the prediction location;
+* $\lambda$ are kriging weights;
+* $\mu$ are Lagrange multipliers for the drift constraints.
 
 The covariance or variogram model should describe the residual spatial variation after accounting for the drift.
 
@@ -343,11 +343,11 @@ Common choices include:
 
 | Situation                    | Possible drift terms                               |
 | ---------------------------- | -------------------------------------------------- |
-| Regional gradient            | (1, x, y)                                          |
-| Curved regional trend        | (1, x, y, x^2, xy, y^2)                            |
-| Elevation control            | (1, \text{elevation})                              |
-| Terrain influence            | (1, \text{elevation}, \text{slope}, \text{aspect}) |
-| River or coastline effect    | (1, \text{distance to river})                      |
+| Regional gradient            | $1, x, y$                                          |
+| Curved regional trend        | $1, x, y, x^2, xy, y^2$                            |
+| Elevation control            | $1, \text{elevation}$                              |
+| Terrain influence            | $1, \text{elevation}, \text{slope}, \text{aspect}$ |
+| River or coastline effect    | $1, \text{distance to river}$                      |
 | Urban or land-use influence  | land-use indicators                                |
 | Model-assisted interpolation | deterministic model output                         |
 
@@ -362,7 +362,7 @@ A practical workflow is:
 1. Fit a preliminary trend model using the selected drift variables.
 2. Compute residuals:
 
-```math
+```{math}
 r(\mathbf{s}) = Z(\mathbf{s}) - \hat{m}(\mathbf{s})
 ```
 

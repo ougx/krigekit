@@ -208,16 +208,18 @@ contains
   !   ib       : block index (default: all blocks); if ib is not present,
   !               the structure is applied to all blocks
   !============================================================================
-  subroutine set_vgm(self, ivar, jvar, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge, ib)
+  subroutine set_vgm(self, ivar, jvar, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge, ib, product)
     class(t_kriging), intent(inout)    :: self
     integer,          intent(in)       :: ivar, jvar
     integer, optional,intent(in)       :: ib
     character(*), optional, intent(in) :: vtype
     real,         optional, intent(in) :: nugget, sill, a_major, a_minor1, a_minor2
     real,         optional, intent(in) :: azimuth, dip, plunge
+    logical,      optional, intent(in) :: product    ! .true. = multiply with previous structure
     ! local
     character(len=3) :: vtype_
     real             :: nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_
+    logical          :: product_
     integer          :: ib_, mb, ib0
     character(len=*), parameter :: subname = "t_kriging%set_vgm"
     if (.not. kriging_check_pair_index(subname, ivar, jvar, 1, self%nvar)) return
@@ -242,13 +244,13 @@ contains
     azimuth_  = 0.0      ; if (present(azimuth )) azimuth_ = azimuth
     dip_      = 0.0      ; if (present(dip     )) dip_ = dip
     plunge_   = 0.0      ; if (present(plunge  )) plunge_ = plunge
+    product_  = .false.  ; if (present(product )) product_ = product
 
     if (present(ib)) then
       ib0 = ib
       mb = ib
     else
       ib0 = 1
-      ! -- If block index is not present, the structure is applied to all blocks
       if (self%varying_vgm) then
         mb = self%block%n
       else
@@ -258,20 +260,19 @@ contains
 
     do ib_ = ib0, mb
       if (jvar == ivar) then
-        call self%vgm(jvar, ivar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+        call self%vgm(jvar, ivar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product=product_)
         if (kriging_failed()) return
       else if (jvar > ivar) then
-        !-- Fill both triangle entries (cross-variogram is symmetric)
-        call self%vgm(jvar, ivar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+        call self%vgm(jvar, ivar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product=product_)
         if (kriging_failed()) return
-        call self%vgm(ivar, jvar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+        call self%vgm(ivar, jvar, ib_)%add_args(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product=product_)
         if (kriging_failed()) return
       else
         call kriging_error(subname, 'jvar must be >= ivar to set the upper triangle of the variogram matrix')
         return
       end if
     end do
-    self%pf%valid = .false.   ! variogram changed → persistent factor stale
+    self%pf%valid = .false.
   end subroutine set_vgm
 
 

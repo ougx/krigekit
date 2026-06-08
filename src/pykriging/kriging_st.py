@@ -367,15 +367,22 @@ class SpaceTimeKriging:
 
         Parameters
         ----------
-        model     : 'sum_metric' or 'product_sum'
-        transform : 'nug' | 'sph' | 'exp' | 'gau' | 'pow' | 'bsq' | 'cir' | 'lin'
-                    Controls f(dt) used in the joint ST distance for sum_metric model.
-                    Aliases: 'linear' -> 'lin', 'bounded' -> 'exp', 'power' -> 'pow'.
-        at        : joint temporal scale (unit is [L/T] as observations)
-        time_nugget, time_sill for sum_metric model
-                  : f(dt) = nugget + sill * (1 - corefunc(|dt| / at)) for
-                    nonzero dt; f(0) is always 0.
-        k_ps      : product-sum coefficient k (model='product_sum' only)
+        model : str
+            ``'sum_metric'`` or ``'product_sum'``.
+        transform : str
+            Variogram type used for f(dt): ``'nug'`` | ``'sph'`` | ``'exp'`` |
+            ``'gau'`` | ``'pow'`` | ``'bsq'`` | ``'cir'`` | ``'lin'``.
+            Aliases: ``'linear'`` → ``'lin'``, ``'bounded'`` → ``'exp'``,
+            ``'power'`` → ``'pow'``.
+        at : float
+            Joint temporal scale (same time units as observations).
+        time_nugget : float
+            Nugget jump in f(dt) for the sum-metric model (applied for dt ≠ 0).
+        time_sill : float
+            Upper scale in f(dt): ``f(dt) = time_nugget + time_sill *
+            (1 - corefunc(|dt| / at))`` for dt ≠ 0; f(0) = 0 always.
+        k_ps : float
+            Product-sum coefficient k (``model='product_sum'`` only).
         """
         model = model.lower()
         assert model in ["sum_metric", "product_sum"], f"model must be 'sum_metric' or 'product_sum'"

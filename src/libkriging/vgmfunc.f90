@@ -7,18 +7,20 @@ module vgm_func
   integer, parameter :: VGM_SPH = 1   ! spherical
   integer, parameter :: VGM_EXP = 2   ! exponential
   integer, parameter :: VGM_GAU = 3   ! gaussian
-  integer, parameter :: VGM_HOL = 4   ! hole-effect
+  integer, parameter :: VGM_HOL = 4   ! hole-effect (cosine)
   integer, parameter :: VGM_POW = 5   ! power (generalised covariance)
   integer, parameter :: VGM_BSQ = 6   ! bi-square
   integer, parameter :: VGM_CIR = 7   ! circular
   integer, parameter :: VGM_LIN = 8   ! linear
+  integer, parameter :: VGM_CYC = 9   ! GP periodic / exp-sine-squared
+  integer, parameter :: VGM_DCO = 10  ! damped cosine (exp * cos)
 contains
   !=============================================================================
   ! corefunc_fn — pure elemental correlation function dispatcher.
   !
   !   rdist     : dimensionless isotropic lag = h / a_major  (in [0, hmax])
   !   returns   : correlation C(rdist); most models are in [0, 1],
-  !               while hole-effect oscillates.
+  !               while hole-effect and damped-cosine can go negative.
   !
   ! The compiler inlines this and may build a jump table for the select case.
   ! Being pure elemental enables SIMD vectorisation over arrays of rdist.
@@ -51,6 +53,14 @@ contains
           0.0, rdist < 1.0)
       case (VGM_LIN)
         res = merge(1.0 - rdist, 0.0, rdist < 1.0)
+      case (VGM_CYC)
+        ! GP periodic / ExpSineSquared kernel.  a_major = period.
+        ! C(h) = exp(-2 sin²(π h/a)).  C=1 at h=0 and h=a; C=exp(-2)≈0.14 at h=a/2.
+        res = exp(-2.0 * sin(pi * rdist)**2)
+      case (VGM_DCO)
+        ! Damped cosine: decaying oscillation valid in all dimensions.
+        ! C(h) = exp(-3 h/a) cos(π h/a).  Envelope decays like VGM_EXP.
+        res = exp(-3.0 * rdist) * cos(pi * rdist)
       case default
         res = 0.0
     end select
@@ -62,7 +72,7 @@ contains
     integer, intent(in) :: vtype_id
     logical :: res
     select case (vtype_id)
-      case (VGM_EXP, VGM_GAU, VGM_HOL)
+      case (VGM_EXP, VGM_GAU, VGM_HOL, VGM_CYC, VGM_DCO)
         res = .true.
       case default
         res = .false.
@@ -83,6 +93,8 @@ contains
     if (starts_with_ignore_case(vtype, 'bsq')) id = VGM_BSQ
     if (starts_with_ignore_case(vtype, 'cir')) id = VGM_CIR
     if (starts_with_ignore_case(vtype, 'lin')) id = VGM_LIN
+    if (starts_with_ignore_case(vtype, 'cyc')) id = VGM_CYC
+    if (starts_with_ignore_case(vtype, 'dco')) id = VGM_DCO
     if (id==-1) call kriging_error('vtype_from_str', 'unknown vtype: '//vtype)
   end function vtype_from_str
 
