@@ -100,35 +100,3 @@ ax.set_title(f"Standardised residuals\nMSSE = {msse:.2f}  (well-calibrated ≈ 1
 plt.tight_layout()
 plt.show()
 
-#%%
-# Kriging estimate and variance maps
-# ------------------------------------
-# Full ordinary kriging on the 80 × 60 = 4 800 node grid.  The variance is
-# highest where observations are sparse and lowest near clustered data points.
-
-k = Kriging()
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
-k.set_vgm(ivar=1, jvar=1, **VGM)
-k.set_grid(coord=grid[["x", "y"]].values)
-k.set_search()
-k.solve()
-df_map = k.get_result_df()
-del k
-
-est_map = df_map["estimate"].values.reshape(80, 60)
-var_map = df_map["variance"].values.reshape(80, 60)
-
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-for ax, data_2d, label, vmax in zip(
-        axes,
-        [est_map,             var_map],
-        ["Estimate (percent coarse)", "Kriging variance"],
-        [1.0,                 0.12]):
-    im = ax.imshow(data_2d, cmap="turbo", origin="upper",
-                   vmin=0, vmax=vmax, aspect="auto")
-    plt.colorbar(im, ax=ax, label=label, shrink=0.88)
-    ax.set_title(label)
-    ax.set_xlabel("Grid column")
-    ax.set_ylabel("Grid row")
-plt.tight_layout()
-plt.show()

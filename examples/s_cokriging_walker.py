@@ -160,8 +160,8 @@ print(f"Co-kriging — mean variance = {var_cok.mean():,.0f}  "
 vmax_est = max(est_ok.max(), est_cok.max())
 vmax_var = var_ok.max()
 
-fig, axes = plt.subplots(2, 2, figsize=(12, 8),
-                         gridspec_kw={"hspace": 0.4, "wspace": 0.3})
+fig, axes = plt.subplots(2, 2, figsize=(11, 8),
+                         gridspec_kw={"hspace": 0.02, "wspace": 0.01})
 
 for ax, data, title, cmap, vmax in [
     (axes[0, 0], est_ok,  "OK estimate of U",        "turbo",  vmax_est),
@@ -170,11 +170,12 @@ for ax, data, title, cmap, vmax in [
     (axes[1, 1], var_cok, "Co-kriging variance",      "YlOrRd", vmax_var),
 ]:
     im = ax.imshow(data.reshape(NY, NX), cmap=cmap, vmin=0, vmax=vmax,
-                   origin="lower", extent=[10, 250, 10, 290], aspect="auto")
+                   origin="lower", extent=[10, 250, 10, 290])
     plt.colorbar(im, ax=ax, shrink=0.88)
     ax.scatter(coord_u[:, 0], coord_u[:, 1],
                c="white", s=5, lw=0, zorder=3, alpha=0.7)
     ax.set_xlabel("X");  ax.set_ylabel("Y")
+    ax.set_aspect("equal")
     ax.set_title(title, fontsize=10)
 
 fig.suptitle(

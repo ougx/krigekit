@@ -22,8 +22,19 @@ k.solve()
 df = k.get_result_df()
 
 print(df)
-
+#%%
+# Plot the interpolated values
+#----------------------------------------------------
 plt.imshow(df["estimate"].values.reshape([80, 60]), cmap="turbo", vmin=0, vmax=1)
-plt.title("Example plot")
+plt.title("Estimate")
 plt.colorbar(label="Coarse Fraction", pad=0.01)
+plt.show()
+
+
+#%%
+# Plot the Kriging error
+#----------------------------------------------------
+plt.imshow(df["variance"].values.reshape([80, 60]), cmap="Reds", vmin=0, vmax=0.12)
+plt.title("Variance")
+plt.colorbar(label="Variance", pad=0.01)
 plt.show()
