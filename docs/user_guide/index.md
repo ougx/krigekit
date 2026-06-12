@@ -9,6 +9,7 @@ ordinary_kriging
 cokriging
 universal_kriging
 indicator_kriging
+performance
 ```
 
 **Coming in Phase 2:**
@@ -18,4 +19,3 @@ indicator_kriging
 - Spatially Varying Anisotropy
 - Kriging weight reuse
 - Cross-validation
-- OpenMP and reproducibility
