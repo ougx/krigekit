@@ -137,7 +137,19 @@ FLAGS = {
 FLAGS["ifort"] = FLAGS["ifx"]
 
 
-def _module_flags(compiler: str, mod_dir: str) -> list:
+def _compiler_family(compiler: str) -> str:
+    """Return the flag-set key ('gfortran', 'ifx', 'ifort') for a compiler executable.
+
+    Handles triplet-prefixed names such as x86_64-conda-linux-gnu-gfortran.
+    """
+    name = Path(compiler).name.lower()
+    for family in ("gfortran", "ifx", "ifort"):
+        if family in name:
+            return family
+    return compiler
+
+
+def _module_flags(family: str, mod_dir: str) -> list:
     """Return the flags that set the Fortran module output and search directory.
 
     gfortran  : -J <dir>  -I <dir>   (two tokens each)
@@ -147,9 +159,9 @@ def _module_flags(compiler: str, mod_dir: str) -> list:
     mod_dir should be a build directory so generated .mod files stay out of
     the source tree.
     """
-    if compiler == "gfortran":
+    if family == "gfortran":
         return ["-J", mod_dir, "-I", mod_dir]
-    elif compiler in ("ifx", "ifort"):
+    elif family in ("ifx", "ifort"):
         if _ON_WINDOWS:
             return [f"/module:{mod_dir}", f"/I{mod_dir}"]
         else:
@@ -158,7 +170,7 @@ def _module_flags(compiler: str, mod_dir: str) -> list:
         return ["-J", mod_dir, "-I", mod_dir]
 
 
-def _build_define_flags(compiler: str, hcache: int, use_cov_table: bool) -> list:
+def _build_define_flags(family: str, hcache: int, use_cov_table: bool) -> list:
     """Return compiler-specific preprocessor define flags.
 
     Mirrors the CACHE_FLAGS / COV_FLAGS logic in the Makefile.
@@ -170,7 +182,7 @@ def _build_define_flags(compiler: str, hcache: int, use_cov_table: bool) -> list
     use_cov_table : True → -DUSE_COV_TABLE (lookup-table covariance)
     """
     # Intel on Windows uses /D; everything else uses -D
-    pfx = "/" if (_ON_WINDOWS and compiler in ("ifx", "ifort")) else "-"
+    pfx = "/" if (_ON_WINDOWS and family in ("ifx", "ifort")) else "-"
 
     flags = [f"{pfx}DKRIGEKIT_HCACHE_SLOTS={hcache}"]
     if hcache == 0:
@@ -208,17 +220,18 @@ def _clean_mod_files(mod_dir: Path) -> None:
 
 def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
           out_dir: Path, mod_dir: Path) -> Path:
-    flag_set = FLAGS.get(compiler)
+    family = _compiler_family(compiler)
+    flag_set = FLAGS.get(family)
     if flag_set is None:
         raise ValueError(
-            f"Unknown compiler {compiler!r}. Choose: gfortran, ifx, ifort"
+            f"Unknown compiler {compiler!r} (family {family!r}). Choose: gfortran, ifx, ifort"
         )
 
     _clean_mod_files(mod_dir)
 
     # Build preprocessor define flags from CLI args
     define_flags = _build_define_flags(
-        compiler,
+        family,
         hcache=arg.hcache,
         use_cov_table=not arg.no_cov_table,
     )
@@ -232,7 +245,7 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
         }
         flag_set[arg.opt] = [
             f for f in flag_set[arg.opt]
-            if f.lstrip("-/") not in openmp_flags.get(compiler, [])
+            if f.lstrip("-/") not in openmp_flags.get(family, [])
         ]
 
     out_name = output_name(compiler)
@@ -258,14 +271,14 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
                 f"Export definition file not found: {_DEF_FILE}\n"
                 "Edit src/krigekit/kriging.def and add the missing symbols."
             )
-        if compiler == "gfortran":
+        if family == "gfortran":
             extra = [
                 str(_DEF_FILE),
                 "-static",
                 "-static-libgcc",
                 "-static-libgfortran",
             ]
-        elif compiler in ("ifx", "ifort"):
+        elif family in ("ifx", "ifort"):
             extra = ["-link", f"/def:{_DEF_FILE}"]
 
     cmd = (
@@ -273,7 +286,7 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
         + flag_set[arg.opt]
         + define_flags
         + flag_set["shared"]
-        + _module_flags(compiler, str(mod_dir))
+        + _module_flags(family, str(mod_dir))
         + sources
         + ["-o", str(out_path)]
         + extra
