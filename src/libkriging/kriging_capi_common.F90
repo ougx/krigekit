@@ -74,6 +74,17 @@ module kriging_capi_common
 contains
 
   !=============================================================================
+  ! check_solved — guard used by all result-getter C API functions.
+  !   Raises a kriging_error if solve() has not yet been called successfully.
+  !=============================================================================
+  subroutine check_solved(obj, caller)
+    class(t_kriging_base), intent(in) :: obj
+    character(len=*),      intent(in) :: caller
+    if (.not. obj%solved) &
+      call kriging_error(caller, 'solve() has not been called; call solve() before retrieving results')
+  end subroutine check_solved
+
+  !=============================================================================
   ! krige_get_last_error — single C symbol for both kriging types.
   !=============================================================================
   integer(c_int) function krige_get_last_error(buffer, nbuf) &
@@ -266,6 +277,8 @@ contains
     call kriging_clear_error()
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call check_solved(obj, 'krige_get_estimate')
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%value)) then
       out = transpose(obj%block%value(1:nsim_c, 1, 1:nblocks))
     else
@@ -289,6 +302,8 @@ contains
     call kriging_clear_error()
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call check_solved(obj, 'krige_get_estimate_all')
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (.not. allocated(obj%block%value)) then
       out = IEEE_VALUE(0.0_c_double, IEEE_QUIET_NAN)
       ierr = int(kriging_ierr(), c_int)
@@ -310,6 +325,8 @@ contains
     call kriging_clear_error()
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call check_solved(obj, 'krige_get_variance')
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%variance)) then
       out = obj%block%variance(1, 1, 1:nblocks)
     else
@@ -334,6 +351,8 @@ contains
     call kriging_clear_error()
     call get_obj_base(handle, obj)
     if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
+    call check_solved(obj, 'krige_get_variance_all')
+    if (kriging_failed()) then; ierr = int(kriging_ierr(), c_int); return; end if
     if (allocated(obj%block%variance)) then
       do ib = 1, nblocks
         out(ib, 1:nvar_c, 1:nvar_c) = obj%block%variance(1:nvar_c, 1:nvar_c, ib)

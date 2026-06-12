@@ -82,3 +82,4 @@ src/pykriging/kriging.pdb
 /docs/auto_examples
 docs/sg_execution_times.rst
 bin/sparks
+/conda-recipe

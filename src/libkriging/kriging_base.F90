@@ -335,6 +335,8 @@ module kriging_base
     integer :: nppmax       = 0
     integer :: matsize_max  = 0
     integer :: mmax         = 0
+    ! --- solver state ---
+    logical :: solved         = .false. ! .true. after a successful solve(); reset at the start of each call
     ! --- solver statistics (reset at start of each solve()) ---
     integer :: n_fail         = 0  ! blocks solve failed. Solve continue to next block when neglect_error=.true.
     integer :: n_chol_fact    = 0  ! blocks solved by Cholesky (fresh factorize)
@@ -2003,7 +2005,8 @@ contains
     end if
 #endif
 
-    ! Reset solver statistics so every solve() call gets a clean slate.
+    ! Reset solver state and statistics so every solve() call gets a clean slate.
+    self%solved         = .false.
     self%n_fail         = 0
     self%n_chol_fact    = 0
     self%n_chol_reuse   = 0
@@ -2098,6 +2101,7 @@ contains
 
     if (self%nsim > 0) call self%reorder_sgsim()
     call self%post_solve()
+    self%solved = .true.
 
 900 continue
     self%factor_cache_size = prev_ncache
