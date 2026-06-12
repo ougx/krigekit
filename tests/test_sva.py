@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_sva.py
 ========================
 Tests for spatial varying anisotropy features:

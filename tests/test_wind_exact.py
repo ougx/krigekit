@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_wind_exact.py
 ==================
 Validates SpaceTimeKriging against the Irish wind dataset

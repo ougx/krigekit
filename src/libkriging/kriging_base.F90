@@ -312,8 +312,8 @@ module kriging_base
     logical :: varying_vgm        = .false.
     logical :: std_ck             = .true.
     logical :: pf_cache           = .true.
-#ifdef PYKRIGING_HCACHE_SLOTS
-    integer :: factor_cache_size  = PYKRIGING_HCACHE_SLOTS
+#ifdef KRIGEKIT_HCACHE_SLOTS
+    integer :: factor_cache_size  = KRIGEKIT_HCACHE_SLOTS
 #else
     integer :: factor_cache_size  = 64      ! per-thread multi-entry factor cache; <=0 disables
 #endif
@@ -2260,7 +2260,7 @@ contains
     class(t_kriging_base), intent(in)  :: krige
     integer :: ivar, kvar, kgrad
     ! Per-thread upper bound for the multi-entry factor cache.
-#ifdef PYKRIGING_DISABLE_HCACHE
+#ifdef KRIGEKIT_DISABLE_HCACHE
     integer(int64), parameter :: MAX_HCACHE_BYTES = 0_int64
 #else
     integer(int64), parameter :: MAX_HCACHE_BYTES = 64_int64 * 1024_int64 * 1024_int64 ! 64 MB/thread

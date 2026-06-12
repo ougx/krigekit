@@ -11,9 +11,9 @@ rem                     set to 0 to use analytic path for debugging)
 del *.exe *.obj *.o *.mod *.pdb
 rem -fopenmp
 if "%HCACHE%"=="" set HCACHE=64
-if "%PYKRIGING_DISABLE_HCACHE%"=="1" set HCACHE=0
-set CACHE_FLAGS=-DPYKRIGING_HCACHE_SLOTS=%HCACHE%
-if "%HCACHE%"=="0" set CACHE_FLAGS=%CACHE_FLAGS% -DPYKRIGING_DISABLE_HCACHE
+if "%KRIGEKIT_DISABLE_HCACHE%"=="1" set HCACHE=0
+set CACHE_FLAGS=-DKRIGEKIT_HCACHE_SLOTS=%HCACHE%
+if "%HCACHE%"=="0" set CACHE_FLAGS=%CACHE_FLAGS% -DKRIGEKIT_DISABLE_HCACHE
 if "%USE_COV_TABLE%"=="" set USE_COV_TABLE=1
 set COV_FLAGS=
 if "%USE_COV_TABLE%"=="1" set COV_FLAGS=-DUSE_COV_TABLE
@@ -35,7 +35,7 @@ gfortran -cpp -fbacktrace -ffree-line-length-none -O2 -fdefault-real-8 %CACHE_FL
    kriging_capi.F90 ^
    kriging_st.F90 ^
    kriging_st_capi.f90 ^
-   -o ..\pykriging\kriging.dll
+   -o ..\krigekit\kriging.dll
 
 
 pause

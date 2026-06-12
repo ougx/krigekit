@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_reuse_and_features.py
 ==========================
 Tests for four capabilities:

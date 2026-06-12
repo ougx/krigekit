@@ -1,6 +1,6 @@
 # ===========================================================================
-# Makefile — pyKriging
-# Builds:  libkriging  (shared library → src/pykriging/kriging.dll / .so)
+# Makefile — krigekit
+# Builds:  libkriging  (shared library → src/krigekit/kriging.dll / .so)
 #          sparks       (CLI executable → bin/sparks[.exe])
 #
 # Requires GNU Make >= 4 (rtools44, msys2, or brew).
@@ -44,13 +44,13 @@ else ifeq ($(OS),Windows_NT)
 endif
 
 ifeq ($(WINDOWS),1)
-  DLL_FILE  := src/pykriging/kriging.dll
+  DLL_FILE  := src/krigekit/kriging.dll
   EXE_FILE  := bin/sparks.exe
   OBJEXT    := obj
   # mkdir -p fails in pure CMD. Since Python is required for this library, we use it safely.
   MKDIR     := python -c "import os, sys; [os.makedirs(d, exist_ok=True) for d in sys.argv[1:]]"
 else
-  DLL_FILE  := src/pykriging/libkriging.so
+  DLL_FILE  := src/krigekit/libkriging.so
   EXE_FILE  := bin/sparks
   OBJEXT    := o
   MKDIR     := mkdir -p
@@ -130,7 +130,7 @@ SPK_BDIR := build/sparks
 # ---------------------------------------------------------------------------
 # Windows: .def file lists every C-API export symbol.
 #
-# src/pykriging/kriging.def is maintained by hand — edit it whenever a
+# src/krigekit/kriging.def is maintained by hand — edit it whenever a
 # new bind(C) entry point is added to kriging_capi.F90 or
 # kriging_st_capi.f90.  Neither this Makefile nor build_lib.py generates
 # or overwrites the file.
@@ -142,7 +142,7 @@ SPK_BDIR := build/sparks
 # ---------------------------------------------------------------------------
 DEF_FILE :=
 ifeq ($(WINDOWS),1)
-  DEF_FILE := src/pykriging/kriging.def
+  DEF_FILE := src/krigekit/kriging.def
 endif
 
 # ---------------------------------------------------------------------------
@@ -165,22 +165,22 @@ endif
 
 ifeq ($(HCACHE),0)
     ifeq ($(FC),gfortran)
-        CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE) -DPYKRIGING_DISABLE_HCACHE
+        CACHE_FLAGS := -DKRIGEKIT_HCACHE_SLOTS=$(HCACHE) -DKRIGEKIT_DISABLE_HCACHE
     else ifneq ($(filter $(FC),ifx ifort),)
         ifeq ($(WINDOWS),1)
-            CACHE_FLAGS := /DPYKRIGING_HCACHE_SLOTS=$(HCACHE) /DPYKRIGING_DISABLE_HCACHE
+            CACHE_FLAGS := /DKRIGEKIT_HCACHE_SLOTS=$(HCACHE) /DKRIGEKIT_DISABLE_HCACHE
         else
-            CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE) -DPYKRIGING_DISABLE_HCACHE
+            CACHE_FLAGS := -DKRIGEKIT_HCACHE_SLOTS=$(HCACHE) -DKRIGEKIT_DISABLE_HCACHE
         endif
     endif
 else
     ifeq ($(FC),gfortran)
-        CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+        CACHE_FLAGS := -DKRIGEKIT_HCACHE_SLOTS=$(HCACHE)
     else ifneq ($(filter $(FC),ifx ifort),)
         ifeq ($(WINDOWS),1)
-            CACHE_FLAGS := /DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+            CACHE_FLAGS := /DKRIGEKIT_HCACHE_SLOTS=$(HCACHE)
         else
-            CACHE_FLAGS := -DPYKRIGING_HCACHE_SLOTS=$(HCACHE)
+            CACHE_FLAGS := -DKRIGEKIT_HCACHE_SLOTS=$(HCACHE)
         endif
     endif
 endif

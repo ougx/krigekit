@@ -1,4 +1,4 @@
-﻿"""
+"""
 Ordinary kriging example
 ========================
 

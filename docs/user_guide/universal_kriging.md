@@ -1,4 +1,4 @@
-﻿# Universal Kriging and Kriging with External Drift
+# Universal Kriging and Kriging with External Drift
 
 Universal kriging and kriging with external drift are used when the spatial variable of interest is not stationary in its mean. Instead of assuming a constant unknown mean, these methods model the mean as a deterministic trend while still using a covariance or variogram model to describe spatially correlated residual variation.
 

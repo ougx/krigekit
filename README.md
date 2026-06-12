@@ -1,4 +1,4 @@
-﻿# krigekit
+# krigekit
 
 A Python wrapper for a high-performance Fortran kriging engine parallelised with
 OpenMP.

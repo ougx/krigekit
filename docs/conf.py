@@ -1,4 +1,4 @@
-﻿"""Sphinx configuration for krigekit documentation."""
+"""Sphinx configuration for krigekit documentation."""
 
 import os
 import sys

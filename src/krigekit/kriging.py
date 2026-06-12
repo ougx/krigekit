@@ -1,4 +1,4 @@
-﻿"""
+"""
 kriging.py
 ==========
 Python wrapper for the Fortran kriging module via ISO C Binding.

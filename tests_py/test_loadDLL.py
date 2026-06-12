@@ -1,4 +1,4 @@
-﻿# test_dll_load.py
+# test_dll_load.py
 import ctypes
 import os
 

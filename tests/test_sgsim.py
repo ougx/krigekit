@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_sgsim.py
 =============
 Tests for Sequential Gaussian Simulation (SGSIM) using the pc2d dataset

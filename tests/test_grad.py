@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_grad.py
 ============
 Tests for gradient observation pairs (Delhomme 1979: "Kriging in hydrology").

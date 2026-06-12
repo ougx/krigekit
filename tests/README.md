@@ -1,4 +1,4 @@
-﻿# krigekit Test Suite
+# krigekit Test Suite
 
 This directory contains the automated test suite for the **krigekit** library and its associated CLI executable (`sparks`). The suite uses `pytest` and provides comprehensive coverage for core geostatistical functions, input validation, object reuse, and Fortran/C-backend integration.
 

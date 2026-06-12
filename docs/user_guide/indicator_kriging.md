@@ -1,4 +1,4 @@
-﻿# Multiple Indicator Kriging and SIS
+# Multiple Indicator Kriging and SIS
 
 {py:class}`~krigekit.IndicatorKriging` implements **Multiple Indicator Kriging
 (MIK)** for probability estimation and **Sequential Indicator Simulation (SIS)**

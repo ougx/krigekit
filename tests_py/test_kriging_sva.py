@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_kriging_sva.py
 -------------------
 Manual debug tests for the t_kriging_sva spatially varying variogram

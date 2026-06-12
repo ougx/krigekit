@@ -1,4 +1,4 @@
-﻿# API reference
+# API reference
 
 The full API is auto-generated from the source docstrings.
 

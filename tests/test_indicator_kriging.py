@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for IndicatorKriging (MIK estimation and SIS).
 """
 import sys, os

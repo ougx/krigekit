@@ -1,4 +1,4 @@
-﻿# Ordinary kriging
+# Ordinary kriging
 
 Ordinary kriging (OK) estimates an unknown value at a target location as a
 weighted average of nearby observations, with weights chosen so that the

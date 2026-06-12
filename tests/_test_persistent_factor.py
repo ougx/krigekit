@@ -1,4 +1,4 @@
-﻿"""
+"""
 Verify the persistent between-solve factorization cache:
   1. After solve(), get_factor() returns valid matrices.
   2. A second solve() on the same grid skips kriging_setup (timing test).

@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_weight_store.py
 ====================
 Tests for the in-memory weight store (``store_weight=True`` + ``get_weights()``).

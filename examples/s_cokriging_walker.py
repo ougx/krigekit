@@ -1,4 +1,4 @@
-﻿"""
+"""
 Co-kriging the Walker Lake dataset
 ====================================
 

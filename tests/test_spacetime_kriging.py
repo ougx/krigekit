@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_spacetime_kriging.py
 =========================
 Tests for SpaceTimeKriging, spacetime_kriging(), and spacetime_cokriging().

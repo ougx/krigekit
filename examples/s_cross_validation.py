@@ -1,4 +1,4 @@
-﻿"""
+"""
 Leave-one-out cross-validation
 ================================
 

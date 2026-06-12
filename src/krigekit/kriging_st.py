@@ -1,4 +1,4 @@
-﻿"""
+"""
 _kriging_st.py
 ==============
 Python wrapper for the space-time kriging C API (krige_st_* entry points).

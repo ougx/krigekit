@@ -1,4 +1,4 @@
-﻿name: krigekit
+name: krigekit
 channels:
   - conda-forge
   - defaults

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sequential Indicator Simulation of Lithofacies
 ===============================================
 

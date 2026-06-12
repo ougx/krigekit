@@ -1,4 +1,4 @@
-﻿"""
+"""
 krigekit
 =========
 Python wrapper for a Fortran kriging and SGSIM engine.

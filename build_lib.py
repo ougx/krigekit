@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 build_lib.py
 ============
@@ -171,9 +171,9 @@ def _build_define_flags(compiler: str, hcache: int, use_cov_table: bool) -> list
     # Intel on Windows uses /D; everything else uses -D
     pfx = "/" if (_ON_WINDOWS and compiler in ("ifx", "ifort")) else "-"
 
-    flags = [f"{pfx}Dkrigekit_HCACHE_SLOTS={hcache}"]
+    flags = [f"{pfx}DKRIGEKIT_HCACHE_SLOTS={hcache}"]
     if hcache == 0:
-        flags.append(f"{pfx}Dkrigekit_DISABLE_HCACHE")
+        flags.append(f"{pfx}DKRIGEKIT_DISABLE_HCACHE")
     if use_cov_table:
         flags.append(f"{pfx}DUSE_COV_TABLE")
     return flags

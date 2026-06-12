@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_ordinary_kriging.py
 ========================
 Tests for ordinary point kriging using the Kriging class and

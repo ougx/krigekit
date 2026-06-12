@@ -1,4 +1,4 @@
-﻿# krigekit
+# krigekit
 
 **krigekit** is a Python interface to a high-performance Fortran kriging and
 Sequential Gaussian Simulation engine, parallelised with OpenMP.

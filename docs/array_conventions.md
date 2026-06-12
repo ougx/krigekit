@@ -1,4 +1,4 @@
-﻿# Array conventions
+# Array conventions
 
 krigekit uses a consistent set of array shapes across all methods.
 Understanding these conventions prevents the most common errors.

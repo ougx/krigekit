@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_update_obs_value.py
 ========================
 Tests for Kriging.update_obs_value(), which replaces observation values

@@ -1,4 +1,4 @@
-﻿# Quick start
+# Quick start
 
 This page shows two paths to ordinary kriging: the one-shot convenience
 function and the full class interface.  Both produce identical results.

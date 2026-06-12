@@ -1,4 +1,4 @@
-﻿"""
+"""
 Kriging with External Drift — groundwater levels
 ==================================================
 

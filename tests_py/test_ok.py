@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 sys.path.insert(0, "../src/krigekit")
 
 from _kriging import Kriging

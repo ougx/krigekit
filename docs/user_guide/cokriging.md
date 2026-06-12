@@ -1,4 +1,4 @@
-﻿# Co-kriging
+# Co-kriging
 
 Co-kriging estimates a **primary variable** at unsampled locations by jointly
 conditioning on observations of one or more **secondary variables**.  The

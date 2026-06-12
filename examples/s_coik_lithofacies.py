@@ -1,4 +1,4 @@
-﻿"""
+"""
 Co-kriging Indicator Simulation with a Continuous Covariate
 ============================================================
 

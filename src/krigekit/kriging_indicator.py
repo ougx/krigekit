@@ -1,4 +1,4 @@
-﻿"""
+"""
 kriging_indicator.py
 ====================
 Python wrapper for Multiple Indicator Kriging (MIK) and Sequential Indicator

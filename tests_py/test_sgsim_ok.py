@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 sys.path.insert(0, "../src/krigekit")
 
 from scipy.spatial.distance import cdist, pdist

@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_api.py
 ===========
 Tests for input validation, edge cases, and the full Kriging class API

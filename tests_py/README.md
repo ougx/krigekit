@@ -1,4 +1,4 @@
-﻿# Manual Debugging Tests
+# Manual Debugging Tests
 
 A collection of standalone Python scripts for debugging and validating the
 krigekit library outside of the pytest suite. Each script can be run

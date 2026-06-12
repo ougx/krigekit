@@ -1,4 +1,4 @@
-﻿"""
+"""
 conftest.py
 ===========
 Shared pytest fixtures for krigekit tests.

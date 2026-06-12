@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_bk.py
 ========================
 Tests for three advanced kriging features:

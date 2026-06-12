@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_cokriging.py
 =================
 Tests for ordinary co-kriging using the Walker Lake dataset.

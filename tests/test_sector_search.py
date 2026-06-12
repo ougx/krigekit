@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_sector_search.py
 ======================
 Unit and integration tests for the sector search feature.
