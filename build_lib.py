@@ -58,6 +58,7 @@ SOURCES = [
     "kriging_base.F90",
     "kriging.F90",
     "kriging_capi_common.F90",
+    "kriging_indicator.F90",     # must precede kriging_capi (uses t_kriging_indicator)
     "kriging_capi.F90",          # uppercase F — preprocessed by cpp
     "kriging_st.F90",            # t_kriging_st — space-time kriging type
     "kriging_st_capi.f90",       # C API for ST types

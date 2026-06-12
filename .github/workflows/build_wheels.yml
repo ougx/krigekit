@@ -2,21 +2,23 @@ name: Build and publish wheels
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
 
 jobs:
   build-linux:
-    name: Build Linux wheel (manylinux2014 x86_64)
+    name: Build Linux wheel (manylinux_2_28 x86_64)
     runs-on: ubuntu-24.04
     container:
-      image: quay.io/pypa/manylinux2014_x86_64
+      image: quay.io/pypa/manylinux_2_28_x86_64
     env:
       PYTHON_BIN: /opt/python/cp312-cp312/bin/python
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify build tools
         run: |
@@ -24,7 +26,7 @@ jobs:
           $PYTHON_BIN --version
 
       - name: Install Python build tools
-        run: $PYTHON_BIN -m pip install build wheel
+        run: $PYTHON_BIN -m pip install build wheel setuptools
 
       - name: Compile Fortran library
         run: $PYTHON_BIN build_lib.py --compiler gfortran
@@ -35,9 +37,12 @@ jobs:
       - name: Repair wheel with auditwheel
         run: |
           mkdir repaired_wheels
-          auditwheel repair dist/*.whl --plat manylinux2014_x86_64 -w repaired_wheels/
+          auditwheel repair dist/*.whl --plat manylinux_2_28_x86_64 -w repaired_wheels/
           rm -rf dist/*
           mv repaired_wheels/*.whl dist/
+
+      - name: Retag wheel for broad Python compatibility
+        run: $PYTHON_BIN -m wheel tags --python-tag py3 --abi-tag none --remove dist/*.whl
 
       - name: Smoke test wheel
         run: |
@@ -46,7 +51,7 @@ jobs:
           $PYTHON_BIN -c "import krigekit; print(krigekit.__version__)"
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheel-linux-x86_64
           path: dist/*.whl
@@ -65,21 +70,37 @@ jobs:
           - platform: macos-x86_64
             os: macos-15-intel
             python-version: "3.12"
+            arch: x86_64
+            macos-deployment-target: "15.0"
           - platform: macos-arm64
             os: macos-14
             python-version: "3.12"
+            arch: arm64
+            macos-deployment-target: "14.0"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install gfortran (macOS)
         if: runner.os == 'macOS'
-        run: brew install gcc
+        run: |
+          brew install gcc
+          FC_PATH=$(ls "$(brew --prefix gcc)/bin/gfortran-"* | sort -V | tail -1)
+          ln -sf "$FC_PATH" "$(brew --prefix)/bin/gfortran"
+
+      - name: Set macOS build environment
+        if: runner.os == 'macOS'
+        run: |
+          TARGET="${{ matrix.macos-deployment-target }}"
+          ARCH="${{ matrix.arch }}"
+          echo "MACOSX_DEPLOYMENT_TARGET=${TARGET}" >> $GITHUB_ENV
+          echo "ARCHFLAGS=-arch ${ARCH}" >> $GITHUB_ENV
+          echo "_PYTHON_HOST_PLATFORM=macosx-${TARGET}-${ARCH}" >> $GITHUB_ENV
 
       - name: Install gfortran (Windows)
         if: runner.os == 'Windows'
@@ -91,11 +112,11 @@ jobs:
 
       - name: Install Python build tools (macOS)
         if: runner.os == 'macOS'
-        run: python -m pip install build wheel delocate
+        run: python -m pip install build wheel delocate setuptools
 
       - name: Install Python build tools (Windows)
         if: runner.os == 'Windows'
-        run: python -m pip install build wheel
+        run: python -m pip install build wheel setuptools
 
       - name: Compile Fortran library
         run: python build_lib.py --compiler gfortran
@@ -103,13 +124,23 @@ jobs:
       - name: Build wheel
         run: python -m build --wheel --no-isolation
 
-      - name: Repair wheel with delocate
+      - name: Repair wheel with delocate (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir repaired_wheels
           delocate-wheel -w repaired_wheels -v dist/*.whl
           rm -rf dist/*
           mv repaired_wheels/*.whl dist/
+
+      - name: Retag wheel for broad Python compatibility (macOS)
+        if: runner.os == 'macOS'
+        run: python -m wheel tags --python-tag py3 --abi-tag none --remove dist/*.whl
+
+      - name: Retag wheel for broad Python compatibility (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $whl = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          python -m wheel tags --python-tag py3 --abi-tag none --remove $whl
 
       - name: Smoke test wheel (macOS)
         if: runner.os == 'macOS'
@@ -128,7 +159,7 @@ jobs:
           Pop-Location
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheel-${{ matrix.platform }}
           path: dist/*.whl
@@ -160,12 +191,12 @@ jobs:
 
     steps:
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ matrix.target.artifact }}
           path: dist
@@ -199,7 +230,7 @@ jobs:
 
     steps:
       - name: Download all wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true

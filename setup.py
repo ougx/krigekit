@@ -1,17 +1,21 @@
 from setuptools import setup
+from setuptools.dist import Distribution
 
-# Force setuptools to produce a platform-specific wheel.
-# Without this, the wheel is tagged py3-none-any and the compiled
-# Fortran library (kriging.dll / libkriging.so / .dylib) gets bundled
-# but pip will happily install it on the wrong OS.
-try:
-    from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+# Patch has_ext_modules at the *class* level so every Distribution instance
+# setuptools creates (including its internal one read from pyproject.toml)
+# returns True.
+#
+# Why this is needed:
+#   krigekit ships a pre-compiled Fortran shared library (libkriging.so /
+#   .dylib / .dll) as package data.  setuptools sees no C extension modules,
+#   so it normally produces a purelib wheel.  auditwheel (Linux) and
+#   delocate (macOS) both require the shared library to be in the *platlib*
+#   section of the wheel, not purelib.
+#
+# Why distclass=BinaryDistribution alone is not enough:
+#   In setuptools 61+, build_meta creates its own Distribution from
+#   pyproject.toml and may not use the distclass from setup().  Patching
+#   the base class ensures the override is visible to every code path.
+Distribution.has_ext_modules = lambda self: True
 
-    class bdist_wheel(_bdist_wheel):
-        def finalize_options(self):
-            super().finalize_options()
-            self.root_is_pure = False
-
-    setup(cmdclass={"bdist_wheel": bdist_wheel})
-except ImportError:
-    setup()
+setup()
