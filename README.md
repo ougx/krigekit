@@ -1,4 +1,8 @@
-# krigekit
+﻿# krigekit
+
+[![PyPI](https://img.shields.io/pypi/v/krigekit)](https://pypi.org/project/krigekit/)
+[![Python](https://img.shields.io/pypi/pyversions/krigekit)](https://pypi.org/project/krigekit/)
+[![CI](https://github.com/ougx/krigekit/actions/workflows/build_wheels.yml/badge.svg)](https://github.com/ougx/krigekit/actions/workflows/build_wheels.yml)
 
 A Python wrapper for a high-performance Fortran kriging engine parallelised with
 OpenMP.
@@ -15,34 +19,39 @@ OpenMP.
 | Cross-validation | Leave-one-out |
 | Kriging weight reuse | Store and replay weights |
 
-**[Full documentation →](docs/)**
+**[Full documentation →](https://krigekit.readthedocs.io/en/latest/)**
 
 ---
 
 ## Installation
 
-**conda / mamba (recommended)**
-
-```bash
-mamba env create -f environment.yml
-mamba activate krigekit
-```
-
 **pip**
 
 ```bash
-pip install -e ".[dev]"   # after compiling the Fortran library
+pip install krigekit
 ```
 
-Compile the Fortran library first:
+Pre-built binary wheels are available for:
+
+| Platform | Architecture | Minimum OS |
+|---|---|---|
+| Linux | x86\_64 | manylinux\_2\_28 (RHEL 8 / Ubuntu 20.04 equivalent) |
+| macOS | arm64 (Apple Silicon) | macOS 14 Sonoma |
+| macOS | x86\_64 (Intel) | macOS 15 Sequoia |
+| Windows | x86\_64 | Windows 10 / Server 2019 |
+
+Requires **Python 3.10, 3.11, or 3.12**.
+
+**conda / mamba**
+
+conda-forge packaging is planned. In the meantime, install via pip inside a
+conda environment:
 
 ```bash
-python build_lib.py                    # Linux/macOS (gfortran)
-python build_lib.py --compiler ifx     # Windows (Intel ifx)
+conda create -n krigekit python=3.12
+conda activate krigekit
+pip install krigekit
 ```
-
-See [docs/installation.md](docs/installation.md) for full details including
-debug builds, `--no-openmp`, and docs dependencies.
 
 ---
 
@@ -67,8 +76,8 @@ del k
 ```
 
 For the full class API, co-kriging, SGSIM, space-time kriging, indicator
-simulation, and more, see the [user guide](docs/user_guide/) and
-[gallery examples](examples/).
+simulation, and more, see the [user guide](https://krigekit.readthedocs.io/en/latest/user_guide/) and
+[gallery examples](https://krigekit.readthedocs.io/en/latest/examples/).
 
 ---
 
@@ -79,19 +88,47 @@ krigekit/
 ├── src/
 │   ├── libkriging/      Fortran kriging engine
 │   ├── sparks/          Pilot-point kriging/SGSIM CLI
-│   └── krigekit/       Python ctypes wrapper
+│   └── krigekit/        Python ctypes wrapper
 ├── examples/            Sphinx-Gallery example scripts
 ├── tests/               pytest test suite
 ├── test_data/           CSV/image data used by tests and examples
 ├── docs/                Sphinx documentation source
 ├── build_lib.py         Fortran compile script
-├── environment.yml      conda/mamba environment
+├── environment.yml      conda/mamba development environment
 └── pyproject.toml       pip package configuration
 ```
 
 ---
 
 ## Contributing
+
+**Building from source**
+
+A Fortran compiler is required (gfortran ≥ 10 or Intel ifx/ifort).
+
+```bash
+# Clone and set up the development environment
+git clone https://github.com/ougx/krigekit.git
+cd krigekit
+
+# Compile the Fortran library
+python build_lib.py --compiler gfortran      # Linux / macOS
+python build_lib.py --compiler gfortran      # Windows (MinGW via MSYS2)
+python build_lib.py --compiler ifx           # Windows (Intel oneAPI)
+
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
+```
+
+Additional build options:
+
+```bash
+python build_lib.py --opt debug        # debug build, no optimisation
+python build_lib.py --no-openmp        # disable OpenMP
+python build_lib.py --hcache 0         # disable factor cache
+```
+
+**Workflow**
 
 1. Fork the repository and create a feature branch.
 2. Add tests for any new behaviour.
