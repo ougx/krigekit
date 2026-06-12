@@ -1,0 +1,52 @@
+name: Run tests
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test (${{ matrix.target.platform }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        target:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+          - platform: windows-x86_64
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install gfortran (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y gfortran
+
+      - name: Install gfortran (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc-fortran
+          path-type: inherit
+
+      - name: Compile
+        run: |
+          python build_lib.py --compiler gfortran
+          python build_sparks.py --compiler gfortran
+
+      - name: Install Python dependencies
+        run: pip install ".[dev]"
+
+      - name: Run tests
+        run: pytest
