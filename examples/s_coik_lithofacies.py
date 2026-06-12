@@ -1,4 +1,4 @@
-"""
+﻿"""
 Co-kriging Indicator Simulation with a Continuous Covariate
 ============================================================
 
@@ -60,7 +60,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
-from pykriging import IndicatorKriging
+from krigekit import IndicatorKriging
 
 # ---------------------------------------------------------------------------
 # Configuration (shared with s_sis_lithofacies)

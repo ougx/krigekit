@@ -1,7 +1,7 @@
-# Manual Debugging Tests
+﻿# Manual Debugging Tests
 
 A collection of standalone Python scripts for debugging and validating the
-pyKriging library outside of the pytest suite. Each script can be run
+krigekit library outside of the pytest suite. Each script can be run
 directly from this directory without any additional setup beyond a compiled
 `kriging.dll` / `libkriging.so` and the package on `sys.path`.
 
@@ -10,9 +10,9 @@ directly from this directory without any additional setup beyond a compiled
 All scripts assume the following layout relative to this folder:
 
 ```
-pyKriging/
+krigekit/
 ├── src/
-│   └── pykriging/
+│   └── krigekit/
 │       ├── kriging.dll        # compiled Fortran library (Windows)
 │       └── _kriging.py        # low-level ctypes wrapper
 ├── test_data/
@@ -99,7 +99,7 @@ Variogram used: spherical, nugget=0, sill=0.12, isotropic range=5000 m.
 
 ---
 
-### `test_ok_wrapper.py` — Ordinary kriging, high-level `pykriging` wrapper
+### `test_ok_wrapper.py` — Ordinary kriging, high-level `krigekit` wrapper
 
 Same dataset and variogram as `test_ok.py`, but exercised through the
 one-shot `ordinary_kriging()` convenience function. Prints a Pearson
@@ -218,7 +218,7 @@ Results: 3 passed, 0 failed
 - Run `test_ok.py` before `test_ok_wrapper.py` to isolate Fortran-layer
   issues from Python-wrapper issues.
 - If `test_ok.py` passes but `test_ok_wrapper.py` fails, the bug is in
-  `pykriging/__init__.py` or the argument marshalling in `_kriging.py`.
+  `krigekit/__init__.py` or the argument marshalling in `_kriging.py`.
 - For SGSIM failures, inspect the `matA_*.csv` files to check whether the
   kriging matrix is singular or poorly conditioned for specific blocks.
 - For SVA failures, use this decision tree:

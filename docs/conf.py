@@ -1,4 +1,4 @@
-"""Sphinx configuration for pyKriging documentation."""
+﻿"""Sphinx configuration for krigekit documentation."""
 
 import os
 import sys
@@ -11,10 +11,10 @@ sys.path.insert(0, os.path.abspath("../src"))
 # Project metadata
 # ---------------------------------------------------------------------------
 from importlib.metadata import version as _version
-project   = "pyKriging"
+project   = "krigekit"
 copyright = "2026, Michael Ou, mou@sspa.com"
 author    = "Michael Ou"
-release   = _version("pykriging")
+release   = _version("krigekit")
 
 # ---------------------------------------------------------------------------
 # Extensions
@@ -99,7 +99,7 @@ rst_prolog = """
 html_theme = "pydata_sphinx_theme"
 
 html_theme_options = {
-    "github_url":         "https://github.com/ougx/pykriging",
+    "github_url":         "https://github.com/ougx/krigekit",
     "navbar_end":         ["navbar-icon-links"],
     "secondary_sidebar_items": ["page-toc"],
     "show_nav_level":     2,
@@ -117,7 +117,7 @@ napoleon_use_rtype         = False
 napoleon_use_param         = True
 
 _lib_so = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "../src/pykriging/libkriging.so")
+                       "../src/krigekit/libkriging.so")
 _lib_dll = _lib_so.replace("libkriging.so", "kriging.dll")
 _lib_available = os.path.exists(_lib_so) or os.path.exists(_lib_dll)
 
@@ -133,7 +133,7 @@ plot_pre_code = """
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from pykriging import *
+from krigekit import *
 """
 
 # matplotlib.sphinxext.plot_directive: hide source by default; readers can

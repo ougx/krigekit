@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_grad.py
 ============
 Tests for gradient observation pairs (Delhomme 1979: "Kriging in hydrology").
@@ -61,7 +61,7 @@ use_old_weight round-trip with gradient data
 
 import numpy as np
 import pytest
-from pykriging import Kriging
+from krigekit import Kriging
 
 
 # ============================================================================

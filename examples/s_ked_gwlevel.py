@@ -1,4 +1,4 @@
-"""
+﻿"""
 Kriging with External Drift — groundwater levels
 ==================================================
 
@@ -16,9 +16,9 @@ that track the topographic gradient far more faithfully.
 
 1. Call ``Kriging(ndrift=1)`` to declare one external drift function.
 2. Supply drift values at observation locations with
-   :meth:`~pykriging.Kriging.set_obs_drift`.
+   :meth:`~krigekit.Kriging.set_obs_drift`.
 3. Supply drift values at grid nodes with
-   :meth:`~pykriging.Kriging.set_grid_drift`.
+   :meth:`~krigekit.Kriging.set_grid_drift`.
 4. The variogram is fitted to the *residuals* after removing the linear DEM
    trend — these represent the spatially correlated component unexplained by
    the drift.
@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import NearestNDInterpolator
-from pykriging import Kriging
+from krigekit import Kriging
 
 # ---------------------------------------------------------------------------
 # Load 2015 observations

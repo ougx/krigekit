@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_sva.py
 ========================
 Tests for spatial varying anisotropy features:
@@ -16,7 +16,7 @@ Variogram:  sph  nugget=0  sill=0.12  range=5000  (isotropic)
 import numpy as np
 import pytest
 import os
-from pykriging import ordinary_kriging
+from krigekit import ordinary_kriging
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
 _VGM = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=5000.0)

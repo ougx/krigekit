@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_bk.py
 ========================
 Tests for three advanced kriging features:
@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import pandas as pd
 import os
-from pykriging import Kriging, ordinary_kriging
+from krigekit import Kriging, ordinary_kriging
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
 _VGM = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=5000.0)

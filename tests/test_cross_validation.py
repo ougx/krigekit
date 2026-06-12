@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_reuse_and_features.py
 ==========================
 Tests for four capabilities:
@@ -17,7 +17,7 @@ shared fixtures pc2d_obs and pc2d_loo defined in conftest.py.
 
 import numpy as np
 import pytest
-from pykriging import Kriging, ordinary_kriging
+from krigekit import Kriging, ordinary_kriging
 
 # ---------------------------------------------------------------------------
 # Constants

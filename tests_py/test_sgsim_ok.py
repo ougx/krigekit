@@ -1,5 +1,5 @@
-import sys
-sys.path.insert(0, "../src/pykriging")
+﻿import sys
+sys.path.insert(0, "../src/krigekit")
 
 from scipy.spatial.distance import cdist, pdist
 from _kriging import Kriging

@@ -1,9 +1,9 @@
-"""
+﻿"""
 Sequential Indicator Simulation of Lithofacies
 ===============================================
 
 This example demonstrates **Multiple Indicator Simulation (MIS / SIS)**
-using :class:`~pykriging.IndicatorKriging` on a 2-D lithofacies dataset
+using :class:`~krigekit.IndicatorKriging` on a 2-D lithofacies dataset
 digitised from an outcrop photograph (Klingbeil 1998).
 
 **Four lithofacies** are modelled as categorical indicator variables:
@@ -31,9 +31,9 @@ digitised from an outcrop photograph (Klingbeil 1998).
 SIS workflow
 ------------
 1. Convert raw category labels into K = 4 binary indicator datasets via
-   :meth:`~pykriging.IndicatorKriging.set_categorical_obs`.
+   :meth:`~krigekit.IndicatorKriging.set_categorical_obs`.
 2. Assign variograms to all K² = 16 pairs in one call using
-   :meth:`~pykriging.IndicatorKriging.set_indicator_vgm`.
+   :meth:`~krigekit.IndicatorKriging.set_indicator_vgm`.
    Three ``cross`` strategies are available:
 
    * ``"same"`` — one shared sill for all K² pairs.  Simplest; relies on
@@ -48,12 +48,12 @@ SIS workflow
 3. Run the simulation — Fortran's ``prepare_indicator`` replaces the
    standard Gaussian samples with U(0, 1) draws used for CDF inversion
    inside ``sim_draw_indicator``.
-4. Each grid node receives a one-hot vector; :meth:`~pykriging.IndicatorKriging.get_results`
+4. Each grid node receives a one-hot vector; :meth:`~krigekit.IndicatorKriging.get_results`
    returns an array of shape ``(n_grid, K, n_sim)``.
 
 Variogram orientation note
 --------------------------
-In pyKriging the default variogram major axis is aligned with the **Y** axis.
+In krigekit the default variogram major axis is aligned with the **Y** axis.
 To model horizontal stratigraphy (long range along X) the same ``azimuth``
 must be passed to **both** ``set_vgm`` and ``set_search``; passing it only to
 ``set_search`` leaves the variogram ellipse pointing the wrong way and produces
@@ -66,7 +66,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
-from pykriging import IndicatorKriging
+from krigekit import IndicatorKriging
 
 # ---------------------------------------------------------------------------
 # Configuration

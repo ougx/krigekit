@@ -1,10 +1,10 @@
-"""
+﻿"""
 test_spacetime_kriging.py
 =========================
 Tests for SpaceTimeKriging, spacetime_kriging(), and spacetime_cokriging().
 
 These tests use synthetic data so they don't require the compiled Fortran
-library at import time — the import of pykriging is guarded so that the
+library at import time — the import of krigekit is guarded so that the
 test collection step passes even without a compiled library.
 
 Run:
@@ -17,8 +17,8 @@ import pytest
 # ---------------------------------------------------------------------------
 # Skip entire module if the compiled library is not available
 # ---------------------------------------------------------------------------
-pytest.importorskip("pykriging", reason="compiled libkriging not found")
-from pykriging import SpaceTimeKriging, spacetime_kriging, spacetime_cokriging
+pytest.importorskip("krigekit", reason="compiled libkriging not found")
+from krigekit import SpaceTimeKriging, spacetime_kriging, spacetime_cokriging
 
 
 # ---------------------------------------------------------------------------

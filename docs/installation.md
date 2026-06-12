@@ -1,4 +1,4 @@
-# Installation
+﻿# Installation
 
 ## Requirements
 
@@ -19,7 +19,7 @@ with all runtime, development, and docs dependencies pre-installed.
 
 ```bash
 mamba env create -f environment.yml   # create once
-mamba activate pykriging              # activate every session
+mamba activate krigekit              # activate every session
 ```
 
 To update an existing environment after pulling new changes:
@@ -38,8 +38,8 @@ If you only have `conda`, substitute `conda` for `mamba` in the commands above.
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/your-username/pykriging.git
-cd pykriging
+git clone https://github.com/your-username/krigekit.git
+cd krigekit
 ```
 
 ### Step 2 — Compile the Fortran library
@@ -71,7 +71,7 @@ python build_lib.py --compiler gfortran
 ```
 
 The script compiles all Fortran sources in `src/libkriging/` in dependency
-order and places the compiled library inside `src/pykriging/`.
+order and places the compiled library inside `src/krigekit/`.
 
 :::{note}
 Pass `--no-openmp` to disable OpenMP if your compiler or environment does not
@@ -94,7 +94,7 @@ pytest
 ```
 
 All tests should pass.  If the shared library is missing, you will get an
-`OSError` when importing `pykriging`.
+`OSError` when importing `krigekit`.
 
 ### Docs dependencies (optional)
 

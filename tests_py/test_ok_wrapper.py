@@ -1,7 +1,7 @@
-import sys
-sys.path.insert(0, "../src/pykriging")
+﻿import sys
+sys.path.insert(0, "../src/krigekit")
 
-from pykriging import ordinary_kriging
+from krigekit import ordinary_kriging
 _VGM   = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=5000.0)
 #%% simple test
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_wind_exact.py
 ==================
 Validates SpaceTimeKriging against the Irish wind dataset
@@ -30,8 +30,8 @@ import urllib.request
 import numpy as np
 import pytest
 
-pytest.importorskip("pykriging", reason="compiled libkriging not found")
-from pykriging import SpaceTimeKriging
+pytest.importorskip("krigekit", reason="compiled libkriging not found")
+from krigekit import SpaceTimeKriging
 
 # ---------------------------------------------------------------------------
 # Station locations — from gstat R-package docs (Haslett & Raftery 1989)

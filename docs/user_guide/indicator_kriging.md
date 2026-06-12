@@ -1,6 +1,6 @@
-# Multiple Indicator Kriging and SIS
+﻿# Multiple Indicator Kriging and SIS
 
-{py:class}`~pykriging.IndicatorKriging` implements **Multiple Indicator Kriging
+{py:class}`~krigekit.IndicatorKriging` implements **Multiple Indicator Kriging
 (MIK)** for probability estimation and **Sequential Indicator Simulation (SIS)**
 for stochastic categorical simulation.
 
@@ -31,7 +31,7 @@ and `post_solve` normalisation produces a valid probability simplex.
 
 ```python
 import numpy as np
-from pykriging import IndicatorKriging
+from krigekit import IndicatorKriging
 
 ik = IndicatorKriging(ncat=3, ndim=2)
 
@@ -64,7 +64,7 @@ normalised to sum to 1.
 
 ## Simulation (SIS)
 
-Pass `nsim > 0` and call {py:meth}`~pykriging.IndicatorKriging.set_sim` before
+Pass `nsim > 0` and call {py:meth}`~krigekit.IndicatorKriging.set_sim` before
 solving.  Each realisation visits grid nodes in a random sequential order and
 draws a category by inverting the local conditional CDF.
 
@@ -90,7 +90,7 @@ del ik
 
 ## Cross-variogram strategies
 
-{py:meth}`~pykriging.IndicatorKriging.set_indicator_vgm` sets all K² variogram
+{py:meth}`~krigekit.IndicatorKriging.set_indicator_vgm` sets all K² variogram
 pairs in one call.  The `cross` parameter controls how off-diagonal (cross)
 sills are derived:
 
@@ -160,7 +160,7 @@ the CDF draw and probability normalisation.
 
 ## Variogram orientation
 
-In pyKriging the default variogram major axis is aligned with the **Y** axis.
+In krigekit the default variogram major axis is aligned with the **Y** axis.
 For horizontal stratigraphy (long range along X), pass the same `azimuth` to
 **both** `set_indicator_vgm` and `set_search`.  Passing it only to `set_search`
 leaves the variogram ellipse pointing the wrong way and produces vertical patches

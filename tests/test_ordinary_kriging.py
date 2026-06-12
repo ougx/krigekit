@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_ordinary_kriging.py
 ========================
 Tests for ordinary point kriging using the Kriging class and
@@ -15,7 +15,7 @@ pc2d / grid2d            : 62 field observations of percent coarse, 4800
 
 import numpy as np
 import pytest
-from pykriging import Kriging, ordinary_kriging
+from krigekit import Kriging, ordinary_kriging
 
 
 # Variogram for obs_simple: pure nugget (isotropic, no spatial structure)

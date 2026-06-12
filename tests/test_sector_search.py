@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_sector_search.py
 ======================
 Unit and integration tests for the sector search feature.
@@ -10,7 +10,7 @@ Verify that:
 
 import numpy as np
 import pytest
-from pykriging import Kriging, SpaceTimeKriging
+from krigekit import Kriging, SpaceTimeKriging
 
 
 # ---------------------------------------------------------------------------

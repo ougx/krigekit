@@ -1,8 +1,8 @@
-# Universal Kriging and Kriging with External Drift
+﻿# Universal Kriging and Kriging with External Drift
 
 Universal kriging and kriging with external drift are used when the spatial variable of interest is not stationary in its mean. Instead of assuming a constant unknown mean, these methods model the mean as a deterministic trend while still using a covariance or variogram model to describe spatially correlated residual variation.
 
-In `pyKriging`, these methods are intended for cases where the target variable varies systematically with location or with one or more auxiliary predictors. Typical examples include groundwater head controlled by elevation, soil properties related to terrain indices, air temperature related to altitude, or contaminant concentration influenced by distance to a source.
+In `krigekit`, these methods are intended for cases where the target variable varies systematically with location or with one or more auxiliary predictors. Typical examples include groundwater head controlled by elevation, soil properties related to terrain indices, air temperature related to altitude, or contaminant concentration influenced by distance to a source.
 
 This page explains the conceptual difference between ordinary kriging, universal kriging, and kriging with external drift, then gives practical guidance for preparing inputs, selecting drift terms, and interpreting results.
 
@@ -173,7 +173,7 @@ grid_drift = linear_xy_drift(grid_coord)
 A typical universal kriging call may look like this:
 
 ```python
-from pykriging import universal_kriging
+from krigekit import universal_kriging
 
 est, var = universal_kriging(
     obs_coord=obs_coord,
@@ -188,7 +188,7 @@ est, var = universal_kriging(
 
 Here, `est` contains the kriging estimates and `var` contains the kriging variances.
 
-Depending on the exact `pyKriging` API, the function name or argument names may differ. The important principle is that the drift basis must be provided at both observation and prediction locations.
+Depending on the exact `krigekit` API, the function name or argument names may differ. The important principle is that the drift basis must be provided at both observation and prediction locations.
 
 ## Basic example: KED with elevation as external drift
 
@@ -227,7 +227,7 @@ grid_drift = elevation_drift(grid_elevation)
 Then run kriging with external drift:
 
 ```python
-from pykriging import universal_kriging
+from krigekit import universal_kriging
 
 est, var = universal_kriging(
     obs_coord=obs_coord,

@@ -1,4 +1,4 @@
-# Ordinary kriging
+﻿# Ordinary kriging
 
 Ordinary kriging (OK) estimates an unknown value at a target location as a
 weighted average of nearby observations, with weights chosen so that the
@@ -8,7 +8,7 @@ estimator is unbiased and has minimum variance.
 
 ```python
 import numpy as np
-from pykriging import ordinary_kriging
+from krigekit import ordinary_kriging
 
 rng = np.random.default_rng(42)
 obs_coord  = rng.uniform(0, 100, (50, 2))
@@ -36,7 +36,7 @@ Simple kriging (SK) treats the mean as known rather than estimating it from
 the data.  Pass `unbias=0` and a `sk_mean`:
 
 ```python
-from pykriging import Kriging
+from krigekit import Kriging
 
 k = Kriging(ndim=2, nvar=1, unbias=0)
 k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20,
@@ -54,7 +54,7 @@ Specify different ranges along each axis.  `azimuth` rotates the major axis
 clockwise from North (degrees):
 
 ```python
-from pykriging import Kriging
+from krigekit import Kriging
 
 k = Kriging(ndim=2, nvar=1)
 k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
@@ -102,7 +102,7 @@ Here is the Python script to run and compare this scenario:
 
 ```python
 import numpy as np
-from pykriging import Kriging
+from krigekit import Kriging
 
 # Target point at the origin
 target = np.array([[0.0, 0.0]])

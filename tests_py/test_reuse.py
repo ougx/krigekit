@@ -1,5 +1,5 @@
-import numpy as np
-from pykriging import Kriging
+﻿import numpy as np
+from krigekit import Kriging
 
 coord = np.array([[0.3, 1.2],[1.9, 0.6],[1.1, 3.2],[3.3, 4.4],[4.7, 3.8]])
 value = np.array([0.47, 0.56, 0.74, 1.47, 1.74])

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Verify the persistent between-solve factorization cache:
   1. After solve(), get_factor() returns valid matrices.
   2. A second solve() on the same grid skips kriging_setup (timing test).
@@ -13,8 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 from scipy.linalg import solve_triangular
-from pykriging import Kriging
-from pykriging.meuk_fortran import MEUKFortran
+from krigekit import Kriging
+from krigekit.meuk_fortran import MEUKFortran
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def sph_cov(C0, h, a):

@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 build_lib.py
 ============
 Compile the Fortran sources into a shared library and install it into the
-pykriging package directory so it can be found at import time.
+krigekit package directory so it can be found at import time.
 
 Usage
 -----
@@ -28,8 +28,8 @@ argument explicitly only when you need to override for debugging or testing.
     --no-openmp         off       OPENMP=0
 
 The compiled library is placed in:
-    src/pykriging/libkriging.so   (Linux / macOS)
-    src/pykriging/kriging.dll     (Windows)
+    src/krigekit/libkriging.so   (Linux / macOS)
+    src/krigekit/kriging.dll     (Windows)
 """
 
 import argparse
@@ -66,7 +66,7 @@ SOURCES = [
 # ---------------------------------------------------------------------------
 # Windows export definition file
 #
-# src/pykriging/kriging.def is maintained by hand — edit it whenever a
+# src/krigekit/kriging.def is maintained by hand — edit it whenever a
 # new bind(C) entry point is added to kriging_capi.F90 or
 # kriging_st_capi.f90.  This script never writes or overwrites it.
 #
@@ -76,7 +76,7 @@ SOURCES = [
 #   ifx/ifort — passed as  -link /def:<path>  to the MSVC link.exe
 # On Linux/macOS the file is not referenced; -shared exports everything.
 # ---------------------------------------------------------------------------
-_DEF_FILE = Path(__file__).parent / "src" / "pykriging" / "kriging.def"
+_DEF_FILE = Path(__file__).parent / "src" / "krigekit" / "kriging.def"
 
 # ---------------------------------------------------------------------------
 # Compiler flag sets
@@ -171,9 +171,9 @@ def _build_define_flags(compiler: str, hcache: int, use_cov_table: bool) -> list
     # Intel on Windows uses /D; everything else uses -D
     pfx = "/" if (_ON_WINDOWS and compiler in ("ifx", "ifort")) else "-"
 
-    flags = [f"{pfx}DPYKRIGING_HCACHE_SLOTS={hcache}"]
+    flags = [f"{pfx}Dkrigekit_HCACHE_SLOTS={hcache}"]
     if hcache == 0:
-        flags.append(f"{pfx}DPYKRIGING_DISABLE_HCACHE")
+        flags.append(f"{pfx}Dkrigekit_DISABLE_HCACHE")
     if use_cov_table:
         flags.append(f"{pfx}DUSE_COV_TABLE")
     return flags
@@ -255,7 +255,7 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
         if not _DEF_FILE.exists():
             raise FileNotFoundError(
                 f"Export definition file not found: {_DEF_FILE}\n"
-                "Edit src/pykriging/kriging.def and add the missing symbols."
+                "Edit src/krigekit/kriging.def and add the missing symbols."
             )
         if compiler == "gfortran":
             extra = [
@@ -298,7 +298,7 @@ def build(compiler: str, arg: argparse.Namespace, fortran_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build the pykriging Fortran library."
+        description="Build the krigekit Fortran library."
     )
     parser.add_argument(
         "--compiler", default=None,
@@ -331,7 +331,7 @@ def main():
 
     root        = Path(__file__).parent
     fortran_dir = root / "src" / "libkriging"
-    out_dir     = root / "src" / "pykriging"
+    out_dir     = root / "src" / "krigekit"
     mod_dir     = root / "build" / "libkriging"
 
     if not fortran_dir.exists():

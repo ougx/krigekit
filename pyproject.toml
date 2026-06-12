@@ -1,9 +1,9 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pykriging"
+name = "krigekit"
 version = "0.2.0"
 description = "Python wrapper for a Fortran kriging and sequential Gaussian simulation engine"
 readme = "README.md"
@@ -49,15 +49,15 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/pykriging"
-Repository = "https://github.com/your-username/pykriging"
-Issues = "https://github.com/your-username/pykriging/issues"
+Homepage = "https://github.com/your-username/krigekit"
+Repository = "https://github.com/your-username/krigekit"
+Issues = "https://github.com/your-username/krigekit/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pykriging = ["*.so", "*.dll", "*.dylib"]
+krigekit = ["*.so", "*.dll", "*.dylib"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_api.py
 ===========
 Tests for input validation, edge cases, and the full Kriging class API
@@ -7,7 +7,7 @@ including set_obs_drift, set_grid_drift, set_grid_cv, and bounds clipping.
 
 import numpy as np
 import pytest
-from pykriging import Kriging, ordinary_kriging
+from krigekit import Kriging, ordinary_kriging
 
 _VGM = dict(vtype="sph", nugget=0.0, sill=1.0, a_major=50.0)
 _VGM_PC2D = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=5000.0)
@@ -91,7 +91,7 @@ class TestInputValidation:
     def test_missing_library_error_message(self):
         """Importing when the library is absent should raise a clear error."""
         # This is tested implicitly at import time; we just confirm the module loaded.
-        from pykriging import Kriging
+        from krigekit import Kriging
         assert Kriging is not None
 
     def test_repr(self, simple_obs):
@@ -550,7 +550,7 @@ class TestNthread:
     def test_nthread_restores_omp_setting(self, pc2d_obs):
         """omp_get_max_threads() must return the same value before and after
         solve(nthread=1) — the Fortran layer must save and restore."""
-        from pykriging.kriging import omp_info
+        from krigekit.kriging import omp_info
         before = omp_info()["max_threads"]
 
         k = self._make_kriging(pc2d_obs)

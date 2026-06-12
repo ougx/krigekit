@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_kriging_sva.py
 -------------------
 Manual debug tests for the t_kriging_sva spatially varying variogram
@@ -34,7 +34,7 @@ All tests use synthetic data so no CSV files are required.
 import sys
 import numpy as np
 
-sys.path.insert(0, "../src/pykriging")
+sys.path.insert(0, "../src/krigekit")
 
 # ---------------------------------------------------------------------------
 # Import — KrigingSVA should be exported from the same package as Kriging.

@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 ## 0.1.0 (unreleased)
 
@@ -8,7 +8,7 @@ Initial release.
 
 #### `IndicatorKriging` class
 
-New {py:class}`~pykriging.IndicatorKriging` class implementing Multiple Indicator
+New {py:class}`~krigekit.IndicatorKriging` class implementing Multiple Indicator
 Kriging (MIK) and Sequential Indicator Simulation (SIS) for categorical variables.
 Extends `Kriging` — all setup, solve, and results methods are inherited.
 
@@ -40,7 +40,7 @@ Extends `Kriging` — all setup, solve, and results methods are inherited.
 **Usage example:**
 
 ```python
-from pykriging import IndicatorKriging
+from krigekit import IndicatorKriging
 
 ik = IndicatorKriging(ncat=4, ndim=2, nsim=50, seed=42)
 ik.set_categorical_obs(coord=obs_coord, categories=obs_cats,

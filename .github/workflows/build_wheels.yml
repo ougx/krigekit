@@ -1,0 +1,208 @@
+﻿name: Build and publish wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux wheel (manylinux2014 x86_64)
+    runs-on: ubuntu-24.04
+    container:
+      image: quay.io/pypa/manylinux2014_x86_64
+    env:
+      PYTHON_BIN: /opt/python/cp312-cp312/bin/python
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify build tools
+        run: |
+          gfortran --version
+          $PYTHON_BIN --version
+
+      - name: Install Python build tools
+        run: $PYTHON_BIN -m pip install build wheel
+
+      - name: Compile Fortran library
+        run: $PYTHON_BIN build_lib.py --compiler gfortran
+
+      - name: Build wheel
+        run: $PYTHON_BIN -m build --wheel --no-isolation
+
+      - name: Repair wheel with auditwheel
+        run: |
+          mkdir repaired_wheels
+          auditwheel repair dist/*.whl --plat manylinux2014_x86_64 -w repaired_wheels/
+          rm -rf dist/*
+          mv repaired_wheels/*.whl dist/
+
+      - name: Smoke test wheel
+        run: |
+          $PYTHON_BIN -m pip install --force-reinstall dist/*.whl
+          cd /tmp
+          $PYTHON_BIN -c "import krigekit; print(krigekit.__version__)"
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-native:
+    name: Build wheel (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            os: windows-latest
+            python-version: "3.12"
+          - platform: macos-x86_64
+            os: macos-15-intel
+            python-version: "3.12"
+          - platform: macos-arm64
+            os: macos-14
+            python-version: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install gfortran (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gcc
+
+      - name: Install gfortran (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc-fortran
+          path-type: inherit
+
+      - name: Install Python build tools (macOS)
+        if: runner.os == 'macOS'
+        run: python -m pip install build wheel delocate
+
+      - name: Install Python build tools (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pip install build wheel
+
+      - name: Compile Fortran library
+        run: python build_lib.py --compiler gfortran
+
+      - name: Build wheel
+        run: python -m build --wheel --no-isolation
+
+      - name: Repair wheel with delocate
+        if: runner.os == 'macOS'
+        run: |
+          mkdir repaired_wheels
+          delocate-wheel -w repaired_wheels -v dist/*.whl
+          rm -rf dist/*
+          mv repaired_wheels/*.whl dist/
+
+      - name: Smoke test wheel (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cd /tmp
+          python -c "import krigekit; print(krigekit.__version__)"
+
+      - name: Smoke test wheel (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          python -m pip install --force-reinstall $wheel
+          Push-Location $env:TEMP
+          python -c "import krigekit; print(krigekit.__version__)"
+          Pop-Location
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test-wheels:
+    name: Test wheel (${{ matrix.target.platform }} / Python ${{ matrix.python-version }})
+    needs:
+      - build-linux
+      - build-native
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+        target:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            artifact: wheel-linux-x86_64
+          - platform: windows-x86_64
+            os: windows-latest
+            artifact: wheel-windows-x86_64
+          - platform: macos-x86_64
+            os: macos-15-intel
+            artifact: wheel-macos-x86_64
+          - platform: macos-arm64
+            os: macos-14
+            artifact: wheel-macos-arm64
+
+    steps:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.target.artifact }}
+          path: dist
+
+      - name: Smoke test wheel (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cd /tmp
+          python -c "import krigekit; print(krigekit.__version__)"
+
+      - name: Smoke test wheel (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          python -m pip install --force-reinstall $wheel
+          Push-Location $env:TEMP
+          python -c "import krigekit; print(krigekit.__version__)"
+          Pop-Location
+
+  publish:
+    name: Publish to PyPI
+    needs: test-wheels
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/krigekit/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

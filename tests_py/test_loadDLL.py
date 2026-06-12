@@ -1,8 +1,8 @@
-# test_dll_load.py
+﻿# test_dll_load.py
 import ctypes
 import os
 
-dll_path = os.path.abspath("../src/pykriging/kriging.dll")
+dll_path = os.path.abspath("../src/krigekit/kriging.dll")
 print(f"Loading: {dll_path}")
 
 try:

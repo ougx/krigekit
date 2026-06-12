@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests for IndicatorKriging (MIK estimation and SIS).
 """
 import sys, os
@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import pytest
-from pykriging import IndicatorKriging
+from krigekit import IndicatorKriging
 
 
 # ---------------------------------------------------------------------------

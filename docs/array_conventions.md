@@ -1,6 +1,6 @@
-# Array conventions
+﻿# Array conventions
 
-pyKriging uses a consistent set of array shapes across all methods.
+krigekit uses a consistent set of array shapes across all methods.
 Understanding these conventions prevents the most common errors.
 
 ## Coordinate arrays
@@ -65,7 +65,7 @@ var_all = k.get_variance_all()   # shape (nblock, nvar, nvar)
 
 ## Data types
 
-pyKriging accepts any numeric dtype for input arrays and converts internally:
+krigekit accepts any numeric dtype for input arrays and converts internally:
 
 - Coordinates → `float64`
 - Values → `float64`

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Leave-one-out cross-validation
 ================================
 
@@ -16,8 +16,8 @@ Two diagnostics are used:
   (too optimistic); MSSE < 1 means it overestimates it.
 
 **Workflow** — set ``cross_validation=True`` in the constructor and call
-:meth:`~pykriging.Kriging.set_grid_cv` instead of
-:meth:`~pykriging.Kriging.set_grid`.  pyKriging then returns one estimate
+:meth:`~krigekit.Kriging.set_grid_cv` instead of
+:meth:`~krigekit.Kriging.set_grid`.  krigekit then returns one estimate
 and one variance per observation.
 
 **Dataset** — ``pc2d.csv``: 62 percent-coarse observations on a 2-D
@@ -28,7 +28,7 @@ range = 5 000 m (isotropic).
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from pykriging import Kriging
+from krigekit import Kriging
 
 data = pd.read_csv("../test_data/pc2d.csv")
 grid = pd.read_csv("../test_data/grid2d.csv")

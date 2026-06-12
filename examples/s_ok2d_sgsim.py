@@ -1,11 +1,11 @@
-"""
+﻿"""
 Ordinary Kriging + SGSIM 
 ========================
 
 This example shows how to run SGSIM ordinary kriging and plot the interpolated field.
 """
 
-from pykriging import Kriging
+from krigekit import Kriging
 import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid

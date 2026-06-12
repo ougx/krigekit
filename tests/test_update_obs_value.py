@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_update_obs_value.py
 ========================
 Tests for Kriging.update_obs_value(), which replaces observation values
@@ -31,7 +31,7 @@ Error handling
 
 import numpy as np
 import pytest
-from pykriging import Kriging
+from krigekit import Kriging
 
 
 _VGM  = dict(vtype="sph", nugget=0.01, sill=0.09, a_major=100.0)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_sgsim.py
 =============
 Tests for Sequential Gaussian Simulation (SGSIM) using the pc2d dataset
@@ -11,7 +11,7 @@ the same realisations regardless of platform or compiler version.
 
 import numpy as np
 import pytest
-from pykriging import Kriging, sequential_gaussian_simulation
+from krigekit import Kriging, sequential_gaussian_simulation
 
 _VGM_PC2D = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=5000.0)
 
@@ -74,7 +74,7 @@ class TestSGSIM:
         The ensemble mean of many SGSIM realisations should converge towards
         the kriging estimate. With nsim=50 the correlation should exceed 0.90.
         """
-        from pykriging import ordinary_kriging
+        from krigekit import ordinary_kriging
         coord, value   = pc2d_obs
         grid_coord, _  = pc2d_grid
 

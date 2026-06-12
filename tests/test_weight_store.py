@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_weight_store.py
 ====================
 Tests for the in-memory weight store (``store_weight=True`` + ``get_weights()``).
@@ -30,7 +30,7 @@ Error handling
 import os
 import numpy as np
 import pytest
-from pykriging import Kriging
+from krigekit import Kriging
 
 
 _VGM = dict(vtype="sph", nugget=0.01, sill=0.09, a_major=100.0)

@@ -1,11 +1,11 @@
-"""
+﻿"""
 Ordinary kriging example
 ========================
 
 This example shows how to run ordinary kriging and plot the interpolated field.
 """
 
-from pykriging import Kriging
+from krigekit import Kriging
 import pandas as pd
 import matplotlib.pyplot as plt
 

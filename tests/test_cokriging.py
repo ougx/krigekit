@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_cokriging.py
 =================
 Tests for ordinary co-kriging using the Walker Lake dataset.
@@ -44,7 +44,7 @@ import pandas as pd
 import os
 import pytest
 import math
-from pykriging import Kriging, cokriging
+from krigekit import Kriging, cokriging
 from scipy.linalg import cho_factor, cho_solve
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.spatial.transform import Rotation

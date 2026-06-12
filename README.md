@@ -1,4 +1,4 @@
-# pyKriging
+﻿# krigekit
 
 A Python wrapper for a high-performance Fortran kriging engine parallelised with
 OpenMP.
@@ -25,7 +25,7 @@ OpenMP.
 
 ```bash
 mamba env create -f environment.yml
-mamba activate pykriging
+mamba activate krigekit
 ```
 
 **pip**
@@ -50,7 +50,7 @@ debug builds, `--no-openmp`, and docs dependencies.
 
 ```python
 import numpy as np
-from pykriging import Kriging
+from krigekit import Kriging
 
 obs_coord  = np.array([[0,0],[1,0],[0,1],[1,1],[0.5,0.5]], dtype=float)
 obs_value  = np.array([1.0, 2.0, 3.0, 4.0, 2.5])
@@ -75,11 +75,11 @@ simulation, and more, see the [user guide](docs/user_guide/) and
 ## Repository structure
 
 ```
-pykriging/
+krigekit/
 ├── src/
 │   ├── libkriging/      Fortran kriging engine
 │   ├── sparks/          Pilot-point kriging/SGSIM CLI
-│   └── pykriging/       Python ctypes wrapper
+│   └── krigekit/       Python ctypes wrapper
 ├── examples/            Sphinx-Gallery example scripts
 ├── tests/               pytest test suite
 ├── test_data/           CSV/image data used by tests and examples

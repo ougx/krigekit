@@ -1,4 +1,4 @@
-# Co-kriging
+﻿# Co-kriging
 
 Co-kriging estimates a **primary variable** at unsampled locations by jointly
 conditioning on observations of one or more **secondary variables**.  The
@@ -14,7 +14,7 @@ using airborne electromagnetic resistivity (secondary, dense grid coverage).
 
 ```python
 import numpy as np
-from pykriging import Kriging
+from krigekit import Kriging
 
 # --- observations ---
 obs1_coord = ...   # primary variable coords, shape (n1, ndim)
@@ -63,7 +63,7 @@ b₁₂ₖ² ≤ b₁₁ₖ × b₂₂ₖ
 ```
 
 If the constraint is violated the covariance matrix is not positive
-semi-definite and the kriging system may fail.  pyKriging does not enforce
+semi-definite and the kriging system may fail.  krigekit does not enforce
 this automatically; use `neglect_error=True` to continue past failures and
 inspect the resulting `NaN` blocks.
 
@@ -142,7 +142,7 @@ pred <- predict(g, grid)
 ```
 
 ```python
-# Python / pyKriging
+# Python / krigekit
 k = Kriging(ndim=3, nvar=2, std_ck=True)   # std_ck=True matches gstat
 k.set_obs(ivar=1, coord=obs1[["x","y","z"]].values, value=obs1.z, nmax=50)
 k.set_obs(ivar=2, coord=obs2[["x","y","z"]].values, value=obs2.z, nmax=50)

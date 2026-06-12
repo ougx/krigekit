@@ -1,7 +1,7 @@
-"""
+﻿"""
 conftest.py
 ===========
-Shared pytest fixtures for pykriging tests.
+Shared pytest fixtures for krigekit tests.
 
 All tests that need data files use the fixtures defined here.
 The shared library is expected to be compiled before running tests:

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Co-kriging the Walker Lake dataset
 ====================================
 
@@ -33,7 +33,7 @@ LMC validity (C₁₂² ≤ C₁₁ · C₂₂ per structure):
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from pykriging import Kriging
+from krigekit import Kriging
 
 # ---------------------------------------------------------------------------
 # Load data (Isaaks & Srivastava 1989 case study setup)

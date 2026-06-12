@@ -1,4 +1,4 @@
-# Quick start
+﻿# Quick start
 
 This page shows two paths to ordinary kriging: the one-shot convenience
 function and the full class interface.  Both produce identical results.
@@ -9,7 +9,7 @@ The fastest way to get an estimate and kriging variance:
 
 ```python
 import numpy as np
-from pykriging import ordinary_kriging
+from krigekit import ordinary_kriging
 
 obs_coord  = np.array([[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]], dtype=float)
 obs_value  = np.array([1.0, 2.0, 3.0, 4.0, 2.5])
@@ -32,7 +32,7 @@ The `Kriging` class gives you full control over every step:
 
 ```python
 import numpy as np
-from pykriging import Kriging
+from krigekit import Kriging
 
 obs_coord  = np.array([[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]], dtype=float)
 obs_value  = np.array([1.0, 2.0, 3.0, 4.0, 2.5])
