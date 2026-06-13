@@ -1,8 +1,68 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.2 (unreleased)
 
-Initial release.
+### New — Normal-score transform for SGSIM
+
+{py:meth}`~krigekit.Kriging.set_nscore` enables a normal-score (Gaussian
+anamorphosis) transform for sequential Gaussian simulation.  The conditioning
+data are mapped to normal scores through a weighted empirical CDF (declustering
+weights optional), the simulation runs in Gaussian space, and the realisations
+are back-transformed to data units with GSLIB-style tail extrapolation
+(linear / power / hyperbolic) bounded by `zmin` / `zmax`.
+
+The transform is implemented in the Fortran **engine**, behind the C API, so
+every client language obtains the same transform and bit-reproducible
+realisations.  It requires `nsim > 0`; fit the variogram on the normal scores
+(unit sill).
+
+```python
+k = Kriging(nsim=20, seed=42)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_nscore(ivar=1)   # optional: zmin, zmax, ltail, utail, ltpar, utpar, weights
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
+k.set_grid(coord=grid_coord)
+k.set_sim()
+k.set_search(ivar=1)
+k.solve()
+sims, _ = k.get_results()   # realisations back-transformed to data units
+```
+
+**Fortran / C API additions:**
+
+- `normal_score` module (`nscore.f90`) — `t_nscore` transform table with
+  `build` / `forward` / `back` and linear/power/hyperbolic tail models
+- `krige_set_nscore(handle, ivar, zmin, zmax, ltail, utail, ltpar, utpar, nwt, wt)`
+
+See {doc}`../user_guide/sgsim` for the full workflow.
+
+### Fixed — SGSIM singularity when grid nodes coincide with observations
+
+A grid node placed exactly on an observation produced a previously-simulated
+node co-located with a hard datum, putting two identical rows in the kriging
+matrix (singular) and yielding `NaN`.  The SGSIM neighbour search now drops a
+previously-simulated block when it coincides — in space, and for space-time also
+in time — with a hard observation already in the neighbourhood, since the datum
+already conditions that location.  Such nodes now reproduce the observed value
+instead of failing.  A diagonal-regularisation retry was also added to the
+linear solver as a last-resort guard against any residual singular system.
+
+### Documentation and internal
+
+- Performance-tuning guide for `nthread` / `ncache` and the factorisation cache
+  (see {doc}`../user_guide/performance`).
+- Internal: a private `check_solved` guard in the C API before results are
+  returned; GitHub Actions auto-test workflow.
+
+## 0.2.1 — 2026-06-12
+
+PyPI packaging release — README and metadata updates only; no functional
+changes from 0.2.0.
+
+## 0.2.0 — 2026-06-08
+
+First public release on PyPI, renamed from `pyKriging` to `krigekit`.  (Version
+0.1.0 was an internal development version and was never tagged or released.)
 
 ### New — Multiple Indicator Kriging and SIS
 

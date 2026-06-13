@@ -170,6 +170,15 @@ _krige_update_obs_value = _status_cfun("krige_update_obs_value", [
     _c_int, _c_int,                              # ivar, nobs
     _ptr_dbl,                                    # value[nobs]
 ])
+_krige_set_nscore = _optional_status_cfun("krige_set_nscore", [
+    ctypes.c_int64,                              # handle
+    _c_int,                                      # ivar
+    _c_double, _c_double,                        # zmin, zmax
+    _c_int, _c_int,                              # ltail, utail
+    _c_double, _c_double,                        # ltpar, utpar
+    _c_int,                                      # nwt (0 = equal weights)
+    _ptr_dbl,                                    # wt[nwt]
+])
 _krige_reset_vgm   = _status_cfun("krige_reset_vgm", [
     ctypes.c_int64,                              # handle
     _c_int, _c_int,                              # ivar, jvar
@@ -647,6 +656,10 @@ class Kriging:
         )
         self._nobs[ivar-1] = nobs
         self._nmax[ivar-1] = min(nobs, nmax) if nmax is not None else nobs + (self._nblock if self.nsim>0 else 0)
+        # Cache the value range so set_nscore() can default zmin/zmax.
+        if not hasattr(self, "_obs_value_range"):
+            self._obs_value_range = {}
+        self._obs_value_range[ivar] = (float(value_f.min()), float(value_f.max()))
 
     # ------------------------------------------------------------------
     def set_obs_drift(self, ivar: int, drift: np.ndarray):
@@ -702,6 +715,91 @@ class Kriging:
         _krige_update_obs_value(_h(self._handle),
             _c_int(ivar), _c_int(nobs),
             _dptr(value_f),
+        )
+
+    # ------------------------------------------------------------------
+    def set_nscore(
+        self,
+        ivar: int = 1,
+        zmin: Optional[float] = None,
+        zmax: Optional[float] = None,
+        ltail="linear",
+        utail="linear",
+        ltpar: float = 1.0,
+        utpar: float = 1.0,
+        weights: Optional[np.ndarray] = None,
+    ):
+        """
+        Enable the normal-score transform for variable ``ivar`` (SGSIM).
+
+        Builds a normal-score (Gaussian anamorphosis) transform from the
+        current observation values and replaces them with their normal scores,
+        so that the subsequent :meth:`solve` runs in Gaussian space; the
+        simulated realisations are automatically back-transformed to data units.
+        The transform lives in the Fortran engine, so every C-API client gets
+        identical, reproducible results.
+
+        Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
+        supplied with :meth:`set_vgm` should be that of the normal scores
+        (unit sill).  Requires ``nsim > 0``.
+
+        Parameters
+        ----------
+        ivar : int
+            Variable index, 1-based.
+        zmin, zmax : float, optional
+            Lower/upper bounds used by the back-transform tail extrapolation.
+            Default to the minimum/maximum of the observed data (no
+            extrapolation beyond the data range).
+        ltail, utail : {"linear", "power", "hyperbolic"} or int
+            Tail-extrapolation model below ``z[0]`` and above ``z[-1]``
+            (1=linear, 2=power, 4=hyperbolic; hyperbolic is upper-tail only and
+            requires positive data).
+        ltpar, utpar : float
+            Power / hyperbolic tail parameter (ignored for linear tails).
+        weights : ndarray, shape (nobs,), optional
+            Declustering weights for the empirical CDF.  Default: equal weights.
+        """
+        if self.nsim <= 0:
+            raise ValueError("set_nscore requires sequential simulation (nsim > 0).")
+
+        rng = getattr(self, "_obs_value_range", {}).get(ivar)
+        if (zmin is None or zmax is None) and rng is None:
+            raise RuntimeError(
+                "call set_obs(ivar=...) before set_nscore(), or pass both "
+                "zmin and zmax explicitly."
+            )
+        zlo = float(zmin) if zmin is not None else rng[0]
+        zhi = float(zmax) if zmax is not None else rng[1]
+
+        def _tail_code(t):
+            if isinstance(t, str):
+                key = t.lower()
+                codes = {"linear": 1, "power": 2, "hyperbolic": 4}
+                if key not in codes:
+                    raise ValueError(
+                        f"tail must be 'linear', 'power', or 'hyperbolic'; got {t!r}")
+                return codes[key]
+            return int(t)
+
+        lt = _tail_code(ltail)
+        ut = _tail_code(utail)
+
+        if weights is not None:
+            wt_f = _farray(np.asarray(weights, dtype=np.float64).ravel())
+            nwt = wt_f.size
+            if nwt != self._nobs[ivar - 1]:
+                raise ValueError(
+                    f"weights length ({nwt}) must match nobs "
+                    f"({self._nobs[ivar - 1]}) for ivar={ivar}")
+        else:
+            wt_f = _farray(np.zeros(1))
+            nwt = 0
+
+        _krige_set_nscore(_h(self._handle),
+            _c_int(ivar), _c_double(zlo), _c_double(zhi),
+            _c_int(lt), _c_int(ut), _c_double(ltpar), _c_double(utpar),
+            _c_int(nwt), _dptr(wt_f),
         )
 
     # ------------------------------------------------------------------

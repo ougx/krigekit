@@ -145,6 +145,34 @@ contains
     ierr = int(kriging_ierr(), c_int)
   end function krige_update_obs_value
 
+  !-- Enable the normal-score transform for variable ivar (SGSIM).
+  !   Builds the transform table from the current obs values, replaces them
+  !   with normal scores, and back-transforms simulated values after solve().
+  !   zmin/zmax bound the back-transform tails; ltail/utail/ltpar/utpar select
+  !   the tail-extrapolation model (1=linear, 2=power, 4=hyperbolic).
+  !   nwt > 0 supplies per-observation declustering weights (else equal weights).
+  integer(c_int) function krige_set_nscore(handle, ivar, zmin, zmax, &
+                                           ltail, utail, ltpar, utpar, nwt, wt) &
+      bind(C, name='krige_set_nscore') result(ierr)
+    integer(c_intptr_t), intent(in), value :: handle
+    integer(c_int),      intent(in), value :: ivar, ltail, utail, nwt
+    real(c_double),      intent(in), value :: zmin, zmax, ltpar, utpar
+    real(c_double),      intent(in)        :: wt(*)
+    class(t_kriging_base), pointer :: obj
+    call kriging_clear_error()
+    call get_obj_base(handle, obj)
+    if (.not. associated(obj)) then; ierr = int(kriging_ierr(), c_int); return; end if
+    if (nwt > 0) then
+      call obj%set_nscore(int(ivar), zmin=real(zmin), zmax=real(zmax), &
+           ltail=int(ltail), utail=int(utail), ltpar=real(ltpar), utpar=real(utpar), &
+           wt=real(wt(1:nwt)))
+    else
+      call obj%set_nscore(int(ivar), zmin=real(zmin), zmax=real(zmax), &
+           ltail=int(ltail), utail=int(utail), ltpar=real(ltpar), utpar=real(utpar))
+    end if
+    ierr = int(kriging_ierr(), c_int)
+  end function krige_set_nscore
+
   !-- Set external drift values at observation locations for variable ivar.
   integer(c_int) function krige_set_obs_drift(handle, ivar, ndrift_c, nobs, drift) &
       bind(C, name='krige_set_obs_drift') result(ierr)

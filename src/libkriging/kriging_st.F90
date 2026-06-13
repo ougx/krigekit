@@ -537,6 +537,39 @@ contains
           !-- Apply maxdist filter (nlag-dimensional distance already in dist/distb)
           call filter_by_maxlag(inearb, distb, nnearb, maxdist)
 
+          !-- Drop previously-simulated blocks co-located (in space AND time)
+          !   with a hard observation already in this neighbourhood: the datum
+          !   conditions that exact space-time point, so keeping both would
+          !   make the kriging matrix singular (e.g. grid nodes on data).
+          if (nnear > 0 .and. nnearb > 0) then
+            block
+              real, parameter :: COTOL = 1.0e-6
+              integer :: jb, io, d, keep
+              logical :: dup
+              keep = 0
+              simloop: do jb = 1, nnearb
+                dup = .false.
+                obsloop: do io = 1, nnear
+                  dup = .true.
+                  do d = 1, self%nlag
+                    if (abs(self%block%coord(d, inearb(jb)) - obsloc(d, inear(io))) > &
+                        COTOL * (1.0 + abs(obsloc(d, inear(io))))) then
+                      dup = .false.
+                      exit
+                    end if
+                  end do
+                  if (dup) exit obsloop
+                end do obsloop
+                if (.not. dup) then
+                  keep = keep + 1
+                  inearb(keep) = inearb(jb)
+                  distb (keep) = distb (jb)
+                end if
+              end do simloop
+              nnearb = keep
+            end block
+          end if
+
         end associate  ! inearb, nnearb, distb
 
       !----------------------------------------------------------------------

@@ -69,6 +69,30 @@ class TestSGSIM:
         )
         np.testing.assert_array_equal(sims_a, sims_b)
 
+    def test_grid_on_observations_no_nan(self):
+        """
+        Grid nodes coincident with observations must not produce NaN.  A
+        previously simulated node at a hard-datum location creates two
+        co-located conditioning points (a singular covariance matrix); the
+        solver de-singularises this with a small diagonal regularisation and
+        reproduces the observed values instead of failing.
+        """
+        rng   = np.random.default_rng(3)
+        coord = rng.uniform(0.0, 100.0, size=(12, 2))
+        value = np.exp(rng.normal(0.0, 1.0, size=12))
+        k = Kriging(nsim=1, seed=5)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=12)
+        k.set_grid(coord=coord.copy())            # grid exactly on observations
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=40.0)
+        k.set_sim()
+        k.set_search()
+        k.solve()
+        est, _ = k.get_results()
+        del k
+        est = np.asarray(est).reshape(coord.shape[0], -1)[:, 0]
+        assert np.isnan(est).sum() == 0, "co-located conditioning produced NaN"
+        np.testing.assert_allclose(est, value, rtol=1e-2, atol=1e-2)
+
     def test_ensemble_mean_close_to_kriging(self, pc2d_obs, pc2d_grid):
         """
         The ensemble mean of many SGSIM realisations should converge towards

@@ -574,6 +574,41 @@ contains
             distb(1:nnearb) = rotated_dists(rotmat, ndim, newloc(:,1), self%block%coord(:, 1:nnearb))
           end if
           call filter_by_maxlag(ctx%inear(:, ig_sim), distb, ctx%nnear(ig_sim), maxdist)
+
+          !-- Drop previously-simulated blocks that are co-located with a hard
+          !   observation already in this neighbourhood.  The datum already
+          !   conditions that exact location, so keeping the simulated node too
+          !   would place two identical rows in the kriging matrix (singular).
+          !   This is what happens when grid nodes coincide with data; compare
+          !   coordinates directly so it is robust to anisotropic search.
+          if (nnear > 0 .and. nnearb > 0) then
+            block
+              real, parameter :: COTOL = 1.0e-6
+              integer :: jb, io, d, keep
+              logical :: dup
+              keep = 0
+              simloop: do jb = 1, nnearb
+                dup = .false.
+                obsloop: do io = 1, nnear
+                  dup = .true.
+                  do d = 1, ndim
+                    if (abs(self%block%coord(d, inearb(jb)) - obsloc(d, inear(io))) > &
+                        COTOL * (1.0 + abs(obsloc(d, inear(io))))) then
+                      dup = .false.
+                      exit
+                    end if
+                  end do
+                  if (dup) exit obsloop
+                end do obsloop
+                if (.not. dup) then
+                  keep = keep + 1
+                  inearb(keep) = inearb(jb)
+                  distb (keep) = distb (jb)
+                end if
+              end do simloop
+              nnearb = keep
+            end block
+          end if
         end associate  ! inearb, nnearb, distb
 
       !------------------------------------------------------------------------

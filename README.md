@@ -12,7 +12,7 @@ OpenMP.
 | Ordinary and simple kriging | Point and block support |
 | Co-kriging | Linear Model of Coregionalisation |
 | Universal kriging / KED | External drift variables |
-| Sequential Gaussian Simulation | Reproducible paths, multi-realisation |
+| Sequential Gaussian Simulation | Reproducible paths, multi-realisation, optional normal-score transform |
 | Space-time kriging | Sum-metric and product-sum ST models |
 | Multiple Indicator Kriging / SIS | Categorical variables, three cross-variogram strategies |
 | Spatially Varying Anisotropy | Per-block variogram |

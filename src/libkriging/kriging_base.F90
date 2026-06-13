@@ -71,6 +71,7 @@ module kriging_base
   use utils,         only: set_seq, random_seed_initialize, r8vec_normal_01, r8vec_uniform_01, yesno
   use gaussian_quadrature
   use kdtree2_module
+  use normal_score,  only: t_nscore
   implicit none
   private
 
@@ -223,6 +224,8 @@ module kriging_base
     logical              :: anisotropic_search = .false.
     logical              :: sector_search = .false.
     logical              :: set_search = .false.
+    logical              :: nscore_on = .false.    ! normal-score transform active
+    type(t_nscore)       :: ns                     ! normal-score transform table
     type(kdtree2), pointer :: tree => null()
   end type t_obsgrid
 
@@ -359,6 +362,8 @@ module kriging_base
     procedure                  :: init_defaults   => init_defaults_base ! no-op; type overrides for specific defaults
     procedure, non_overridable :: set_obs         => set_obs_base
     procedure                  :: update_obs_value => update_obs_value_base
+    procedure, non_overridable :: set_nscore      => set_nscore_base
+    procedure, non_overridable :: apply_nscore_back => apply_nscore_back_base
     procedure, non_overridable :: set_obs_drift   => set_obs_drift_base
     procedure, non_overridable :: reset_obs       => reset_obs_common
     procedure, non_overridable :: reset_grid  => reset_grid_common
@@ -676,6 +681,78 @@ contains
 
 
   !============================================================================
+  ! set_nscore_base -- enable the normal-score transform for variable ivar.
+  !
+  ! Builds the transform table from the current observation values (optionally
+  ! declustering-weighted) and replaces those values with their normal scores
+  ! in place, so the subsequent SGSIM solve runs in Gaussian space.  The
+  ! simulated block values are mapped back to data units after solve() by
+  ! apply_nscore_back().  Intended for SGSIM (nsim > 0); the variogram supplied
+  ! by the user should be that of the normal scores (unit sill).
+  !============================================================================
+  subroutine set_nscore_base(self, ivar, zmin, zmax, ltail, utail, ltpar, utpar, wt)
+    class(t_kriging_base), intent(inout)        :: self
+    integer,               intent(in)           :: ivar
+    real,                  intent(in), optional :: zmin, zmax, ltpar, utpar
+    integer,               intent(in), optional :: ltail, utail
+    real,                  intent(in), optional :: wt(:)
+    character(len=*), parameter :: subname = "t_kriging_base%set_nscore"
+    real, allocatable :: scores(:)
+
+    if (.not. associated(self%obs)) then
+      call kriging_error(subname, 'Call initialize() before set_nscore.')
+      return
+    end if
+    if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
+    if (self%nsim <= 0) then
+      call kriging_error(subname, 'set_nscore requires sequential simulation (nsim > 0).')
+      return
+    end if
+    associate(obs => self%obs(ivar))
+      if (obs%n == 0) then
+        call kriging_error(subname, 'Call set_obs() before set_nscore.')
+        return
+      end if
+      if (obs%nscore_on) then
+        call kriging_error(subname, 'normal-score transform already enabled for this variable.')
+        return
+      end if
+      call obs%ns%build(obs%value(1, 1, :), wt=wt, zmin=zmin, zmax=zmax, &
+                        ltail=ltail, utail=utail, ltpar=ltpar, utpar=utpar)
+      if (kriging_failed()) return
+      allocate(scores(obs%n))
+      call obs%ns%forward(obs%value(1, 1, :), scores)
+      if (kriging_failed()) return
+      obs%value(1, 1, :) = scores
+      obs%nscore_on = .true.
+    end associate
+    self%pf%valid = .false.
+  end subroutine set_nscore_base
+
+
+  !============================================================================
+  ! apply_nscore_back_base -- back-transform simulated block values to data
+  ! units for every variable whose normal-score transform is active.  Called
+  ! once at the end of solve() (SGSIM only).
+  !============================================================================
+  subroutine apply_nscore_back_base(self)
+    class(t_kriging_base), intent(inout) :: self
+    integer :: ivar, ib
+    real, allocatable :: zout(:)
+    if (self%nsim <= 0 .or. .not. associated(self%obs) .or. .not. associated(self%block)) return
+    if (.not. allocated(self%block%value)) return
+    allocate(zout(self%nsim))
+    do ivar = 1, self%nvar
+      if (.not. self%obs(ivar)%nscore_on) cycle
+      do ib = 1, self%block%n
+        call self%obs(ivar)%ns%back(self%block%value(1:self%nsim, ivar, ib), zout)
+        self%block%value(1:self%nsim, ivar, ib) = zout
+      end do
+    end do
+  end subroutine apply_nscore_back_base
+
+
+  !============================================================================
   ! set_obs_drift_base -- shared observation external drift setup.
   !============================================================================
   subroutine set_obs_drift_base(self, ivar, drift)
@@ -743,6 +820,8 @@ contains
       obs%need_search        = .false.
       obs%anisotropic_search = .false.
       obs%set_search         = .false.
+      obs%nscore_on          = .false.
+      call obs%ns%free()
     end associate
   end subroutine reset_obs_common
 
@@ -2101,6 +2180,7 @@ contains
 
     if (self%nsim > 0) call self%reorder_sgsim()
     call self%post_solve()
+    call self%apply_nscore_back()
     self%solved = .true.
 
 900 continue
@@ -3236,6 +3316,29 @@ contains
           allocate(ctx%cache%ipiv(m))
         end if
         call ssytrf_setup(npp, p, matA, ctx%cache%Afac, ctx%cache%ipiv, info)
+        if (info /= 0 .and. npp > 0) then
+          !-- Regularised retry.  A singular data covariance arises when two
+          !   conditioning points are co-located — e.g. a hard datum and a
+          !   previously simulated node at the same site during SGSIM, or
+          !   duplicate grid nodes.  Add a small jitter (relative to the mean
+          !   diagonal) to the data-covariance diagonal and refactorize once,
+          !   yielding a well-defined estimate instead of NaN.
+          block
+            real    :: dscale
+            integer :: ii
+            dscale = 0.0
+            do ii = 1, npp
+              dscale = dscale + matA(ii, ii)
+            end do
+            if (dscale > 0.0) then
+              dscale = 1.0e-6 * (dscale / real(npp))
+              do ii = 1, npp
+                matA(ii, ii) = matA(ii, ii) + dscale
+              end do
+              call ssytrf_setup(npp, p, matA, ctx%cache%Afac, ctx%cache%ipiv, info)
+            end if
+          end block
+        end if
         if (info == 0) then
           ctx%cache%used_ssysv   = .true.
           ctx%cache%valid        = .true.

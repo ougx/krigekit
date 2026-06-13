@@ -262,6 +262,7 @@ _CORE_SRCS := \
   src/libkriging/gaussian_quadrature.f90 \
   src/libkriging/lapack.f            \
   src/libkriging/solver.f90          \
+  src/libkriging/nscore.f90          \
   src/libkriging/kriging_base.F90    \
   src/libkriging/variogram.f90       \
   src/libkriging/kriging.F90

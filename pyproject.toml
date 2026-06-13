@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "krigekit"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python wrapper for a Fortran kriging and sequential Gaussian simulation engine"
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -55,6 +55,7 @@ SOURCES = [
     "gaussian_quadrature.f90",
     "lapack.f",
     "solver.f90",
+    "nscore.f90",                # normal-score transform (uses kriging_err)
     "kriging_base.F90",
     "kriging.F90",
     "kriging_capi_common.F90",

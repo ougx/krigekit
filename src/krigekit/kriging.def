@@ -9,6 +9,7 @@ EXPORTS
     ; --- Observations (base) ---
     krige_update_obs_value
     krige_set_obs_drift
+    krige_set_nscore
 
     ; --- Grid (base) ---
     krige_set_grid_cv

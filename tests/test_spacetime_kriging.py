@@ -536,3 +536,26 @@ class TestSGSIM:
         assert np.all(var >= 0)
         # Simulations should differ across realisations
         assert not np.allclose(sims[0], sims[1]), "simulations should not be identical"
+
+    def test_grid_on_observations_no_nan(self, rng):
+        """
+        Space-time SGSIM with grid nodes coincident (in space AND time) with
+        observations must not produce NaN: the co-located previously-simulated
+        node is excluded so the kriging matrix stays non-singular.
+        """
+        space = rng.uniform([0, 0, 0], [1000, 1000, 100], size=(15, 3))
+        time  = rng.uniform(0, 50, size=15)
+        coord = np.column_stack([space, time])           # (15, 4): x,y,z,t
+        value = np.exp(rng.normal(0, 1, size=15))
+        k = SpaceTimeKriging(nvar=1, nsim=1, seed=5)
+        k.set_st_model("sum_metric", "linear", at=10.0)
+        k.set_obs(1, coord, value, nmax=15)
+        _basic_st_vgm(k)
+        k.set_grid(space.copy(), time.copy())            # grid on observations
+        k.set_sim()
+        k.set_search(1)
+        k.solve()
+        sims, _ = k.get_results()
+        del k
+        sims = np.asarray(sims).reshape(15, -1)[:, 0]
+        assert np.all(np.isfinite(sims)), "co-located space-time conditioning produced NaN/Inf"

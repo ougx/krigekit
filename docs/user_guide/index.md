@@ -9,12 +9,12 @@ ordinary_kriging
 cokriging
 universal_kriging
 indicator_kriging
+sgsim
 performance
 ```
 
 **Coming in Phase 2:**
 
-- Sequential Gaussian Simulation (SGSIM)
 - Space-time kriging
 - Spatially Varying Anisotropy
 - Kriging weight reuse
