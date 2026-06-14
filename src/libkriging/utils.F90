@@ -49,6 +49,7 @@ subroutine check_duplicate_coordinates_base(ndim, n, coord, has_duplicates, msg)
   integer, allocatable :: perm(:)
   integer :: i, j, k, d, ileft, iright, val_idx
   logical :: match, is_less
+  character(len=265) :: fmt
 
   has_duplicates = .false.
   if (n <= 1) return
@@ -123,8 +124,15 @@ subroutine check_duplicate_coordinates_base(ndim, n, coord, has_duplicates, msg)
 
     if (match) then
       has_duplicates = .true.
-      write(msg, '(A, I0, A, I0, A)') "ERROR: Duplicate coordinate found! Station ", &
-            perm(i), " and Station ", perm(i+1), " share identical coordinates."
+      write(fmt, "(I0)") ndim
+      fmt = '(A, I0, A, I0, A, 2(A, "  Data ", I0, ": ", '//trim(fmt)//'G16.7))'
+      j = min(perm(i), perm(i+1))
+      k = max(perm(i), perm(i+1))
+      write(msg, trim(fmt)) &
+            "ERROR: Duplicate coordinate found! Station ", &
+            j, " and Station ", k, " share identical coordinates:", &
+            new_line(''), j, coord(:, j), &
+            new_line(''), k, coord(:, k)
       exit
     end if
   end do

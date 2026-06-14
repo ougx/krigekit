@@ -6,6 +6,7 @@ Choose the guide that matches your task:
 :maxdepth: 1
 
 ordinary_kriging
+space_time_kriging
 cokriging
 universal_kriging
 indicator_kriging
@@ -15,7 +16,5 @@ performance
 
 **Coming in Phase 2:**
 
-- Space-time kriging
 - Spatially Varying Anisotropy
 - Kriging weight reuse
-- Cross-validation

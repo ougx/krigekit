@@ -20,3 +20,6 @@ sphinx-gallery>=0.15        # Auto-generates the examples gallery
 
 # sphinx-gallery requires Pillow to create thumbnails from example figures
 Pillow>=9.0
+
+# Used in examples/st_ok3d_ctet.py for 3-D isosurface extraction
+scikit-image>=0.20
