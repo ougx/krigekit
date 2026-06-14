@@ -2,6 +2,25 @@
 
 ## 0.2.2 (unreleased)
 
+### Changed — auto-tuned `nthread` / `ncache` in `solve()`
+
+`solve()` now shrinks its thread count and factor-cache size when the problem
+structure proves the extra resources cannot help:
+
+- **`ncache` → 1** when every variable's neighbour set is fixed
+  (`need_search` false, i.e. all obs fit within `nmax`) and the local
+  range/nugget modifiers are uniform across blocks.  Every block then assembles
+  the identical kriging system, which the single always-on slot already reuses,
+  so the multi-slot hash cache is redundant memory.
+- **`ncache` → 0** when `varying_vgm` is set, because factor caching is
+  disabled in that mode and no slot is ever reused.
+- **`nthread` ≤ number of blocks**, since spawning more OpenMP workers than
+  blocks only adds overhead.
+
+Both adjustments only ever *shrink* the requested values, so they never change
+results or lower the achievable cache-hit rate.  Cross-validation and SGSIM
+keep the full requested cache (their neighbour sets vary block to block).
+
 ### New — Normal-score transform for SGSIM
 
 {py:meth}`~krigekit.Kriging.set_nscore` enables a normal-score (Gaussian

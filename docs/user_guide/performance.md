@@ -122,6 +122,26 @@ With `ncache=64` and `nmax=50`, that is about 640 KB per thread —
 negligible.  At `nmax=500` it becomes 32 MB per thread, so reduce `ncache`
 if memory is tight.
 
+### Automatic shrinking
+
+`solve()` shrinks the requested `ncache` whenever the problem structure proves
+the extra slots cannot produce a hit, so you rarely need to tune it down by
+hand:
+
+- **Fixed neighbour set** — when every variable fits within `nmax`
+  (`need_search` is false, i.e. no subset search) and the local range/nugget
+  modifiers are uniform across blocks, every block assembles the *same* system.
+  The single always-on slot covers it, so `ncache` collapses to **1**.
+- **Locally-varying variogram** (`varying_vgm=True`) — caching is disabled
+  entirely, so `ncache` collapses to **0**.
+
+The shrink only ever *lowers* the value you asked for; it never reduces the
+achievable hit rate.  Cross-validation and SGSIM keep the full requested cache
+because their neighbour sets change block to block.
+
+Likewise, `nthread` is capped at the number of blocks — there is no point
+spawning more workers than there is work.
+
 ---
 
 ## Quick-reference decision table
@@ -130,6 +150,7 @@ if memory is tight.
 |---|---|
 | Small obs (< ~100), large grid, high `nmax` | Reduce `nthread`; check `solver_stats` |
 | Large obs, large grid | Keep `nthread` high; `ncache` at default |
+| All obs fit `nmax`, uniform variogram | `ncache` auto-shrinks to 1 (one system reused) |
 | Hit rate low despite high `ncache` | Neighbourhoods are all unique; cache cannot help |
 | Hit rate high but `chol_fact` still large | Increase `ncache` or reduce `nthread` |
 | Memory-constrained with large `nmax` | Reduce `ncache` |

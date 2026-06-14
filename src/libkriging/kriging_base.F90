@@ -2060,6 +2060,79 @@ contains
   ! loop uses load_block_weights (in-memory, thread-safe) for both the file path
   ! and the set_weights() in-memory path.  Debug matrix output is serialised with
   ! a small critical section so the kriging work can still run in parallel.
+  !
+  ! Resource auto-tuning
+  ! --------------------
+  ! Before the block loop, solve_base() shrinks the requested thread count and
+  ! factor-cache size whenever the problem structure proves the extra resources
+  ! cannot help (see auto_factor_cache_size below and the nthread<=nblock cap).
+  ! Both adjustments only ever shrink, so they never change results or lower the
+  ! achievable cache-hit rate.
+  !============================================================================
+  ! auto_factor_cache_size — shrink the multi-slot factor cache when extra
+  ! slots provably cannot yield a hit.
+  !
+  ! The single-slot ctx%cache always reuses the previous block's factorization,
+  ! so the multi-slot hash cache only earns its memory when several *distinct*
+  ! neighbour systems recur out of order.  Two situations make that impossible:
+  !
+  !   * varying_vgm — caching is disabled (fcache_matches/fhcache_lookup bail
+  !     out), so no slot is ever reused                            -> 0 slots.
+  !   * fixed system — single-realisation, non-CV run where every variable's
+  !     neighbour set is fixed (need_search==.false.) and the local variogram
+  !     modifiers (rangescale/localnugget) are uniform across blocks.  Every
+  !     block then assembles the identical system, fully covered by the
+  !     single-slot cache                                          -> 1 slot.
+  !
+  ! Result is clamped to the caller-requested size, so it never grows the cache.
+  !============================================================================
+  integer function auto_factor_cache_size(self) result(nslot)
+    class(t_kriging_base), intent(in) :: self
+    integer :: ivar
+    logical :: fixed_system
+
+    nslot = self%factor_cache_size
+    if (nslot <= 0) return            ! caller already disabled the cache
+
+    if (self%varying_vgm) then
+      nslot = 0
+      return
+    end if
+
+    ! Identical neighbour set for every block requires a single realisation,
+    ! no leave-one-out cross-validation, and no per-obs subset search.
+    fixed_system = (self%nsim == 0) .and. (.not. self%cross_validation) &
+                   .and. associated(self%obs)
+    if (fixed_system) then
+      do ivar = 1, self%nvar
+        if (self%obs(ivar)%need_search) then
+          fixed_system = .false.
+          exit
+        end if
+      end do
+    end if
+
+    ! Locally-varying range/nugget make the per-block system differ even when
+    ! the neighbour set is fixed, so those still benefit from multiple slots.
+    if (fixed_system .and. associated(self%block)) then
+      if (allocated(self%block%rangescale)) then
+        if (size(self%block%rangescale) > 0) then
+          if (any(self%block%rangescale /= self%block%rangescale(1))) &
+            fixed_system = .false.
+        end if
+      end if
+      if (allocated(self%block%localnugget)) then
+        if (size(self%block%localnugget) > 0) then
+          if (any(self%block%localnugget /= self%block%localnugget(1))) &
+            fixed_system = .false.
+        end if
+      end if
+    end if
+
+    if (fixed_system) nslot = min(nslot, 1)
+  end function auto_factor_cache_size
+
+
   !============================================================================
   subroutine solve_base(self, nthread, ncache)
     use omp_lib
@@ -2075,12 +2148,14 @@ contains
     prev_ncache   = self%factor_cache_size
     if (present(ncache) .and. ncache >= 0) self%factor_cache_size = ncache
 #ifdef _OPENMP
+    !-- Always snapshot the global thread count so the nthread<=nblock cap
+    !   applied below can be restored at 900, even when no nthread was passed.
+    prev_nthread = omp_get_max_threads()
     if (present(nthread) .and. nthread > 0) then
-      prev_nthread = omp_get_max_threads()
       call omp_set_num_threads(nthread)
       nthread_local = nthread
     else
-      nthread_local = omp_get_max_threads()
+      nthread_local = prev_nthread
     end if
 #endif
 
@@ -2096,6 +2171,20 @@ contains
     if (kriging_failed()) goto 900
 
     nb = self%block%n
+
+    !-- Auto-tune resources now that the block count and neighbour structure
+    !   are known.  Both adjustments only ever shrink the requested value, so
+    !   they can never change results or lower the achievable cache-hit rate.
+    self%factor_cache_size = auto_factor_cache_size(self)
+#ifdef _OPENMP
+    !   Never spawn more OpenMP workers than there are blocks to krige.
+    if (nb > 0 .and. nthread_local > nb) then
+      call omp_set_num_threads(nb)
+      nthread_local = nb
+    end if
+    if (self%verbose) print '(A,I0)', 'Threads              = ', nthread_local
+#endif
+    if (self%verbose) print '(A,I0)', 'Factor cache slots   = ', self%factor_cache_size
 
     if (self%verbose) print '(A)', 'Starting kriging loop'
 #ifdef __INTEL_COMPILER
