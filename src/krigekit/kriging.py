@@ -133,7 +133,7 @@ def _optional_status_cfun(name, argtypes):
         def _stub(*_args, **_kwargs):
             raise RuntimeError(
                 f"'{name}' was not found in the compiled library.  "
-                "Recompile the Fortran library to enable the weight-store API."
+                "Recompile the Fortran library to enable this API."
             )
         _stub.__name__ = name
         return _stub
@@ -171,6 +171,15 @@ _krige_update_obs_value = _status_cfun("krige_update_obs_value", [
     _ptr_dbl,                                    # value[nobs]
 ])
 _krige_set_nscore = _optional_status_cfun("krige_set_nscore", [
+    ctypes.c_int64,                              # handle
+    _c_int,                                      # ivar
+    _c_double, _c_double,                        # zmin, zmax
+    _c_int, _c_int,                              # ltail, utail
+    _c_double, _c_double,                        # ltpar, utpar
+    _c_int,                                      # nwt (0 = equal weights)
+    _ptr_dbl,                                    # wt[nwt]
+])
+_krige_set_uscore = _optional_status_cfun("krige_set_uscore", [
     ctypes.c_int64,                              # handle
     _c_int,                                      # ivar
     _c_double, _c_double,                        # zmin, zmax
@@ -656,7 +665,7 @@ class Kriging:
         )
         self._nobs[ivar-1] = nobs
         self._nmax[ivar-1] = min(nobs, nmax) if nmax is not None else nobs + (self._nblock if self.nsim>0 else 0)
-        # Cache the value range so set_nscore() can default zmin/zmax.
+        # Cache the value range so set_nscore()/set_uscore() can default zmin/zmax.
         if not hasattr(self, "_obs_value_range"):
             self._obs_value_range = {}
         self._obs_value_range[ivar] = (float(value_f.min()), float(value_f.max()))
@@ -801,6 +810,82 @@ class Kriging:
             _c_int(lt), _c_int(ut), _c_double(ltpar), _c_double(utpar),
             _c_int(nwt), _dptr(wt_f),
         )
+
+    # ------------------------------------------------------------------
+    def set_uscore(
+        self,
+        ivar: int = 1,
+        zmin: Optional[float] = None,
+        zmax: Optional[float] = None,
+        ltail="linear",
+        utail="linear",
+        ltpar: float = 1.0,
+        utpar: float = 1.0,
+        weights: Optional[np.ndarray] = None,
+    ):
+        """
+        Enable the uniform quantile transform for variable ``ivar`` (SGSIM).
+
+        Builds a weighted empirical CDF from the current observation values and
+        replaces those values with their cumulative probabilities in ``[0, 1]``.
+        The subsequent :meth:`solve` runs in uniform-score space; simulated
+        values are automatically back-transformed through the empirical
+        quantile table to data units.
+
+        Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
+        supplied with :meth:`set_vgm` should be fit on the uniform scores.
+        Requires ``nsim > 0``.
+
+        Parameters are the same as :meth:`set_nscore`: ``zmin``/``zmax`` bound
+        the back-transform tails, ``ltail``/``utail`` choose tail models, and
+        ``weights`` supplies optional declustering weights.
+        """
+        if self.nsim <= 0:
+            raise ValueError("set_uscore requires sequential simulation (nsim > 0).")
+
+        rng = getattr(self, "_obs_value_range", {}).get(ivar)
+        if (zmin is None or zmax is None) and rng is None:
+            raise RuntimeError(
+                "call set_obs(ivar=...) before set_uscore(), or pass both "
+                "zmin and zmax explicitly."
+            )
+        zlo = float(zmin) if zmin is not None else rng[0]
+        zhi = float(zmax) if zmax is not None else rng[1]
+
+        def _tail_code(t):
+            if isinstance(t, str):
+                key = t.lower()
+                codes = {"linear": 1, "power": 2, "hyperbolic": 4}
+                if key not in codes:
+                    raise ValueError(
+                        f"tail must be 'linear', 'power', or 'hyperbolic'; got {t!r}")
+                return codes[key]
+            return int(t)
+
+        lt = _tail_code(ltail)
+        ut = _tail_code(utail)
+
+        if weights is not None:
+            wt_f = _farray(np.asarray(weights, dtype=np.float64).ravel())
+            nwt = wt_f.size
+            if nwt != self._nobs[ivar - 1]:
+                raise ValueError(
+                    f"weights length ({nwt}) must match nobs "
+                    f"({self._nobs[ivar - 1]}) for ivar={ivar}")
+        else:
+            wt_f = _farray(np.zeros(1))
+            nwt = 0
+
+        _krige_set_uscore(_h(self._handle),
+            _c_int(ivar), _c_double(zlo), _c_double(zhi),
+            _c_int(lt), _c_int(ut), _c_double(ltpar), _c_double(utpar),
+            _c_int(nwt), _dptr(wt_f),
+        )
+
+    # ------------------------------------------------------------------
+    def set_quantile(self, *args, **kwargs):
+        """Alias for :meth:`set_uscore`."""
+        return self.set_uscore(*args, **kwargs)
 
     # ------------------------------------------------------------------
     def set_vgm(

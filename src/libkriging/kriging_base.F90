@@ -225,7 +225,8 @@ module kriging_base
     logical              :: sector_search = .false.
     logical              :: set_search = .false.
     logical              :: nscore_on = .false.    ! normal-score transform active
-    type(t_nscore)       :: ns                     ! normal-score transform table
+    logical              :: uscore_on = .false.    ! uniform quantile transform active
+    type(t_nscore)       :: ns                     ! marginal transform table
     type(kdtree2), pointer :: tree => null()
   end type t_obsgrid
 
@@ -363,6 +364,7 @@ module kriging_base
     procedure, non_overridable :: set_obs         => set_obs_base
     procedure                  :: update_obs_value => update_obs_value_base
     procedure, non_overridable :: set_nscore      => set_nscore_base
+    procedure, non_overridable :: set_uscore      => set_uscore_base
     procedure, non_overridable :: apply_nscore_back => apply_nscore_back_base
     procedure, non_overridable :: set_obs_drift   => set_obs_drift_base
     procedure, non_overridable :: reset_obs       => reset_obs_common
@@ -713,8 +715,8 @@ contains
         call kriging_error(subname, 'Call set_obs() before set_nscore.')
         return
       end if
-      if (obs%nscore_on) then
-        call kriging_error(subname, 'normal-score transform already enabled for this variable.')
+      if (obs%nscore_on .or. obs%uscore_on) then
+        call kriging_error(subname, 'a marginal transform is already enabled for this variable.')
         return
       end if
       call obs%ns%build(obs%value(1, 1, :), wt=wt, zmin=zmin, zmax=zmax, &
@@ -731,8 +733,56 @@ contains
 
 
   !============================================================================
+  ! set_uscore_base -- enable the uniform quantile transform for variable ivar.
+  !
+  ! Builds the same empirical quantile table as set_nscore_base, but replaces
+  ! observations with their cumulative probabilities in [0, 1].  Simulated
+  ! block values are interpreted as probabilities and back-transformed to data
+  ! units after solve().
+  !============================================================================
+  subroutine set_uscore_base(self, ivar, zmin, zmax, ltail, utail, ltpar, utpar, wt)
+    class(t_kriging_base), intent(inout)        :: self
+    integer,               intent(in)           :: ivar
+    real,                  intent(in), optional :: zmin, zmax, ltpar, utpar
+    integer,               intent(in), optional :: ltail, utail
+    real,                  intent(in), optional :: wt(:)
+    character(len=*), parameter :: subname = "t_kriging_base%set_uscore"
+    real, allocatable :: scores(:)
+
+    if (.not. associated(self%obs)) then
+      call kriging_error(subname, 'Call initialize() before set_uscore.')
+      return
+    end if
+    if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
+    if (self%nsim <= 0) then
+      call kriging_error(subname, 'set_uscore requires sequential simulation (nsim > 0).')
+      return
+    end if
+    associate(obs => self%obs(ivar))
+      if (obs%n == 0) then
+        call kriging_error(subname, 'Call set_obs() before set_uscore.')
+        return
+      end if
+      if (obs%nscore_on .or. obs%uscore_on) then
+        call kriging_error(subname, 'a marginal transform is already enabled for this variable.')
+        return
+      end if
+      call obs%ns%build(obs%value(1, 1, :), wt=wt, zmin=zmin, zmax=zmax, &
+                        ltail=ltail, utail=utail, ltpar=ltpar, utpar=utpar)
+      if (kriging_failed()) return
+      allocate(scores(obs%n))
+      call obs%ns%forward_uniform(obs%value(1, 1, :), scores)
+      if (kriging_failed()) return
+      obs%value(1, 1, :) = scores
+      obs%uscore_on = .true.
+    end associate
+    self%pf%valid = .false.
+  end subroutine set_uscore_base
+
+
+  !============================================================================
   ! apply_nscore_back_base -- back-transform simulated block values to data
-  ! units for every variable whose normal-score transform is active.  Called
+  ! units for every variable whose marginal transform is active.  Called
   ! once at the end of solve() (SGSIM only).
   !============================================================================
   subroutine apply_nscore_back_base(self)
@@ -743,9 +793,13 @@ contains
     if (.not. allocated(self%block%value)) return
     allocate(zout(self%nsim))
     do ivar = 1, self%nvar
-      if (.not. self%obs(ivar)%nscore_on) cycle
+      if (.not. (self%obs(ivar)%nscore_on .or. self%obs(ivar)%uscore_on)) cycle
       do ib = 1, self%block%n
-        call self%obs(ivar)%ns%back(self%block%value(1:self%nsim, ivar, ib), zout)
+        if (self%obs(ivar)%nscore_on) then
+          call self%obs(ivar)%ns%back(self%block%value(1:self%nsim, ivar, ib), zout)
+        else
+          call self%obs(ivar)%ns%back_uniform(self%block%value(1:self%nsim, ivar, ib), zout)
+        end if
         self%block%value(1:self%nsim, ivar, ib) = zout
       end do
     end do
@@ -821,6 +875,7 @@ contains
       obs%anisotropic_search = .false.
       obs%set_search         = .false.
       obs%nscore_on          = .false.
+      obs%uscore_on          = .false.
       call obs%ns%free()
     end associate
   end subroutine reset_obs_common

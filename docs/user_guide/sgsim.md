@@ -106,6 +106,28 @@ so the transform reproduces the *declustered* distribution:
 k.set_nscore(ivar=1, weights=decluster_weights)   # length == nobs
 ```
 
+## Uniform quantile transform
+
+Use `set_uscore()` when you want the same empirical quantile table but with
+observations mapped to uniform CDF scores in `[0, 1]` instead of standard-normal
+scores:
+
+```python
+k = Kriging(nsim=20, seed=42)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_uscore(ivar=1)                       # data -> uniform quantile scores
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0 / 12.0, a_major=40.0)
+k.set_grid(coord=grid_coord)
+k.set_sim()
+k.set_search(ivar=1)
+k.solve()
+sims, _ = k.get_results()                  # back-transformed to data units
+```
+
+`set_quantile()` is an alias for `set_uscore()`.  The tail and declustering
+arguments are the same as `set_nscore()`.  Only one marginal transform can be
+enabled per variable, so call either `set_nscore()` or `set_uscore()`, not both.
+
 ## See also
 
 - {doc}`../auto_examples/s_ok2d_sgsim` — runnable SGSIM gallery example

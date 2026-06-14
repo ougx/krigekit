@@ -11,8 +11,10 @@
 ! --------
 !   call ns%build(zdata [, wt, zmin, zmax, ltail, utail, ltpar, utpar])
 !   call ns%forward(zin, yout)   ! data units -> normal scores  (e.g. obs)
+!   call ns%forward_uniform(zin, uout)  ! data units -> empirical CDF values
 !   ... simulate in Gaussian space ...
 !   call ns%back(yin, zout)      ! normal scores -> data units  (e.g. sims)
+!   call ns%back_uniform(uin, zout)     ! empirical CDF values -> data units
 !
 ! The forward map is the standard rank-based normal-score transform with a
 ! weighted empirical CDF and tie averaging (declustering weights optional).
@@ -50,6 +52,8 @@ module normal_score
     procedure :: build   => nscore_build
     procedure :: forward => nscore_forward
     procedure :: back    => nscore_back
+    procedure :: forward_uniform => nscore_forward_uniform
+    procedure :: back_uniform    => nscore_back_uniform
     procedure :: free    => nscore_free
   end type t_nscore
 
@@ -178,6 +182,34 @@ contains
   end subroutine nscore_forward
 
   !=============================================================================
+  ! nscore_forward_uniform -- data values -> uniform quantile scores.
+  !=============================================================================
+  subroutine nscore_forward_uniform(self, zin, uout)
+    class(t_nscore), intent(in)  :: self
+    real,            intent(in)  :: zin(:)
+    real,            intent(out) :: uout(:)
+    integer :: i, k
+    real    :: zv, pv, frac
+    if (.not. self%ready) then
+      call kriging_error('normal_score%forward_uniform', 'transform table not built')
+      return
+    end if
+    do i = 1, size(zin)
+      zv = zin(i)
+      if (zv <= self%z(1)) then
+        pv = self%p(1)
+      else if (zv >= self%z(self%m)) then
+        pv = self%p(self%m)
+      else
+        k    = bracket(self%z, zv)                  ! z(k) <= zv < z(k+1)
+        frac = (zv - self%z(k)) / (self%z(k+1) - self%z(k))
+        pv   = self%p(k) + frac * (self%p(k+1) - self%p(k))
+      end if
+      uout(i) = min(max(pv, 0.0), 1.0)
+    end do
+  end subroutine nscore_forward_uniform
+
+  !=============================================================================
   ! nscore_back — normal scores -> data values, with tail extrapolation.
   !=============================================================================
   subroutine nscore_back(self, yin, zout)
@@ -204,6 +236,34 @@ contains
       zout(i) = min(max(zv, self%zmin), self%zmax)
     end do
   end subroutine nscore_back
+
+  !=============================================================================
+  ! nscore_back_uniform -- uniform quantile scores -> data values.
+  !=============================================================================
+  subroutine nscore_back_uniform(self, uin, zout)
+    class(t_nscore), intent(in)  :: self
+    real,            intent(in)  :: uin(:)
+    real,            intent(out) :: zout(:)
+    integer :: i, k
+    real    :: pv, frac, zv
+    if (.not. self%ready) then
+      call kriging_error('normal_score%back_uniform', 'transform table not built')
+      return
+    end if
+    do i = 1, size(uin)
+      pv = min(max(uin(i), 0.0), 1.0)
+      if (pv <= self%p(1)) then
+        zv = tail_lower(self, pv)
+      else if (pv >= self%p(self%m)) then
+        zv = tail_upper(self, pv)
+      else
+        k    = bracket(self%p, pv)                  ! p(k) <= pv < p(k+1)
+        frac = (pv - self%p(k)) / (self%p(k+1) - self%p(k))
+        zv   = self%z(k) + frac * (self%z(k+1) - self%z(k))
+      end if
+      zout(i) = min(max(zv, self%zmin), self%zmax)
+    end do
+  end subroutine nscore_back_uniform
 
   subroutine nscore_free(self)
     class(t_nscore), intent(inout) :: self

@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.2 (unreleased)
+## 0.2.4 (unreleased)
+
+## 0.2.3
 
 ### Changed — auto-tuned `nthread` / `ncache` in `solve()`
 
@@ -20,6 +22,44 @@ structure proves the extra resources cannot help:
 Both adjustments only ever *shrink* the requested values, so they never change
 results or lower the achievable cache-hit rate.  Cross-validation and SGSIM
 keep the full requested cache (their neighbour sets vary block to block).
+
+**Fortran / C API additions:**
+
+- `normal_score` module (`nscore.f90`) — `t_nscore` transform table with
+  `build` / `forward` / `back` and linear/power/hyperbolic tail models
+- `krige_set_nscore(handle, ivar, zmin, zmax, ltail, utail, ltpar, utpar, nwt, wt)`
+
+See {doc}`../user_guide/sgsim` for the full workflow.
+
+### New - Uniform quantile transform for SGSIM
+
+{py:meth}`~krigekit.Kriging.set_uscore` enables the same empirical quantile
+transform as `set_nscore`, but maps observations to uniform CDF scores in
+`[0, 1]` instead of standard-normal scores. Simulated values are interpreted as
+probabilities and back-transformed to data units through the shared quantile
+table. `set_quantile` is provided as a Python alias.
+
+It requires `nsim > 0`; fit the variogram on the uniform scores (for example,
+use sill `1/12` for a fully uniform marginal). Tail extrapolation, bounds, and
+declustering weights use the same arguments as `set_nscore`.
+
+**Fortran / C API additions:**
+
+- `t_nscore%forward_uniform` / `t_nscore%back_uniform`
+- `krige_set_uscore(handle, ivar, zmin, zmax, ltail, utail, ltpar, utpar, nwt, wt)`
+
+### Fixed — SGSIM singularity when grid nodes coincide with observations
+
+A grid node placed exactly on an observation produced a previously-simulated
+node co-located with a hard datum, putting two identical rows in the kriging
+matrix (singular) and yielding `NaN`.  The SGSIM neighbour search now drops a
+previously-simulated block when it coincides — in space, and for space-time also
+in time — with a hard observation already in the neighbourhood, since the datum
+already conditions that location.  Such nodes now reproduce the observed value
+instead of failing.  A diagonal-regularisation retry was also added to the
+linear solver as a last-resort guard against any residual singular system.
+
+## 0.2.2
 
 ### New — Normal-score transform for SGSIM
 
@@ -46,25 +86,6 @@ k.set_search(ivar=1)
 k.solve()
 sims, _ = k.get_results()   # realisations back-transformed to data units
 ```
-
-**Fortran / C API additions:**
-
-- `normal_score` module (`nscore.f90`) — `t_nscore` transform table with
-  `build` / `forward` / `back` and linear/power/hyperbolic tail models
-- `krige_set_nscore(handle, ivar, zmin, zmax, ltail, utail, ltpar, utpar, nwt, wt)`
-
-See {doc}`../user_guide/sgsim` for the full workflow.
-
-### Fixed — SGSIM singularity when grid nodes coincide with observations
-
-A grid node placed exactly on an observation produced a previously-simulated
-node co-located with a hard datum, putting two identical rows in the kriging
-matrix (singular) and yielding `NaN`.  The SGSIM neighbour search now drops a
-previously-simulated block when it coincides — in space, and for space-time also
-in time — with a hard observation already in the neighbourhood, since the datum
-already conditions that location.  Such nodes now reproduce the observed value
-instead of failing.  A diagonal-regularisation retry was also added to the
-linear solver as a last-resort guard against any residual singular system.
 
 ### Documentation and internal
 
