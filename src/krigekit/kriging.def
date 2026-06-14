@@ -11,6 +11,8 @@ EXPORTS
     krige_set_obs_drift
     krige_set_nscore
     krige_set_uscore
+    krige_transform_value_to_score
+    krige_transform_score_to_value
 
     ; --- Grid (base) ---
     krige_set_grid_cv

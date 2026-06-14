@@ -188,6 +188,18 @@ _krige_set_uscore = _optional_status_cfun("krige_set_uscore", [
     _c_int,                                      # nwt (0 = equal weights)
     _ptr_dbl,                                    # wt[nwt]
 ])
+_krige_transform_value_to_score = _optional_status_cfun("krige_transform_value_to_score", [
+    ctypes.c_int64,                              # handle
+    _c_int, _c_int,                              # ivar, n
+    _ptr_dbl,                                    # value[n]
+    _ptr_dbl,                                    # score[n]
+])
+_krige_transform_score_to_value = _optional_status_cfun("krige_transform_score_to_value", [
+    ctypes.c_int64,                              # handle
+    _c_int, _c_int,                              # ivar, n
+    _ptr_dbl,                                    # score[n]
+    _ptr_dbl,                                    # value[n]
+])
 _krige_reset_vgm   = _status_cfun("krige_reset_vgm", [
     ctypes.c_int64,                              # handle
     _c_int, _c_int,                              # ivar, jvar
@@ -739,18 +751,18 @@ class Kriging:
         weights: Optional[np.ndarray] = None,
     ):
         """
-        Enable the normal-score transform for variable ``ivar`` (SGSIM).
+        Enable the normal-score transform for variable ``ivar``.
 
         Builds a normal-score (Gaussian anamorphosis) transform from the
         current observation values and replaces them with their normal scores,
-        so that the subsequent :meth:`solve` runs in Gaussian space; the
-        simulated realisations are automatically back-transformed to data units.
+        so that the subsequent :meth:`solve` runs in Gaussian space; estimates
+        or simulated realisations are automatically back-transformed to data units.
         The transform lives in the Fortran engine, so every C-API client gets
         identical, reproducible results.
 
         Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
         supplied with :meth:`set_vgm` should be that of the normal scores
-        (unit sill).  Requires ``nsim > 0``.
+        (unit sill).  The returned variance is still in score-space units.
 
         Parameters
         ----------
@@ -769,9 +781,6 @@ class Kriging:
         weights : ndarray, shape (nobs,), optional
             Declustering weights for the empirical CDF.  Default: equal weights.
         """
-        if self.nsim <= 0:
-            raise ValueError("set_nscore requires sequential simulation (nsim > 0).")
-
         rng = getattr(self, "_obs_value_range", {}).get(ivar)
         if (zmin is None or zmax is None) and rng is None:
             raise RuntimeError(
@@ -824,25 +833,22 @@ class Kriging:
         weights: Optional[np.ndarray] = None,
     ):
         """
-        Enable the uniform quantile transform for variable ``ivar`` (SGSIM).
+        Enable the uniform quantile transform for variable ``ivar``.
 
         Builds a weighted empirical CDF from the current observation values and
         replaces those values with their cumulative probabilities in ``[0, 1]``.
-        The subsequent :meth:`solve` runs in uniform-score space; simulated
-        values are automatically back-transformed through the empirical
+        The subsequent :meth:`solve` runs in uniform-score space; estimates or
+        simulated values are automatically back-transformed through the empirical
         quantile table to data units.
 
         Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
         supplied with :meth:`set_vgm` should be fit on the uniform scores.
-        Requires ``nsim > 0``.
+        The returned variance is still in score-space units.
 
         Parameters are the same as :meth:`set_nscore`: ``zmin``/``zmax`` bound
         the back-transform tails, ``ltail``/``utail`` choose tail models, and
         ``weights`` supplies optional declustering weights.
         """
-        if self.nsim <= 0:
-            raise ValueError("set_uscore requires sequential simulation (nsim > 0).")
-
         rng = getattr(self, "_obs_value_range", {}).get(ivar)
         if (zmin is None or zmax is None) and rng is None:
             raise RuntimeError(
@@ -886,6 +892,54 @@ class Kriging:
     def set_quantile(self, *args, **kwargs):
         """Alias for :meth:`set_uscore`."""
         return self.set_uscore(*args, **kwargs)
+
+    # ------------------------------------------------------------------
+    def transform_value_to_score(self, value, ivar: int = 1):
+        """
+        Transform data-unit ``value`` through the active score transform.
+
+        Call :meth:`set_nscore` or :meth:`set_uscore` first.  The returned
+        scores are normal scores for ``set_nscore`` and uniform CDF scores for
+        ``set_uscore``.
+        """
+        arr = np.asarray(value, dtype=np.float64)
+        scalar = arr.ndim == 0
+        shape = arr.shape
+        value_f = _farray(arr.reshape(-1))
+        score_f = _fempty(value_f.shape)
+        _krige_transform_value_to_score(_h(self._handle),
+            _c_int(ivar), _c_int(value_f.size),
+            _dptr(value_f), _dptr(score_f),
+        )
+        if scalar:
+            return float(score_f[0])
+        return np.asarray(score_f).reshape(shape)
+
+    # ------------------------------------------------------------------
+    def transform_score_to_value(self, score, ivar: int = 1):
+        """
+        Back-transform score-space ``score`` through the active transform.
+
+        Call :meth:`set_nscore` or :meth:`set_uscore` first.  Scores are
+        interpreted according to the active transform for ``ivar``.
+        """
+        arr = np.asarray(score, dtype=np.float64)
+        scalar = arr.ndim == 0
+        shape = arr.shape
+        score_f = _farray(arr.reshape(-1))
+        value_f = _fempty(score_f.shape)
+        _krige_transform_score_to_value(_h(self._handle),
+            _c_int(ivar), _c_int(score_f.size),
+            _dptr(score_f), _dptr(value_f),
+        )
+        if scalar:
+            return float(value_f[0])
+        return np.asarray(value_f).reshape(shape)
+
+    # ------------------------------------------------------------------
+    def back_transform_score(self, score, ivar: int = 1):
+        """Alias for :meth:`transform_score_to_value`."""
+        return self.transform_score_to_value(score, ivar=ivar)
 
     # ------------------------------------------------------------------
     def set_vgm(

@@ -150,6 +150,24 @@ Replaces observation values in-place without touching coordinates or the
 KD-tree.  Use with `use_old_weight` to re-estimate with new data without
 recomputing search neighbourhoods or the LHS factorisation.
 
+### Score transforms
+
+```c
+int krige_transform_value_to_score(int64_t handle,
+    int ivar, int n,
+    const double *value,  // [n] data units
+    double *score)        // [n] normal or uniform scores
+
+int krige_transform_score_to_value(int64_t handle,
+    int ivar, int n,
+    const double *score,  // [n] normal or uniform scores
+    double *value)        // [n] data units
+```
+
+Apply the active marginal transform created by `krige_set_nscore` or
+`krige_set_uscore`.  The score type follows the active transform for `ivar`:
+normal scores for `set_nscore`, uniform CDF scores for `set_uscore`.
+
 ---
 
 ## Variogram

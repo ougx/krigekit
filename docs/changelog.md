@@ -2,6 +2,26 @@
 
 ## 0.2.4 (unreleased)
 
+### Changed - Score transforms support kriging
+
+`set_nscore` and `set_uscore` now work for ordinary/simple kriging
+(`nsim=0`) as well as SGSIM.  Observation values are transformed before solve,
+and estimates are back-transformed to data units after solve.  Kriging
+variances remain in score-space units.
+
+### New - C API score transform helpers
+
+Added C API helpers for applying the active marginal transform after
+`set_nscore` or `set_uscore`:
+
+- `krige_transform_value_to_score(handle, ivar, n, value, score)`
+- `krige_transform_score_to_value(handle, ivar, n, score, value)`
+
+Python exposes the same functionality as
+`Kriging.transform_value_to_score(...)`,
+`Kriging.transform_score_to_value(...)`, and the alias
+`Kriging.back_transform_score(...)`.
+
 ## 0.2.3
 
 ### Changed — auto-tuned `nthread` / `ncache` in `solve()`

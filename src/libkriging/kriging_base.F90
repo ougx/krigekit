@@ -365,6 +365,8 @@ module kriging_base
     procedure                  :: update_obs_value => update_obs_value_base
     procedure, non_overridable :: set_nscore      => set_nscore_base
     procedure, non_overridable :: set_uscore      => set_uscore_base
+    procedure, non_overridable :: transform_value_to_score => transform_value_to_score_base
+    procedure, non_overridable :: transform_score_to_value => transform_score_to_value_base
     procedure, non_overridable :: apply_nscore_back => apply_nscore_back_base
     procedure, non_overridable :: set_obs_drift   => set_obs_drift_base
     procedure, non_overridable :: reset_obs       => reset_obs_common
@@ -687,10 +689,10 @@ contains
   !
   ! Builds the transform table from the current observation values (optionally
   ! declustering-weighted) and replaces those values with their normal scores
-  ! in place, so the subsequent SGSIM solve runs in Gaussian space.  The
+  ! in place, so the subsequent solve runs in Gaussian space.  Estimated or
   ! simulated block values are mapped back to data units after solve() by
-  ! apply_nscore_back().  Intended for SGSIM (nsim > 0); the variogram supplied
-  ! by the user should be that of the normal scores (unit sill).
+  ! apply_nscore_back().  The variogram supplied by the user should be that of
+  ! the normal scores (unit sill).
   !============================================================================
   subroutine set_nscore_base(self, ivar, zmin, zmax, ltail, utail, ltpar, utpar, wt)
     class(t_kriging_base), intent(inout)        :: self
@@ -706,10 +708,6 @@ contains
       return
     end if
     if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
-    if (self%nsim <= 0) then
-      call kriging_error(subname, 'set_nscore requires sequential simulation (nsim > 0).')
-      return
-    end if
     associate(obs => self%obs(ivar))
       if (obs%n == 0) then
         call kriging_error(subname, 'Call set_obs() before set_nscore.')
@@ -754,10 +752,6 @@ contains
       return
     end if
     if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
-    if (self%nsim <= 0) then
-      call kriging_error(subname, 'set_uscore requires sequential simulation (nsim > 0).')
-      return
-    end if
     associate(obs => self%obs(ivar))
       if (obs%n == 0) then
         call kriging_error(subname, 'Call set_obs() before set_uscore.')
@@ -781,26 +775,95 @@ contains
 
 
   !============================================================================
-  ! apply_nscore_back_base -- back-transform simulated block values to data
-  ! units for every variable whose marginal transform is active.  Called
-  ! once at the end of solve() (SGSIM only).
+  ! transform_value_to_score_base -- apply the active marginal transform for a
+  ! variable to arbitrary values after set_nscore() or set_uscore().
+  !============================================================================
+  subroutine transform_value_to_score_base(self, ivar, value, score)
+    class(t_kriging_base), intent(in)  :: self
+    integer,               intent(in)  :: ivar
+    real,                  intent(in)  :: value(:)
+    real,                  intent(out) :: score(:)
+    character(len=*), parameter :: subname = "t_kriging_base%transform_value_to_score"
+
+    if (.not. associated(self%obs)) then
+      call kriging_error(subname, 'Call initialize() before transforming values.')
+      return
+    end if
+    if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
+    if (size(score) /= size(value)) then
+      call kriging_error(subname, 'size(score) /= size(value)')
+      return
+    end if
+    associate(obs => self%obs(ivar))
+      if (.not. (obs%nscore_on .or. obs%uscore_on)) then
+        call kriging_error(subname, 'Call set_nscore() or set_uscore() before transforming values.')
+        return
+      end if
+      if (obs%nscore_on) then
+        call obs%ns%forward(value, score)
+      else
+        call obs%ns%forward_uniform(value, score)
+      end if
+    end associate
+  end subroutine transform_value_to_score_base
+
+
+  !============================================================================
+  ! transform_score_to_value_base -- back-transform scores through the active
+  ! marginal transform for a variable after set_nscore() or set_uscore().
+  !============================================================================
+  subroutine transform_score_to_value_base(self, ivar, score, value)
+    class(t_kriging_base), intent(in)  :: self
+    integer,               intent(in)  :: ivar
+    real,                  intent(in)  :: score(:)
+    real,                  intent(out) :: value(:)
+    character(len=*), parameter :: subname = "t_kriging_base%transform_score_to_value"
+
+    if (.not. associated(self%obs)) then
+      call kriging_error(subname, 'Call initialize() before back-transforming scores.')
+      return
+    end if
+    if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
+    if (size(value) /= size(score)) then
+      call kriging_error(subname, 'size(value) /= size(score)')
+      return
+    end if
+    associate(obs => self%obs(ivar))
+      if (.not. (obs%nscore_on .or. obs%uscore_on)) then
+        call kriging_error(subname, 'Call set_nscore() or set_uscore() before back-transforming scores.')
+        return
+      end if
+      if (obs%nscore_on) then
+        call obs%ns%back(score, value)
+      else
+        call obs%ns%back_uniform(score, value)
+      end if
+    end associate
+  end subroutine transform_score_to_value_base
+
+
+  !============================================================================
+  ! apply_nscore_back_base -- back-transform estimated/simulated block values
+  ! to data units for every variable whose marginal transform is active. Called
+  ! once at the end of solve().
   !============================================================================
   subroutine apply_nscore_back_base(self)
     class(t_kriging_base), intent(inout) :: self
-    integer :: ivar, ib
+    integer :: ivar, ib, nout
     real, allocatable :: zout(:)
-    if (self%nsim <= 0 .or. .not. associated(self%obs) .or. .not. associated(self%block)) return
+    if (.not. associated(self%obs) .or. .not. associated(self%block)) return
     if (.not. allocated(self%block%value)) return
-    allocate(zout(self%nsim))
+    nout = max(1, self%nsim)
+    allocate(zout(nout))
     do ivar = 1, self%nvar
       if (.not. (self%obs(ivar)%nscore_on .or. self%obs(ivar)%uscore_on)) cycle
       do ib = 1, self%block%n
         if (self%obs(ivar)%nscore_on) then
-          call self%obs(ivar)%ns%back(self%block%value(1:self%nsim, ivar, ib), zout)
+          call self%obs(ivar)%ns%back(self%block%value(1:nout, ivar, ib), zout)
         else
-          call self%obs(ivar)%ns%back_uniform(self%block%value(1:self%nsim, ivar, ib), zout)
+          call self%obs(ivar)%ns%back_uniform(self%block%value(1:nout, ivar, ib), zout)
         end if
-        self%block%value(1:self%nsim, ivar, ib) = zout
+        self%block%value(1:nout, ivar, ib) = zout
       end do
     end do
   end subroutine apply_nscore_back_base

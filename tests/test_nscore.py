@@ -1,12 +1,12 @@
 """
 test_nscore.py
 ==============
-Tests for the normal-score (Gaussian anamorphosis) transform used by SGSIM.
+Tests for the normal-score (Gaussian anamorphosis) transform.
 
 The transform lives in the Fortran engine (behind the C API), so it is shared
 by every client.  These tests exercise it through the Python wrapper:
 
-  * set_nscore requires sequential simulation (nsim > 0);
+  * set_nscore works for both kriging and sequential simulation;
   * realisations are back-transformed to data units and, with the default
     zmin/zmax = data range, stay within that range;
   * a grid node coincident with an observation reproduces the observed value
@@ -57,18 +57,48 @@ def _run(coord, value, grid, nsim=1, seed=42, nscore=True, **ns_kw):
 # ---------------------------------------------------------------------------
 class TestNscoreApi:
 
-    def test_requires_nsim(self):
+    def test_allows_ordinary_kriging(self):
         coord, value = _skewed_data()
         k = Kriging(nsim=0)
         k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
-        with pytest.raises(ValueError):
-            k.set_nscore(ivar=1)
+        k.set_nscore(ivar=1)
+        score = k.transform_value_to_score(value, ivar=1)
+        back = k.transform_score_to_value(score, ivar=1)
+        np.testing.assert_allclose(back, value, rtol=1e-10, atol=1e-10)
         del k
 
     def test_requires_obs_or_explicit_bounds(self):
         k = Kriging(nsim=2)
         with pytest.raises(Exception):
             k.set_nscore(ivar=1)        # no obs cached and no zmin/zmax given
+        del k
+
+    def test_value_score_round_trip_api(self):
+        coord, value = _skewed_data(n=30, seed=12)
+        k = Kriging(nsim=1)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        with pytest.raises(RuntimeError):
+            k.transform_value_to_score(value[:3], ivar=1)
+        k.set_nscore(ivar=1)
+        score = k.transform_value_to_score(value, ivar=1)
+        assert score.shape == value.shape
+        assert np.all(np.isfinite(score))
+        back = k.transform_score_to_value(score, ivar=1)
+        np.testing.assert_allclose(back, value, rtol=1e-10, atol=1e-10)
+        scalar_score = k.transform_value_to_score(float(value[0]), ivar=1)
+        assert isinstance(scalar_score, float)
+        scalar_back = k.back_transform_score(scalar_score, ivar=1)
+        assert scalar_back == pytest.approx(value[0])
+        del k
+
+    def test_ivar_two_value_score_round_trip_api(self):
+        coord, value = _skewed_data(n=30, seed=13)
+        k = Kriging(nvar=2, nsim=1)
+        k.set_obs(ivar=2, coord=coord, value=value, nmax=len(value))
+        k.set_nscore(ivar=2)
+        score = k.transform_value_to_score(value, ivar=2)
+        back = k.transform_score_to_value(score, ivar=2)
+        np.testing.assert_allclose(back, value, rtol=1e-10, atol=1e-10)
         del k
 
 
@@ -142,3 +172,20 @@ class TestNscoreSimulation:
                     ltpar=1.5, utpar=1.5)
         assert sims.min() >= zmin - 1e-6
         assert sims.max() <= zmax + 1e-6
+
+
+class TestNscoreKriging:
+
+    def test_exact_conditioning_at_observations(self):
+        coord, value = _skewed_data(n=40, seed=15)
+        k = Kriging(nsim=0)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_nscore(ivar=1)
+        k.set_grid(coord=coord.copy())
+        k.set_vgm(ivar=1, jvar=1, **_VGM)
+        k.set_search()
+        k.solve()
+        est, var = k.get_results()
+        np.testing.assert_allclose(est, value, rtol=1e-2, atol=1e-2)
+        assert np.all(np.isfinite(var))
+        del k

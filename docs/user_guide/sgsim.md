@@ -54,8 +54,8 @@ The standard practice is to transform the data to **normal scores**, simulate in
 Gaussian space, and back-transform the realisations to data units.
 
 krigekit performs this transform **inside the engine** (behind the C API), so it
-is applied consistently from every client language and the realisations stay
-bit-reproducible.  Enable it with `set_nscore()` after `set_obs()`:
+is applied consistently from every client language.  Enable it with
+`set_nscore()` after `set_obs()`:
 
 ```python
 k = Kriging(nsim=20, seed=42)
@@ -73,11 +73,13 @@ Two things to keep in mind:
 
 - **Fit the variogram on the normal scores** (unit sill), not on the raw data —
   the simulation runs in Gaussian space.
-- `set_nscore` requires `nsim > 0`; it is a simulation transform.
+- The same transform also works for ordinary/simple kriging (`nsim=0`): the
+  estimate is back-transformed to data units, while the reported kriging
+  variance remains in score-space units.
 
 ### Tail extrapolation and bounds
 
-The back-transform maps each simulated score through the data's empirical CDF.
+The back-transform maps each estimated or simulated score through the data's empirical CDF.
 For scores beyond the smallest / largest datum it extrapolates into the tails,
 bounded by `zmin` / `zmax`.  These default to the data minimum / maximum (no
 extrapolation beyond the observed range):
@@ -124,9 +126,12 @@ k.solve()
 sims, _ = k.get_results()                  # back-transformed to data units
 ```
 
-`set_quantile()` is an alias for `set_uscore()`.  The tail and declustering
-arguments are the same as `set_nscore()`.  Only one marginal transform can be
-enabled per variable, so call either `set_nscore()` or `set_uscore()`, not both.
+`set_quantile()` is an alias for `set_uscore()`.  It also works for
+ordinary/simple kriging (`nsim=0`): estimates are back-transformed to data
+units, while variances remain in uniform-score units.  The tail and
+declustering arguments are the same as `set_nscore()`.  Only one marginal
+transform can be enabled per variable, so call either `set_nscore()` or
+`set_uscore()`, not both.
 
 ## See also
 
