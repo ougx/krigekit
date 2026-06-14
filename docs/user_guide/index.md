@@ -11,10 +11,7 @@ cokriging
 universal_kriging
 indicator_kriging
 sgsim
+spatially_varying_anisotropy
+weight_reuse
 performance
 ```
-
-**Coming in Phase 2:**
-
-- Spatially Varying Anisotropy
-- Kriging weight reuse
