@@ -6,8 +6,12 @@
 
 `set_nscore` and `set_uscore` now work for ordinary/simple kriging
 (`nsim=0`) as well as SGSIM.  Observation values are transformed before solve,
-and estimates are back-transformed to data units after solve.  Kriging
-variances remain in score-space units.
+and kriging estimates/variances are back-transformed to data-unit moments after
+solve with Gaussian quadrature.
+
+Added a dedicated data-transform user guide covering normal-score transforms,
+uniform quantile transforms, tail handling, declustering weights, and the
+transform/back-transform helper APIs.
 
 ### New - C API score transform helpers
 

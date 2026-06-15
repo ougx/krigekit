@@ -39,6 +39,25 @@ def _grid(nx=12, ny=12):
     return np.column_stack([gx.ravel(), gy.ravel()])
 
 
+def _gh_backtransform_moments(k, mu, var):
+    x = np.array([
+        -2.8569700138728056, -1.3556261799742659, 0.0,
+         1.3556261799742659,  2.8569700138728056,
+    ])
+    w = np.array([
+        0.0112574113277207, 0.2220759220056126, 0.5333333333333333,
+        0.2220759220056126, 0.0112574113277207,
+    ])
+    if var <= 0.0:
+        z = k.transform_score_to_value(float(mu), ivar=1)
+        return z, 0.0
+    scores = mu + np.sqrt(var) * x
+    values = k.transform_score_to_value(scores, ivar=1)
+    mean = np.sum(w * values)
+    variance = np.sum(w * values * values) - mean * mean
+    return mean, max(float(variance), 0.0)
+
+
 def _run(coord, value, grid, nsim=1, seed=42, nscore=True, **ns_kw):
     k = Kriging(nsim=nsim, seed=seed)
     k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
@@ -189,3 +208,38 @@ class TestNscoreKriging:
         np.testing.assert_allclose(est, value, rtol=1e-2, atol=1e-2)
         assert np.all(np.isfinite(var))
         del k
+
+    def test_estimate_and_variance_use_quadrature_back_transform(self):
+        coord, value = _skewed_data(n=50, seed=21)
+        grid = np.array([[50.0, 50.0]])
+
+        kt = Kriging(nsim=0)
+        kt.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        kt.set_nscore(ivar=1)
+        score_value = kt.transform_value_to_score(value, ivar=1)
+
+        ks = Kriging(nsim=0)
+        ks.set_obs(ivar=1, coord=coord, value=score_value, nmax=len(value))
+        ks.set_grid(coord=grid)
+        ks.set_vgm(ivar=1, jvar=1, **_VGM)
+        ks.set_search()
+        ks.solve()
+        score_est, score_var = ks.get_results()
+
+        expected_mean, expected_var = _gh_backtransform_moments(
+            kt, float(score_est[0]), float(score_var[0])
+        )
+
+        kb = Kriging(nsim=0)
+        kb.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        kb.set_nscore(ivar=1)
+        kb.set_grid(coord=grid)
+        kb.set_vgm(ivar=1, jvar=1, **_VGM)
+        kb.set_search()
+        kb.solve()
+        est, var = kb.get_results()
+
+        assert est[0] == pytest.approx(expected_mean, rel=1e-10, abs=1e-10)
+        assert var[0] == pytest.approx(expected_var, rel=1e-10, abs=1e-10)
+        assert var[0] != pytest.approx(float(score_var[0]))
+        del kt, ks, kb

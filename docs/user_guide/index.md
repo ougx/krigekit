@@ -6,6 +6,7 @@ Choose the guide that matches your task:
 :maxdepth: 1
 
 ordinary_kriging
+data_transforms
 space_time_kriging
 cokriging
 universal_kriging

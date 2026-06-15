@@ -762,7 +762,8 @@ class Kriging:
 
         Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
         supplied with :meth:`set_vgm` should be that of the normal scores
-        (unit sill).  The returned variance is still in score-space units.
+        (unit sill).  For kriging (``nsim == 0``), estimates and variances are
+        back-transformed to data units with Gaussian quadrature.
 
         Parameters
         ----------
@@ -843,7 +844,8 @@ class Kriging:
 
         Call after :meth:`set_obs` (and before :meth:`solve`).  The variogram
         supplied with :meth:`set_vgm` should be fit on the uniform scores.
-        The returned variance is still in score-space units.
+        For kriging (``nsim == 0``), estimates and variances are
+        back-transformed to data units with Gaussian quadrature.
 
         Parameters are the same as :meth:`set_nscore`: ``zmin``/``zmax`` bound
         the back-transform tails, ``ltail``/``utail`` choose tail models, and

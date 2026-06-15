@@ -1,9 +1,9 @@
 # Sequential Gaussian simulation
 
 Sequential Gaussian simulation (SGSIM) generates conditional realisations of a
-Gaussian random field.  Unlike kriging — which returns a single smoothed
-estimate and a variance — simulation produces multiple equiprobable maps that
-honour the data and reproduce the variogram, making it suitable for uncertainty
+Gaussian random field. Unlike kriging, which returns a single smoothed estimate
+and a variance, simulation produces multiple equiprobable maps that honour the
+data and reproduce the variogram, making it suitable for uncertainty
 quantification and as input to flow / transport models.
 
 ## Minimal example
@@ -29,10 +29,10 @@ k.solve()
 sims, _ = k.get_results()          # shape (ngrid, 20)
 ```
 
-Each `sims[:, i]` is one realisation.  Realisations honour the data (a node that
+Each `sims[:, i]` is one realisation. Realisations honour the data (a node that
 coincides with an observation reproduces it) and reproduce the input covariance
-model; different seeds give independent ensembles, while the **same seed
-reproduces the realisations bit-for-bit** across platforms.
+model; different seeds give independent ensembles, while the same seed
+reproduces the realisations bit-for-bit across platforms.
 
 A one-call convenience function is also available:
 
@@ -50,92 +50,32 @@ sims = sequential_gaussian_simulation(
 
 SGSIM assumes a multiGaussian model, but environmental variables are often
 strongly non-Gaussian (concentrations, hydraulic conductivity, percentages).
-The standard practice is to transform the data to **normal scores**, simulate in
+The standard practice is to transform the data to normal scores, simulate in
 Gaussian space, and back-transform the realisations to data units.
 
-krigekit performs this transform **inside the engine** (behind the C API), so it
-is applied consistently from every client language.  Enable it with
-`set_nscore()` after `set_obs()`:
+krigekit performs this transform inside the engine. Enable it with
+`set_nscore()` after `set_obs()`, and fit the variogram in normal-score space:
 
 ```python
 k = Kriging(nsim=20, seed=42)
 k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
-k.set_nscore(ivar=1)                       # data -> normal scores
-k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)  # unit-sill nscore variogram
+k.set_nscore(ivar=1)
+k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
 k.set_sim()
 k.set_search(ivar=1)
 k.solve()
-sims, _ = k.get_results()                  # realisations back-transformed to data units
+sims, _ = k.get_results()          # back-transformed to data units
 ```
 
-Two things to keep in mind:
-
-- **Fit the variogram on the normal scores** (unit sill), not on the raw data —
-  the simulation runs in Gaussian space.
-- The same transform also works for ordinary/simple kriging (`nsim=0`): the
-  estimate is back-transformed to data units, while the reported kriging
-  variance remains in score-space units.
-
-### Tail extrapolation and bounds
-
-The back-transform maps each estimated or simulated score through the data's empirical CDF.
-For scores beyond the smallest / largest datum it extrapolates into the tails,
-bounded by `zmin` / `zmax`.  These default to the data minimum / maximum (no
-extrapolation beyond the observed range):
-
-```python
-k.set_nscore(
-    ivar=1,
-    zmin=0.0, zmax=200.0,             # physical bounds for the tails
-    ltail="linear",                   # lower-tail model
-    utail="hyperbolic", utpar=1.5,    # heavier upper tail (positive data only)
-)
-```
-
-| Tail model | Notes |
-|---|---|
-| `"linear"` *(default)* | straight line between the extreme datum and `zmin` / `zmax` |
-| `"power"` | `ltpar` / `utpar` shape parameter controls curvature |
-| `"hyperbolic"` | upper tail only; requires strictly positive data |
-
-### Declustering weights
-
-If the data are spatially clustered, pass per-observation declustering weights
-so the transform reproduces the *declustered* distribution:
-
-```python
-k.set_nscore(ivar=1, weights=decluster_weights)   # length == nobs
-```
-
-## Uniform quantile transform
-
-Use `set_uscore()` when you want the same empirical quantile table but with
-observations mapped to uniform CDF scores in `[0, 1]` instead of standard-normal
-scores:
-
-```python
-k = Kriging(nsim=20, seed=42)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
-k.set_uscore(ivar=1)                       # data -> uniform quantile scores
-k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0 / 12.0, a_major=40.0)
-k.set_grid(coord=grid_coord)
-k.set_sim()
-k.set_search(ivar=1)
-k.solve()
-sims, _ = k.get_results()                  # back-transformed to data units
-```
-
-`set_quantile()` is an alias for `set_uscore()`.  It also works for
-ordinary/simple kriging (`nsim=0`): estimates are back-transformed to data
-units, while variances remain in uniform-score units.  The tail and
-declustering arguments are the same as `set_nscore()`.  Only one marginal
-transform can be enabled per variable, so call either `set_nscore()` or
-`set_uscore()`, not both.
+For the full transform workflow, including `set_uscore()`, tail extrapolation,
+declustering weights, kriging (`nsim=0`) behavior, and transform/back-transform
+helper APIs, see [Data transforms](data_transforms.md).
 
 ## See also
 
-- {doc}`../auto_examples/s_ok2d_sgsim` — runnable SGSIM gallery example
-- [Performance tuning](performance.md) — `nthread`, `ncache`, the factor cache
-- [Array conventions](../array_conventions.md) — coordinate and result shapes
-- [API reference](../api/index.md) — full `Kriging` class documentation
+- {doc}`../auto_examples/s_ok2d_sgsim` - runnable SGSIM gallery example
+- [Data transforms](data_transforms.md) - normal-score and uniform quantile transforms
+- [Performance tuning](performance.md) - `nthread`, `ncache`, the factor cache
+- [Array conventions](../array_conventions.md) - coordinate and result shapes
+- [API reference](../api/index.md) - full `Kriging` class documentation

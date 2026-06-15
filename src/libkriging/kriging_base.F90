@@ -844,29 +844,163 @@ contains
 
   !============================================================================
   ! apply_nscore_back_base -- back-transform estimated/simulated block values
-  ! to data units for every variable whose marginal transform is active. Called
-  ! once at the end of solve().
+  ! to data units for every variable whose marginal transform is active. For
+  ! kriging, score-space mean/covariance are mapped to data-unit moments with
+  ! Gauss-Hermite quadrature. Called once at the end of solve().
   !============================================================================
   subroutine apply_nscore_back_base(self)
     class(t_kriging_base), intent(inout) :: self
-    integer :: ivar, ib, nout
+    integer :: ivar, jvar, ib, nout
     real, allocatable :: zout(:)
+    real, allocatable :: mu(:), mean_bt(:), var_bt(:), cov_score(:,:)
+    logical, allocatable :: transformed(:)
     if (.not. associated(self%obs) .or. .not. associated(self%block)) return
     if (.not. allocated(self%block%value)) return
     nout = max(1, self%nsim)
-    allocate(zout(nout))
+
+    if (self%nsim > 0) then
+      allocate(zout(nout))
+      do ivar = 1, self%nvar
+        if (.not. (self%obs(ivar)%nscore_on .or. self%obs(ivar)%uscore_on)) cycle
+        do ib = 1, self%block%n
+          if (self%obs(ivar)%nscore_on) then
+            call self%obs(ivar)%ns%back(self%block%value(1:nout, ivar, ib), zout)
+          else
+            call self%obs(ivar)%ns%back_uniform(self%block%value(1:nout, ivar, ib), zout)
+          end if
+          self%block%value(1:nout, ivar, ib) = zout
+        end do
+      end do
+      return
+    end if
+
+    allocate(mu(self%nvar), mean_bt(self%nvar), var_bt(self%nvar), transformed(self%nvar))
+    if (allocated(self%block%variance)) allocate(cov_score(self%nvar, self%nvar))
+    transformed = .false.
     do ivar = 1, self%nvar
-      if (.not. (self%obs(ivar)%nscore_on .or. self%obs(ivar)%uscore_on)) cycle
-      do ib = 1, self%block%n
-        if (self%obs(ivar)%nscore_on) then
-          call self%obs(ivar)%ns%back(self%block%value(1:nout, ivar, ib), zout)
+      transformed(ivar) = self%obs(ivar)%nscore_on .or. self%obs(ivar)%uscore_on
+    end do
+    if (.not. any(transformed)) return
+
+    do ib = 1, self%block%n
+      mu      = self%block%value(1, 1:self%nvar, ib)
+      mean_bt = mu
+      var_bt  = 0.0
+      if (allocated(self%block%variance)) cov_score = self%block%variance(1:self%nvar, 1:self%nvar, ib)
+
+      do ivar = 1, self%nvar
+        if (.not. transformed(ivar)) cycle
+        if (allocated(self%block%variance)) then
+          call transform_moment_1d(self, ivar, mu(ivar), &
+               cov_score(ivar, ivar), mean_bt(ivar), var_bt(ivar))
         else
-          call self%obs(ivar)%ns%back_uniform(self%block%value(1:nout, ivar, ib), zout)
+          call transform_scalar_back(self, ivar, mu(ivar), mean_bt(ivar))
         end if
-        self%block%value(1:nout, ivar, ib) = zout
+        self%block%value(1, ivar, ib) = mean_bt(ivar)
+      end do
+
+      if (.not. allocated(self%block%variance)) cycle
+      do ivar = 1, self%nvar
+        if (transformed(ivar)) self%block%variance(ivar, ivar, ib) = var_bt(ivar)
+        do jvar = ivar + 1, self%nvar
+          if (.not. (transformed(ivar) .or. transformed(jvar))) cycle
+          call transform_cov_2d(self, ivar, jvar, mu(ivar), mu(jvar), &
+               cov_score(ivar, ivar), cov_score(jvar, jvar), cov_score(ivar, jvar), &
+               mean_bt(ivar), mean_bt(jvar), self%block%variance(ivar, jvar, ib))
+          self%block%variance(jvar, ivar, ib) = self%block%variance(ivar, jvar, ib)
+        end do
       end do
     end do
   end subroutine apply_nscore_back_base
+
+
+  subroutine transform_scalar_back(self, ivar, score, value)
+    class(t_kriging_base), intent(in)  :: self
+    integer,               intent(in)  :: ivar
+    real,                  intent(in)  :: score
+    real,                  intent(out) :: value
+    real :: yin(1), zout(1)
+    yin(1) = score
+    if (self%obs(ivar)%nscore_on) then
+      call self%obs(ivar)%ns%back(yin, zout)
+    else if (self%obs(ivar)%uscore_on) then
+      call self%obs(ivar)%ns%back_uniform(yin, zout)
+    else
+      zout(1) = score
+    end if
+    value = zout(1)
+  end subroutine transform_scalar_back
+
+
+  subroutine transform_moment_1d(self, ivar, mu, var, mean_bt, var_bt)
+    class(t_kriging_base), intent(in)  :: self
+    integer,               intent(in)  :: ivar
+    real,                  intent(in)  :: mu, var
+    real,                  intent(out) :: mean_bt, var_bt
+    integer :: iq
+    real :: sd, score, value, second
+    real, parameter :: GH_X(5) = [ &
+      -2.8569700138728056, -1.3556261799742659, 0.0, &
+       1.3556261799742659,  2.8569700138728056 ]
+    real, parameter :: GH_W(5) = [ &
+      0.0112574113277207, 0.2220759220056126, 0.5333333333333333, &
+      0.2220759220056126, 0.0112574113277207 ]
+
+    if (var <= 0.0) then
+      call transform_scalar_back(self, ivar, mu, mean_bt)
+      var_bt = 0.0
+      return
+    end if
+
+    sd = sqrt(var)
+    mean_bt = 0.0
+    second  = 0.0
+    do iq = 1, 5
+      score = mu + sd * GH_X(iq)
+      call transform_scalar_back(self, ivar, score, value)
+      mean_bt = mean_bt + GH_W(iq) * value
+      second  = second  + GH_W(iq) * value * value
+    end do
+    var_bt = max(second - mean_bt * mean_bt, 0.0)
+  end subroutine transform_moment_1d
+
+
+  subroutine transform_cov_2d(self, ivar, jvar, mui, muj, vari, varj, covij, meani, meanj, cov_bt)
+    class(t_kriging_base), intent(in)  :: self
+    integer,               intent(in)  :: ivar, jvar
+    real,                  intent(in)  :: mui, muj, vari, varj, covij, meani, meanj
+    real,                  intent(out) :: cov_bt
+    integer :: iq, jq
+    real :: sdi, sdj, rho, root, scorei, scorej, valuei, valuej
+    real, parameter :: GH_X(5) = [ &
+      -2.8569700138728056, -1.3556261799742659, 0.0, &
+       1.3556261799742659,  2.8569700138728056 ]
+    real, parameter :: GH_W(5) = [ &
+      0.0112574113277207, 0.2220759220056126, 0.5333333333333333, &
+      0.2220759220056126, 0.0112574113277207 ]
+
+    if (vari <= 0.0 .or. varj <= 0.0) then
+      cov_bt = 0.0
+      return
+    end if
+
+    sdi = sqrt(vari)
+    sdj = sqrt(varj)
+    rho = covij / (sdi * sdj)
+    rho = min(max(rho, -1.0), 1.0)
+    root = sqrt(max(1.0 - rho * rho, 0.0))
+
+    cov_bt = 0.0
+    do iq = 1, 5
+      scorei = mui + sdi * GH_X(iq)
+      call transform_scalar_back(self, ivar, scorei, valuei)
+      do jq = 1, 5
+        scorej = muj + sdj * (rho * GH_X(iq) + root * GH_X(jq))
+        call transform_scalar_back(self, jvar, scorej, valuej)
+        cov_bt = cov_bt + GH_W(iq) * GH_W(jq) * (valuei - meani) * (valuej - meanj)
+      end do
+    end do
+  end subroutine transform_cov_2d
 
 
   !============================================================================
