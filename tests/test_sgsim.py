@@ -142,6 +142,96 @@ class TestSGSIM:
         assert sims.min() >= -5.0, f"Simulation minimum {sims.min()} is unreasonably low"
         assert sims.max() <=  5.0, f"Simulation maximum {sims.max()} is unreasonably high"
 
+    def test_unconditional_simulation_no_observations(self):
+        """SGSIM with zero conditioning data draws from the prior.
+
+        The first visited node has no neighbours and is drawn from
+        ``N(sk_mean, C(0))``; later nodes condition only on previously
+        simulated nodes.  The ensemble variance should approach the sill.
+        """
+        g = np.arange(0.0, 60.0, 3.0)
+        gx, gy, gz = np.meshgrid(g, g, g, indexing="ij")
+        grid = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+
+        k = Kriging(ndim=3, nvar=1, nsim=4, seed=11)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=48)
+        k.set_grid(coord=grid)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0,
+                  a_major=30.0, a_minor1=12.0, a_minor2=8.0, azimuth=30.0, dip=20.0)
+        k.set_sim()
+        k.set_search(ivar=1, anis1=12.0 / 30.0, anis2=8.0 / 30.0, azimuth=30.0, dip=20.0)
+        k.solve()
+        sims, _ = k.get_results()
+        sims = np.asarray(sims)
+
+        assert sims.shape == (grid.shape[0], 4)
+        assert np.isnan(sims).sum() == 0, "unconditional SGSIM produced NaN"
+        # Each unconditional realisation has its own random global mean (no data
+        # pins it), so pooling realisations inflates the variance.  Check the
+        # *per-realisation* spatial variance approaches the sill instead.
+        per_real_var = sims.var(axis=0)
+        assert np.all((per_real_var > 0.6) & (per_real_var < 1.6)), \
+            f"per-realisation variance {per_real_var} far from sill 1.0"
+        assert not np.allclose(sims[:, 0], sims[:, 1]), "realisations are identical"
+
+    def test_unconditional_single_neighbour_node_is_conditioned(self):
+        """The second unconditional node (one neighbour) must be solved.
+
+        Regression for the ``npp > 1`` threshold that skipped single-neighbour
+        systems, leaving the kriging variance NaN and the node undrawn.
+        """
+        grid = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=4)
+        k.set_grid(coord=grid)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
+        k.set_sim()
+        k.set_search(ivar=1)
+        k.solve()
+        val, var = k.get_results()
+        val, var = np.asarray(val), np.asarray(var)
+        assert np.isnan(val).sum() == 0 and np.isnan(var).sum() == 0
+        # First node: drawn from the prior, variance == sill.
+        assert var[0] == pytest.approx(1.0, abs=1e-6)
+        # Second node conditions on the first, so its kriging variance is
+        # strictly reduced below the sill (was left NaN before the fix).
+        assert 0.0 < var[1] < 1.0
+
+    def test_unconditional_requires_set_sim(self):
+        """SGSIM without set_sim()/set_obs() raises instead of crashing."""
+        grid = np.array([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+
+        k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
+        k.set_grid(coord=grid)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=10.0)
+        with pytest.raises(RuntimeError, match="set_obs"):
+            k.set_search(ivar=1)
+
+        k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=4)
+        k.set_grid(coord=grid)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=10.0)
+        with pytest.raises(RuntimeError, match="set_sim"):
+            k.set_search(ivar=1)
+
+    def test_unconditional_tiny_grid_below_dimension(self):
+        """A grid with fewer nodes than dimensions must not break the k-d tree.
+
+        Regression for kdtree2_create failing when the search pool is smaller
+        than ndim; such tiny pools use the direct (no-tree) search path.
+        """
+        grid = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])  # 2 nodes in 3-D
+        k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=1)
+        k.set_grid(coord=grid)
+        k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=10.0)
+        k.set_sim()
+        k.set_search(ivar=1)
+        k.solve()
+        sims = np.asarray(k.get_results()[0])
+        assert sims.shape == (2,)
+        assert np.isnan(sims).sum() == 0
+
     def test_joint_cosim_get_estimate_all_shape(self):
         """Joint co-simulation returns simulations, blocks, then variables."""
         coord = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])

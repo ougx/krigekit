@@ -1219,7 +1219,10 @@ contains
       call kriging_error(subname, 'call initialize() before setting the grid.')
       return
     end if
-    if (self%obs(1)%n == 0) then
+    ! nobs == 0 is valid for unconditional simulation (nsim > 0): the first
+    ! visited node is drawn from N(0, sill) and later nodes condition only on
+    ! previously simulated nodes.  For plain kriging it remains an error.
+    if (self%obs(1)%n == 0 .and. self%nsim == 0) then
       call kriging_error(subname, 'Observation needs to be set first.')
       return
     end if
@@ -1493,10 +1496,7 @@ contains
       call kriging_error(subname, 'Grid needs to be set first.')
       return
     end if
-    if (any(self%obs(1:self%nvar)%n == 0)) then
-      call kriging_error(subname, 'Observations need to be set first.')
-      return
-    end if
+    ! nobs == 0 is allowed here: an unconditional simulation has no hard data.
     if (any(self%obs(1:self%nvar)%nmax > int(huge(0)*0.001))) then
       call kriging_error(subname, '`nmax` must be set for all observations for SGSIM.')
       return
@@ -2468,7 +2468,17 @@ contains
       else
         call self%assemble_linear_system(ctx)
         if (kriging_failed()) cycle
-        if (ctx%npp > 1) call self%solve_linear_system(ctx)
+        if (ctx%npp > 0) then
+          ! Solve whenever there is at least one neighbour.  npp == 1 must be
+          ! solved too (single-neighbour kriging, and the second node of an
+          ! unconditional simulation) -- otherwise weights stay zero and the
+          ! kriging variance is left NaN.
+          call self%solve_linear_system(ctx)
+        else if (self%nsim > 0) then
+          ! Unconditional node with no neighbours: no system to solve, but set
+          ! var = C(0) so the prior draw in estimate_block uses the full sill.
+          call self%calc_variance(ctx)
+        end if
         if (kriging_failed()) cycle
         call assign_weight_ctx(ctx, self)
       end if
@@ -2896,8 +2906,14 @@ contains
       call kriging_error(subname, 'Call set_grid() before solve().')
       return
     end if
+    ! SGSIM needs the per-node sample buffer allocated by set_sim().
+    if (self%nsim > 0 .and. .not. allocated(self%block%sample)) then
+      call kriging_error(subname, 'Call set_sim() before solve().')
+      return
+    end if
     do ivar = 1, self%nvar
-      if (self%obs(ivar)%n == 0) then
+      ! nobs == 0 is valid for unconditional simulation (nsim > 0).
+      if (self%obs(ivar)%n == 0 .and. self%nsim == 0) then
         call kriging_error(subname, 'Call set_obs() for every variable before solve().')
         return
       end if
@@ -3537,7 +3553,10 @@ contains
       npp = sum(ctx%nnear)
 
       if (sum(ctx%nnear(1:self%ngroups_base)) == 0) then
-        if (self%neglect_error) then
+        ! nsim > 0: a node with no neighbours is the first (or an isolated)
+        ! node of an unconditional simulation; it is drawn from the prior in
+        ! estimate_block rather than kriged, so it is not an error.
+        if (self%neglect_error .or. self%nsim > 0) then
           ctx%nnear = 0
           ctx%npp = 0
           ctx%matsize = 0
@@ -3766,8 +3785,30 @@ contains
       weight => ctx%weight)
 
       if (sum(nnear(1:self%ngroups_base)) == 0) then
-        val = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
-        var = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
+        if (self%nsim == 0) then
+          ! Plain kriging with no neighbours is undefined -> NaN.
+          val = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
+          var = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
+          return
+        end if
+        ! Unconditional simulation: draw from the prior N(sk_mean, C(0)).
+        ! var already holds C(0) (set by calc_variance in the driver loop).
+        do jvar = 1, self%nvar
+          val(:, jvar) = self%obs(jvar)%sk_mean
+        end do
+        L_chol = var
+        call spotrf('L', self%nvar, L_chol, self%nvar, info)
+        if (info /= 0) then
+          L_chol = 0.0
+          do ivar = 1, self%nvar
+            L_chol(ivar, ivar) = sqrt(max(var(ivar, ivar), 0.0))
+          end do
+        end if
+        do isim = 1, self%nsim
+          call self%sim_draw(ctx, val(isim, :), L_chol, isim)
+        end do
+        where (val < self%bounds(1)) val = self%bounds(1)
+        where (val > self%bounds(2)) val = self%bounds(2)
         return
       end if
 

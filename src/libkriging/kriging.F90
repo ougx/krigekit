@@ -330,7 +330,16 @@ contains
       return
     end if
     if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
-    if (self%obs(ivar)%n == 0) then
+    ! nobs == 0 is valid for unconditional simulation (nsim > 0).
+    ! Guard against set_obs() never being called: obs%coord is unallocated and
+    ! the checks below (and the solver) would otherwise access-violate.  An
+    ! unconditional simulation still calls set_obs() with empty arrays, which
+    ! allocates coord with shape (ndim, 0).
+    if (.not. allocated(self%obs(ivar)%coord)) then
+      call kriging_error(subname, 'call set_obs() before set_search().')
+      return
+    end if
+    if (self%obs(ivar)%n == 0 .and. self%nsim == 0) then
       call kriging_error(subname, 'set_obs() needs to be called before set_search().')
       return
     end if
@@ -339,7 +348,9 @@ contains
         call kriging_error(subname, 'set_grid() needs to be called before set_search().')
         return
       end if
-      if (size(self%obs(ivar)%coord, 2) == self%obs(ivar)%n) then
+      ! set_sim() allocates block%sample and extends obs%coord; require it so an
+      ! SGSIM solve never runs against an unallocated sample buffer.
+      if (.not. allocated(self%block%sample)) then
         call kriging_error(subname, 'set_sim() needs to be called before set_search().')
         return
       end if
@@ -361,7 +372,13 @@ contains
       !   extended coord array (obs + block centres); nmax spans both.
       if (self%nsim > 0) then
         call kriging_normalize_nmax(obs%nmax, obs%n + self%block%n)
-        need_search = obs%n + self%block%n > obs%nmax
+        ! The most neighbours any node sees is at the last path position:
+        ! nobs hard data + (nblock - 1) previously simulated nodes.  Only build a
+        ! k-d tree when that strictly exceeds nmax; otherwise every node's prior
+        ! set fits within nmax and the direct path in search_neighbors is used.
+        ! Using the exact count (the -1) also avoids trying to build a tree on a
+        ! pool smaller than ndim for very small unconditional grids.
+        need_search = obs%n + self%block%n - 1 > obs%nmax
       else
         call kriging_normalize_nmax(obs%nmax, obs%n)
         need_search = obs%n > obs%nmax
