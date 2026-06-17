@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.4 (unreleased)
+## 0.2.5 (unreleased)
+
+## 0.2.4
 
 ### New — `plot_map3d` / `plot_vgm_map3d` overhaul
 
