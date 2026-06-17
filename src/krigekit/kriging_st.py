@@ -4,25 +4,32 @@ _kriging_st.py
 Python wrapper for the space-time kriging C API (krige_st_* entry points).
 
 Mirrors the structure of _kriging.py but exposes:
-  - SpaceTimeKriging class  — full control over the ST kriging workflow
-  - spacetime_kriging()     — one-shot ordinary ST kriging
-  - spacetime_cokriging()   — one-shot ordinary ST co-kriging
+
+* ``SpaceTimeKriging``: full control over the ST kriging workflow
+* ``spacetime_kriging()``: one-shot ordinary ST kriging
+* ``spacetime_cokriging()``: one-shot ordinary ST co-kriging
 
 Coordinate convention (same as base):
-  All spatial coord arrays are (nobs, 3) — rows are points, columns are x, y, z.
-  Time arrays are 1-D, shape (nobs,), in any consistent unit (e.g. decimal years).
+
+* All spatial coord arrays are ``(nobs, 3)``: rows are points, columns are
+  ``x``, ``y``, ``z``.
+* Time arrays are 1-D, shape ``(nobs,)``, in any consistent unit
+  (for example decimal years).
 
 Variogram spec formats:
-  Spatial  (9 values): "vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge"
-  Temporal (4 values): "vtype nugget sill at_k"
+
+* Spatial, 9 values: ``"vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge"``
+* Temporal, 4 values: ``"vtype nugget sill at_k"``
 
 ST model parameters (set once via set_st_model):
-  model     : 'sum_metric' or 'product_sum'
-  transform : 'nug', 'sph', 'exp', 'gau', 'pow', 'bsq', 'cir', or 'lin'
-  at        : joint temporal scale (same time units as input)
-  time_nugget, time_sill
-            : f(dt) scale for the joint temporal distance
-  k_ps      : product-sum coefficient k (only for model='product_sum')
+
+* ``model``: ``"sum_metric"`` or ``"product_sum"``
+* ``transform``: ``"nug"``, ``"sph"``, ``"exp"``, ``"gau"``, ``"pow"``,
+  ``"bsq"``, ``"cir"``, or ``"lin"``
+* ``at``: joint temporal scale, in the same time units as the input
+* ``time_nugget`` and ``time_sill``: ``f(dt)`` scale for the joint temporal
+  distance
+* ``k_ps``: product-sum coefficient, only for ``model="product_sum"``
 """
 
 import ctypes

@@ -81,7 +81,11 @@ class IndicatorKriging(Kriging):
         Number of spatial dimensions (2 or 3).
     nsim : int
         0 = estimation (returns probabilities); >0 = SIS (returns one-hot draws).
-    All other keyword arguments are passed through to :class:`Kriging`.
+
+    Other Parameters
+    ----------------
+    **kwargs
+        All other keyword arguments are passed through to :class:`Kriging`.
 
     Notes
     -----

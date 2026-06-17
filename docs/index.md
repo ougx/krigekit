@@ -33,6 +33,7 @@ Gallery of runnable scripts — ordinary kriging, co-kriging, SGSIM, and more.
 | Ordinary and simple kriging | Point and block support |
 | Co-kriging | Multiple variables, Linear Model of Coregionalisation |
 | Universal kriging / KED | External drift variables |
+| Variogram analysis and fitting | Experimental clouds, directional averages, nested models, LMC fitting |
 | Score transforms | Normal-score / uniform quantile transforms for kriging and SGSIM |
 | Sequential Gaussian Simulation | Reproducible random paths, multi-realisation |
 | Space-time kriging | Sum-metric and product-sum ST covariance models |

@@ -86,7 +86,7 @@ source_suffix = {
     ".md":  "markdown",
 }
 
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "autoapi/pykriging"]
 
 # RST substitutions available in all pages, including autoapi-generated ones.
 rst_prolog = """

@@ -43,7 +43,7 @@ ax.cax.colorbar(im, label="Coarse Fraction")
 
 #%% 
 # Change Seed
-# -----
+# -----------
 #
 # Let's change seed number and see how different the results are.
 

@@ -48,6 +48,11 @@ from krigekit.kriging_indicator import (   # noqa: F401
     IndicatorKriging,
 )
 
+from krigekit.variogram import (   # noqa: F401
+    VariogramModel,
+    VariogramSystem,
+)
+
 from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("krigekit")
@@ -58,6 +63,8 @@ __all__ = [
     "Kriging",
     "SpaceTimeKriging",
     "IndicatorKriging",
+    "VariogramModel",
+    "VariogramSystem",
     # convenience functions
     "ordinary_kriging",
     "cokriging",

@@ -51,10 +51,10 @@ Variograms are set with ``set_vgm()`` using keyword arguments:
      - Azimuth of major axis, degrees clockwise from North
    * - ``dip``
      - ``0.0``
-     - Dip angle, degrees positive downward
+     - Dip angle of the major axis below horizontal, degrees positive downward
    * - ``plunge``
      - ``0.0``
-     - Plunge angle, degrees
+     - Rotation of the semi-axes about the major axis, degrees
    * - ``append``
      - ``True``
      - ``True`` appends a nested structure; ``False`` replaces the current model
@@ -333,6 +333,246 @@ trend:
    k.set_vgm(ivar=1, jvar=1, vtype="nug", nugget=0.1, sill=0.0,  a_major=1.0)
    k.set_vgm(ivar=1, jvar=1, vtype="cyc", nugget=0.0, sill=0.6,  a_major=1.0)   # period = 1 year
    k.set_vgm(ivar=1, jvar=1, vtype="exp", nugget=0.0, sill=0.3,  a_major=5.0)   # long-range decay
+
+Python-side model object
+------------------------
+
+For variogram analysis, fitting, and plotting, use
+``krigekit.variogram.VariogramModel`` to build the same structure list in
+Python before applying it to a ``Kriging`` object:
+
+.. code-block:: python
+
+   from krigekit import Kriging, VariogramModel
+
+   model = VariogramModel()
+   model.set_vgm(vtype="nug", nugget=0.05, sill=0.0, a_major=1.0)
+   model.set_vgm(vtype="sph", nugget=0.0, sill=0.45, a_major=500.0)
+   model.set_vgm(vtype="exp", nugget=0.0, sill=0.50, a_major=800.0)
+
+   gamma = model.variogram(h)
+   cov   = model.covariance(h)
+
+   k = Kriging()
+   k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
+   model.apply_to(k, ivar=1, jvar=1)
+
+``VariogramModel.set_vgm`` uses the same keyword names as
+``Kriging.set_vgm`` except that ``ivar`` and ``jvar`` are omitted.  Use
+``to_kriging_specs()`` if you want the list of dictionaries instead:
+
+.. code-block:: python
+
+   for spec in model.to_kriging_specs(replace=True):
+       k.set_vgm(ivar=1, jvar=1, **spec)
+
+Product structures are represented the same way.  A structure with
+``product=True`` is multiplied with the immediately preceding structure in
+covariance space:
+
+.. code-block:: python
+
+   model = VariogramModel()
+   model.set_vgm(vtype="exp", sill=1.0, a_major=5.0)
+   model.set_vgm(vtype="hol", sill=1.0, a_major=1.0, product=True)
+   # C(h) = C_exp(h; a=5) * C_hol(h; a=1)
+
+The fitting helper can use the same structure template.  Pass
+``return_model=True`` to receive a fitted ``VariogramModel``:
+
+.. code-block:: python
+
+   from krigekit.variogram import fit_vgm
+
+   p, pcov, fitted = fit_vgm(
+       avg_vgm_table,
+       models=(
+           {"vtype": "exp"},
+           {"vtype": "hol", "product": True},
+       ),
+       p0=(1.0, 5.0, 1.0, 1.0),  # sill/range for each structure
+       return_model=True,
+   )
+
+   fitted.apply_to(k, ivar=1, jvar=1)
+
+The object method is a shorter form when you already have a model template.
+It can fit an averaged variogram table directly:
+
+.. code-block:: python
+
+   model = VariogramModel()
+   model.set_vgm(vtype="sph", nugget=0.05, sill=0.95, a_major=500.0)
+
+   fitted, pcov = model.fit(avg_vgm_table)
+   fitted.apply_to(k, ivar=1, jvar=1)
+
+Or let the model compute the empirical and averaged variogram from stored
+observations:
+
+.. code-block:: python
+
+   model = VariogramModel()
+   model.set_obs(obs_coord, obs_value)
+   model.set_vgm(vtype="sph", nugget=0.05, sill=0.95, a_major=500.0)
+
+   fitted, pcov = model.fit(
+       raw_kwargs={"cutoff": 2000.0, "calc_angle": True, "verbose": False},
+       avg_kwargs={"h_width": 100.0},
+   )
+
+For weighted fitting, use ``weight_col`` or ``weights``.  Larger weights have
+more influence; for averaged variograms, the bin pair count is often a useful
+starting point:
+
+.. code-block:: python
+
+   fitted, pcov = model.fit(weight_col=("variogram", "count"))
+
+Alternatively, pass ``sigma_col`` for SciPy-style standard deviations.  Do not
+pass ``sigma_col`` and weights at the same time.
+
+After fitting, parameters can be adjusted manually without rebuilding the
+object.  ``set_params()`` uses the same flat convention as ``fit()``:
+
+.. code-block:: python
+
+   model.fit(inplace=True)
+   model.set_params([0.12, 5000.0, 0.02])  # sill, range, nugget
+   model.plot()
+
+For structure fields outside the flat fitting vector, such as anisotropy, use
+``set_structure_params()``:
+
+.. code-block:: python
+
+   model.set_structure_params(0, a_minor1=2500.0, azimuth=35.0)
+
+For a nested model where all structures share the same orientation and
+minor/major ratio, ``set_anisotropy()`` is shorter:
+
+.. code-block:: python
+
+   model.set_anisotropy(anis1=0.16, azimuth=90.0)
+
+If the orientation is known but the major and minor ranges should be fitted,
+average the empirical cloud along the fixed model axes and use
+``fit_anisotropy()``:
+
+.. code-block:: python
+
+   model.set_vgm(vtype="sph", sill=0.8, a_major=1000.0,
+                 a_minor1=300.0, azimuth=90.0)
+   model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
+   directional = model.calc_directional_average(
+       h_width=100.0,
+       cutoff=2500.0,
+       angle_tol=15.0,
+   )
+   model.fit_anisotropy(
+       directional,
+       p0=(0.8, 1000.0, 300.0, 0.05),
+       weight_col="count",
+       inplace=True,
+   )
+
+``fit()`` remains the ordinary one-dimensional lag fit with flat parameters
+``sill, a_major, ..., nugget``.  ``fit_anisotropy()`` keeps ``azimuth``,
+``dip`` and ``plunge`` fixed and fits ``sill, a_major, a_minor1`` for each
+structure, plus ``a_minor2`` for 3-D directional fits.
+
+The preferred verb-style names for new code are ``calc_experimental()`` and
+``calc_average()``:
+
+.. code-block:: python
+
+   raw = model.calc_experimental(cutoff=2000.0, verbose=False)
+   avg = model.calc_average(h_width=100.0)
+
+These calls cache workflow state on the model.  The raw cloud, averaged table,
+fitted parameter vector, and fitted covariance are available as ``_raw``,
+``_avg``, ``_params``, and ``_pcov``; sklearn-style aliases
+``raw_variogram_``, ``avg_variogram_``, ``params_``, and ``pcov_`` are also
+provided for user-facing access.
+
+``plot()`` draws the cached averaged variogram and the current model curve:
+
+.. code-block:: python
+
+   model.plot()
+
+``plot_map()`` draws the cached raw variogram cloud as a 2-D variogram map.
+By default it overlays the first structure's azimuth and anisotropy ellipse,
+which is useful for checking whether the chosen direction agrees with the
+experimental cloud before calling ``fit_anisotropy()``:
+
+.. code-block:: python
+
+   model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
+   model.plot_map(cutoff=2500.0)
+   model.plot_map(angle_aniso="estimate", cutoff=2500.0)
+
+``variogram(h)`` and ``covariance(h)`` evaluate a lag-distance curve.  To
+evaluate between coordinates with anisotropy applied, use
+``calc_variogram()`` or ``calc_covariance()``:
+
+.. code-block:: python
+
+   gamma = model.calc_variogram([0.0, 0.0], [500.0, 250.0])
+   covmat = model.calc_covariance(obs_coord, grid_coord, pairwise=True)
+
+Multivariable variogram systems
+-------------------------------
+
+Use ``VariogramSystem`` when a cokriging workflow needs observations and
+models for several variables.  The API mirrors the kriging object by carrying
+``ivar`` and ``jvar`` through ``set_obs()`` and ``set_vgm()``:
+
+.. code-block:: python
+
+   from krigekit import Kriging, VariogramSystem
+
+   system = VariogramSystem(nvar=2)
+   system.set_obs(ivar=1, coord=coord_v, value=value_v)
+   system.set_obs(ivar=2, coord=coord_u, value=value_u)
+
+   system.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=500.0)
+   system.set_vgm(ivar=2, jvar=2, vtype="sph", sill=0.6, a_major=500.0)
+   system.set_vgm(ivar=1, jvar=2, vtype="sph", sill=0.4, a_major=500.0)
+
+   system.calc_experimental(ivar=1, jvar=1, cutoff=2000.0, verbose=False)
+   system.calc_experimental(ivar=2, jvar=2, cutoff=2000.0, verbose=False)
+   system.calc_experimental(ivar=1, jvar=2, cutoff=2000.0, verbose=False)
+   system.calc_average(h_width=100.0)
+
+For cross pairs, ``calc_experimental(ivar, jvar)`` uses the traditional LMC
+cross-variogram estimator when the two variables are collocated:
+
+.. math::
+
+   \gamma_{ij}(h)
+   = \frac{1}{2}\operatorname{E}\left[
+       \left(Z_i(\mathbf{x}) - Z_i(\mathbf{x}+\mathbf{h})\right)
+       \left(Z_j(\mathbf{x}) - Z_j(\mathbf{x}+\mathbf{h})\right)
+     \right]
+
+If the variables are heterotopic, set ``cross="pseudo"`` explicitly to use the
+older pseudo cross-cloud based on all between-variable pairs.  Do not interpret
+that pseudo sill as an LMC cross-sill.
+
+``fit_pair()`` fits a single pair independently.  For cokriging, prefer
+``fit_lmc()`` because it fits all requested pairs together while enforcing a
+positive-semidefinite sill matrix for each nested structure:
+
+.. code-block:: python
+
+   fitted_system, result = system.fit_lmc(
+       fit_ranges=True,
+       fit_nugget=True,
+   )
+
+   k = Kriging(nvar=2)
+   fitted_system.apply_to(k)
 
 Product variogram (non-additive nesting)
 -----------------------------------------

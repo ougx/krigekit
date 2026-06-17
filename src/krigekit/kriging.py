@@ -678,9 +678,12 @@ class Kriging:
         self._nobs[ivar-1] = nobs
         self._nmax[ivar-1] = min(nobs, nmax) if nmax is not None else nobs + (self._nblock if self.nsim>0 else 0)
         # Cache the value range so set_nscore()/set_uscore() can default zmin/zmax.
+        # nobs == 0 is valid for unconditional simulation, so guard the reduction.
         if not hasattr(self, "_obs_value_range"):
             self._obs_value_range = {}
-        self._obs_value_range[ivar] = (float(value_f.min()), float(value_f.max()))
+        self._obs_value_range[ivar] = (
+            (float(value_f.min()), float(value_f.max())) if value_f.size else (0.0, 0.0)
+        )
 
     # ------------------------------------------------------------------
     def set_obs_drift(self, ivar: int, drift: np.ndarray):
@@ -2029,9 +2032,11 @@ class Kriging:
             ngroups_base + nvar when gradient data is present.
             ngroups_base = nvar (kriging) or 2*nvar (SGSIM).
             Group layout:
-              indices 0..nvar-1          — obs groups (variable 1..nvar)
-              indices nvar..2*nvar-1     — sim groups (SGSIM only)
-              indices ngroups_base..ngroups-1 — grad groups (present only when set_grad called)
+
+            * indices 0..nvar-1: observation groups (variable 1..nvar)
+            * indices nvar..2*nvar-1: simulation groups (SGSIM only)
+            * indices ngroups_base..ngroups-1: gradient groups
+              (present only when set_grad called)
 
         ``inear`` : ndarray, shape ``(nblock, ngroups, nmax)``, dtype int32
             1-based neighbour indices.  Entries beyond ``nnear[ib, ig]``
