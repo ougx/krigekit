@@ -52,6 +52,33 @@ estimate, variance = k.get_results()
 uniform-score space.  A perfectly uniform marginal has variance `1/12`, so that
 is a useful starting sill when the transformed variable is close to uniform.
 
+## Plotting positions
+
+krigekit uses midpoint plotting positions when it builds the empirical
+transform table.  For `n` sorted observations with no ties, the rank-`r`
+observation is assigned
+
+```{math}
+p_r = \frac{r - 0.5}{n}, \qquad r = 1,\ldots,n.
+```
+
+Some general-purpose quantile tools use endpoint plotting positions instead.
+For example, scikit-learn's `QuantileTransformer` maps the same rank to
+
+```{math}
+p_r = \frac{r - 1}{n - 1}.
+```
+
+The endpoint convention maps the sample minimum to `0` and the sample maximum
+to `1`.  The midpoint convention keeps all observed values inside `(0, 1)`,
+which avoids infinite normal scores because the inverse standard-normal CDF is
+unbounded at exactly `0` and `1`.
+
+This mainly affects the numerical scores near the lower and upper tails.  It
+does not change the basic workflow: fit the variogram in the chosen score
+space, and use the same krigekit transform table for forward transforms and
+back-transforms.
+
 ## Back-transform behavior
 
 For SGSIM, each simulated score realization is directly back-transformed

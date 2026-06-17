@@ -21,6 +21,8 @@ The variogram passed to set_vgm is the variogram of the normal scores
 import numpy as np
 import pytest
 from krigekit import Kriging
+from scipy.stats import norm
+from sklearn.preprocessing import QuantileTransformer
 
 # Normal-score variogram (unit sill); domain is [0, 100]^2.
 _VGM = dict(vtype="sph", nugget=0.0, sill=1.0, a_major=40.0)
@@ -37,6 +39,22 @@ def _skewed_data(n=60, seed=0):
 def _grid(nx=12, ny=12):
     gx, gy = np.meshgrid(np.linspace(0, 100, nx), np.linspace(0, 100, ny))
     return np.column_stack([gx.ravel(), gy.ravel()])
+
+
+def _sklearn_quantile_transform(value):
+    return QuantileTransformer(
+        n_quantiles=len(value),
+        output_distribution="uniform",
+        random_state=0,
+    ).fit(np.asarray(value, dtype=float).reshape(-1, 1))
+
+
+def _sklearn_to_midpoint_probability(sklearn_prob, n):
+    return ((n - 1) * sklearn_prob + 0.5) / n
+
+
+def _midpoint_to_sklearn_probability(midpoint_prob, n):
+    return np.clip((n * midpoint_prob - 0.5) / (n - 1), 0.0, 1.0)
 
 
 def _gh_backtransform_moments(k, mu, var):
@@ -108,6 +126,42 @@ class TestNscoreApi:
         assert isinstance(scalar_score, float)
         scalar_back = k.back_transform_score(scalar_score, ivar=1)
         assert scalar_back == pytest.approx(value[0])
+        del k
+
+    def test_value_score_api_matches_sklearn_quantile_transform(self):
+        coord, value = _skewed_data(n=30, seed=31)
+        query = np.quantile(value, [0.05, 0.2, 0.5, 0.8, 0.95])
+        qt = _sklearn_quantile_transform(value)
+        sklearn_prob = qt.transform(query.reshape(-1, 1)).ravel()
+        midpoint_prob = _sklearn_to_midpoint_probability(
+            sklearn_prob, len(value)
+        )
+        expected_score = norm.ppf(midpoint_prob)
+
+        k = Kriging(nsim=1)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_nscore(ivar=1)
+        score = k.transform_value_to_score(query, ivar=1)
+        np.testing.assert_allclose(score, expected_score, rtol=1e-6, atol=1e-6)
+        del k
+
+    def test_score_value_api_matches_sklearn_inverse_quantile_transform(self):
+        coord, value = _skewed_data(n=30, seed=32)
+        midpoint_prob = np.array([0.08, 0.2, 0.5, 0.8, 0.92])
+        score = norm.ppf(midpoint_prob)
+        qt = _sklearn_quantile_transform(value)
+        sklearn_prob = _midpoint_to_sklearn_probability(
+            midpoint_prob, len(value)
+        )
+        expected_value = qt.inverse_transform(
+            sklearn_prob.reshape(-1, 1)
+        ).ravel()
+
+        k = Kriging(nsim=1)
+        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_nscore(ivar=1)
+        back = k.transform_score_to_value(score, ivar=1)
+        np.testing.assert_allclose(back, expected_value, rtol=1e-6, atol=1e-6)
         del k
 
     def test_ivar_two_value_score_round_trip_api(self):
