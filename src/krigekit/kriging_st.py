@@ -807,7 +807,7 @@ class SpaceTimeKriging:
         azimuth : float
             Azimuth of the spatial major axis in degrees (default 0.0, clockwise from North).
         dip : float
-            Dip angle of the spatial major axis in degrees (default 0.0, positive downward).
+            Dip angle of the spatial major axis below horizontal, degrees positive downward (default 0.0).
         plunge : float
             Plunge angle of the spatial major axis in degrees (default 0.0).
         sector_search : bool

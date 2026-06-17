@@ -6,8 +6,8 @@
 !! Coordinate system:
 !!   - ang1: Azimuth angle (degrees clockwise from the positive Y axis)
 !!           specifying the horizontal orientation of the major continuity axis.
-!!   - ang2: Dip angle (degrees) of the major axis measured downward from
-!!           the horizontal plane.
+!!   - ang2: Dip angle (degrees) of the major axis measured below the
+!!           horizontal plane (positive down).
 !!   - ang3: Rotation angle (degrees) about the major axis.
 !!           Defines the orientation of the minor continuity axes within
 !!           the plane perpendicular to the major axis.
@@ -41,7 +41,7 @@ contains
 !! Angles are in degrees.
 !!
 !! @param ang1   Azimuth: (clockwise from North, Z-rotation)
-!! @param ang2   Dip: (positive up, X-rotation)
+!! @param ang2   Dip: (positive down, X-rotation)
 !! @param ang3   Plunge: rotation about principal axis (Y-rotation)
 !! @param anis1  First anisotropy ratio (X scaling)
 !! @param anis2  Second anisotropy ratio (Z scaling)
@@ -72,8 +72,11 @@ if (ABS(ang3)>EPSLON) then
 end if
 
 ! rotate about X axis
+! ang2 (dip) is positive DOWN: a positive dip tilts the major axis below
+! horizontal, so (azimuth, dip, plunge) are exactly scipy's extrinsic 'zxy'
+! Euler angles with no sign change on the Python side.
 if (ABS(ang2)>EPSLON) then
-    alpha = -ang2 * DEG2RAD
+    alpha = ang2 * DEG2RAD
     sina = sin(alpha)
     cosa = cos(alpha)
     tmp(:,1) = [1.0,  0.0 , 0.0 ]

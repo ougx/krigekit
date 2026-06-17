@@ -66,8 +66,8 @@ module variogram
   type :: vgm_aniso
     integer :: ndim  = 3
     real :: azimuth  = 0.0    ! clockwise from North in horizontal plane
-    real :: dip      = 0.0    ! downward tilt of the major axis (degrees)
-    real :: plunge   = 0.0    ! rotation of semi-axes around major axis
+    real :: dip      = 0.0    ! tilt of major axis below horizontal, positive down (deg)
+    real :: plunge   = 0.0    ! rotation of semi-axes about the major axis
     real :: a_major  = 1.0    ! range along major axis
     real :: a_minor1 = 1.0    ! range along first semi-axis
     real :: a_minor2 = 1.0    ! range along second semi-axis (3D)
@@ -176,10 +176,11 @@ contains
   !
   !   GSLIB convention:
   !     azimuth  : clockwise from +Y (North), in XY plane, degrees
-  !     dip      : downward rotation around the rotated X axis, degrees
-  !     plunge   : rotation around the Z axis after dip, degrees
+  !     dip      : tilt of the major axis below horizontal, positive down,
+  !                rotation about the rotated X axis, degrees
+  !     plunge   : rotation of the semi-axes about the major (Y) axis, degrees
   !
-  !   The rotation matrix is composed as R = Rz(plunge) * Rx(dip) * Rz(azimuth)
+  !   The rotation matrix is composed as R = Ry(plunge) * Rx(dip) * Rz(azimuth)
   !   and the full transform is mat = diag(1/a) * R so that:
   !     h_iso = || mat * lag ||
   subroutine build_aniso_mat(this)

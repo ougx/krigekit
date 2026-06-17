@@ -204,7 +204,10 @@ def ck(obsloc0, obsloc1, obsval0, obsval1, newloc,
     n1, n2, nnew = len(obsloc0), len(obsloc1), len(newloc)
     ntot = n1 + n2 + 1 + std_ck         # +1 for unbias
     def cov_anis(xa, xb, v):
-        rot0 = Rotation.from_euler('zxy', [v["azimuth"], -v["dip"], -v["plunge"]], degrees=True)
+        # (azimuth, dip, plunge) are exactly scipy's extrinsic 'zxy' Euler
+        # angles, matching the Fortran engine's calc_rotmat
+        # (Ry(plunge)*Rx(dip)*Rz(azimuth)) with dip positive down.
+        rot0 = Rotation.from_euler('zxy', [v["azimuth"], v["dip"], v["plunge"]], degrees=True)
         h = xa[:, None, :] - xb[None, :, :]
         hrot = rot0.apply(h.reshape(-1, 3)).reshape(h.shape)
         ranges = np.array([v["a_minor1"], v["a_major"], v["a_minor2"]])
@@ -363,7 +366,8 @@ class TestCoKrigingButte:
     @pytest.mark.parametrize("aniso2",  [0.1, 0.01])
     @pytest.mark.parametrize("azimuth", [0.0, 225])
     @pytest.mark.parametrize("dip"   ,  [0.0, 5.0])
-    def test_result_exact_aniso3d(self, pc2d_obs, aem2d_small, pc2d_grid, vtype, aniso1, aniso2, azimuth, dip):
+    @pytest.mark.parametrize("plunge",  [0.0, 30.0])
+    def test_result_exact_aniso3d(self, pc2d_obs, aem2d_small, pc2d_grid, vtype, aniso1, aniso2, azimuth, dip, plunge):
         obsloc0, obsval0 = pc2d_obs
         obsloc1, obsval1 = aem2d_small
         newloc, _ = pc2d_grid
@@ -373,7 +377,7 @@ class TestCoKrigingButte:
         obsloc1 = np.column_stack([obsloc1, rng.uniform(-dz, dz, len(obsloc1))])
         newloc  = np.column_stack([newloc, np.zeros(len(newloc))])
         vs = vgms(vtype=vtype, a_minor1=5000.0*aniso1, a_minor2=5000.0*aniso2,
-                  azimuth=azimuth, dip=dip)
+                  azimuth=azimuth, dip=dip, plunge=plunge)
         vgm_spec={
             (1,1): vs[0],
             (2,2): vs[1],

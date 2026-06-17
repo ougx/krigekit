@@ -1369,7 +1369,7 @@ class Kriging:
          azimuth : float
              Azimuth of the major axis (degrees, clockwise from North).
          dip : float
-             Dip angle (degrees, positive downward).
+             Dip angle of the major axis below horizontal (degrees, positive downward).
          plunge : float
              Plunge angle (degrees).
          sector_search : bool
