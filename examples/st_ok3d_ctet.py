@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Space-time kriging — CCl4 plume, Hanford Site
+Space-time kriging — CCl4 plume
 ================================================
 
-Groundwater contamination by carbon tetrachloride (CCl4) at the Hanford
-Site, Washington State.  The dataset covers 281 monitoring wells sampled
-at irregular intervals from 2008 to 2020, yielding 4 512 observations
-distributed across both space (~10 km domain) and time (~13 years).
+Groundwater contamination by carbon tetrachloride (CCl4) . The dataset
+covers 281 monitoring wells sampled at irregular intervals from 2008
+to 2020, yielding 4 512 observations distributed across both space
+(~10 km domain) and time (~13 years).
 
 This example walks through the first step of a space-time kriging workflow:
 computing and visualising the empirical **space-time variogram cloud**.
@@ -214,8 +214,8 @@ plt.show()
 #%%
 # Compute empirical variogram cloud
 # ----------------------------------
-# All ~10 million pairs are evaluated; distance cutoff is at 5500 
-# approximate plume downstream length. only wells with 6+ measurements 
+# All ~10 million pairs are evaluated; distance cutoff is at 5500
+# approximate plume downstream length. only wells with 6+ measurements
 # are used.
 #
 # The spatial lag is computed in 3-D (x, y, z) with z scaled by
@@ -262,7 +262,7 @@ ht_bin = (ht / HT_STEP).astype(int)
 
 # aggregate with pandas groupby
 pairs = pd.DataFrame({
-    "hs_bin": hs_bin, "ht_bin": ht_bin, 
+    "hs_bin": hs_bin, "ht_bin": ht_bin,
     "hs":hs ,"ht":ht, "gamma": gamma})
 vgm = (pairs.groupby(["hs_bin", "ht_bin"])["gamma"]
              .agg(gamma_mean="mean", n_pairs="count"))
@@ -303,9 +303,9 @@ print(vgm[["hs_m", "ht_yr", "gamma_mean", "n_pairs"]].head(12).to_string(index=F
 # Parameters are optimised by weighted least squares over all occupied
 # (h_s, h_t) bins, with weights proportional to pair count.
 
-# Why Gaussian: the CCl4 plume is a coherent, slowly-evolving body — 
-# concentration at a location is smoothly autocorrelated in time over years. 
-# Spherical/exponential decay too steeply near the origin and throw away that 
+# Why Gaussian: the CCl4 plume is a coherent, slowly-evolving body —
+# concentration at a location is smoothly autocorrelated in time over years.
+# Spherical/exponential decay too steeply near the origin and throw away that
 # multi-year temporal coherence; the Gaussian's flat-then-smooth shape matches
 # the physics, which is exactly why it predicts the held-out observations best.
 
@@ -338,7 +338,7 @@ def gt(ht, a_t):
 
 
 def gamma_ps(hs, ht, a, b, p, a_s, a_t):
-    return (a * gs(hs, a_s) + b * gt(ht, a_t) + 
+    return (a * gs(hs, a_s) + b * gt(ht, a_t) +
             p * gs(hs, a_s) *     gt(ht, a_t))
 
 
@@ -622,7 +622,7 @@ for ax, yr in zip(axes.ravel(), KRIGE_YEARS):
     ax.set_xlim(0, NCOL * CELLSIZE / 1000)
     ax.set_ylim(0, NROW * CELLSIZE / 1000)
     ax.set_zlim(float(botm.mean()), float(top.mean()))
-    ax.view_init(elev=63, azim=-161, roll=-22), 
+    ax.view_init(elev=63, azim=-161, roll=-22),
 
 legend_handles = [
     Patch(facecolor=c, alpha=0.8, label=lbl)

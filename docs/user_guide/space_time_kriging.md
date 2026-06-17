@@ -438,4 +438,4 @@ variogram or covariance model itself.
 - [Variogram models](../variogram_models.rst) — model types, nesting, anisotropy
 - [Ordinary kriging](ordinary_kriging.md) — base workflow shared with ST kriging
 - [API reference](../api/index.md) — `SpaceTimeKriging`, `spacetime_kriging`
-- Full worked example: `examples/st_ok3d_ctet.py` (CCl4 plume, Hanford Site)
+- Full worked example: `examples/st_ok3d_ctet.py` (CCl4 plume)
