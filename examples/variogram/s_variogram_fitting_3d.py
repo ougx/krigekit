@@ -62,9 +62,11 @@ sim.set_search(
 sim.solve()
 field = np.asarray(sim.get_results()[0])
 
-# Keep a random subset of nodes as irregular "samples" to estimate from.
-rng = np.random.default_rng(0)
-sample_idx = rng.choice(len(grid), size=1500, replace=False)
+# Keep a random subset of nodes as irregular "samples" to estimate from.  The
+# short minor2 range is data-hungry, so use enough samples to give the steep
+# short-axis direction comparable pair support.
+rng = np.random.default_rng(1)
+sample_idx = rng.choice(len(grid), size=3000, replace=False)
 sample_coord = grid[sample_idx]
 sample_value = field[sample_idx]
 
@@ -137,15 +139,27 @@ model.set_vgm(
     azimuth=TRUE["azimuth"], dip=TRUE["dip"], plunge=TRUE["plunge"],
 )
 
-model.calc_experimental(cutoff=28.0, calc_angle=True, verbose=False)
-dir_avg = model.calc_directional_average(h_bins=10, cutoff=28.0, angle_tol=25.0)
+model.calc_experimental(cutoff=36.0, calc_angle=True, verbose=False)
+dir_avg = model.calc_directional_average(
+    h_bins=18,
+    cutoff=36.0,
+    angle_tol=20.0,
+)
+
+# Pair counts can differ strongly by direction, especially for the steep,
+# shortest minor2 axis.  Normalize count weights within each axis so the fit
+# does not let the better-populated major/minor1 directions dominate minor2.
+dir_avg["axis_weight"] = (
+    dir_avg["count"] / dir_avg.groupby("axis", observed=True)["count"].transform("sum")
+)
 
 # The synthetic field has no nugget, so fit_nugget=False keeps the fit stable
 # (fitting a spurious nugget would otherwise trade sill for nugget).
 fitted, _ = model.fit_anisotropy(
+    dir_avg,
     include_minor2=True,
     fit_nugget=False,
-    weight_col="count",
+    weight_col="axis_weight",
     inplace=True,
     maxfev=50000,
 )
@@ -157,11 +171,31 @@ print(f"  a_major: {comp.a_major:5.1f}  (true {TRUE['a_major']:.1f})")
 print(f"  a_minor1:{comp.a_minor1:5.1f}  (true {TRUE['a_minor1']:.1f})")
 print(f"  a_minor2:{comp.a_minor2:5.1f}  (true {TRUE['a_minor2']:.1f})")
 
-# The sill, major, and horizontal-minor ranges are recovered well.  The
-# vertical minor2 range is the hardest to resolve: it is the shortest range,
-# and with a near-isotropic sampling grid there are relatively few close pairs
-# aligned with the steeply dipping minor2 axis.  Denser vertical sampling (as in
-# real drillhole data) constrains it much better.
+# The short minor2 range is the most data-hungry parameter.  The larger sample,
+# per-axis lag-bin widths from h_bins, and axis-balanced weights give it
+# comparable influence in the least-squares objective instead of letting the
+# better-populated directions dominate.
+
+# %%
+# Inspect the 3-D variogram map
+# -----------------------------
+# ``plot_map3d`` uses the cached raw cloud and draws a horizontal lag slice plus
+# a vertical fence aligned with the fitted model azimuth.  This is a quick visual
+# check that the selected model direction follows the low-variogram continuity.
+
+fig = plt.figure(figsize=(8.5, 7.0))
+ax = fig.add_subplot(111, projection="3d")
+model.plot_map3d(
+    ax=ax,
+    cutoff=36.0,
+    dx=2.0,
+    dy=2.0,
+    dz=2.0,
+    fill_nan=True,  # display-only nearest fill to avoid checkerboard gaps
+    # n_fences=3,
+    title="3-D variogram map with fitted anisotropy",
+)
+plt.show()
 
 # %%
 # Plot the directional variograms and the fitted model
@@ -183,7 +217,7 @@ for j, name in enumerate(names):
     sub = dir_avg.loc[dir_avg["axis"] == name]
     ax.plot(sub["lag"], sub["variogram"], "o", color=COLORS[name],
             alpha=0.6, label=f"{name} bins")
-    h = np.linspace(0.0, 28.0, 200)
+    h = np.linspace(0.0, 36.0, 200)
     coord0 = np.zeros((len(h), 3))
     coord1 = directions[j] * h[:, None]
     ax.plot(h, model.calc_variogram(coord0, coord1), color=COLORS[name], lw=2,

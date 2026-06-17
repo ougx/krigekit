@@ -481,6 +481,38 @@ average the empirical cloud along the fixed model axes and use
 ``dip`` and ``plunge`` fixed and fits ``sill, a_major, a_minor1`` for each
 structure, plus ``a_minor2`` for 3-D directional fits.
 
+For 3-D fits, the shortest axis (``a_minor2``) is usually the hardest
+parameter to estimate.  Prefer ``h_bins`` with ``h_width=None`` so
+``calc_directional_average()`` computes a separate effective bin width for
+each axis.  This gives the short axis narrower lag bins instead of forcing it
+to share a coarse major-axis bin width:
+
+.. code-block:: python
+
+   directional = model.calc_directional_average(
+       h_bins=18,
+       cutoff=36.0,
+       angle_tol=20.0,
+   )
+
+Raw pair-count weights can also let the major and ``minor1`` curves dominate
+the least-squares objective.  Normalize counts within each axis before fitting
+to give ``a_minor2`` comparable influence:
+
+.. code-block:: python
+
+   directional["axis_weight"] = (
+       directional["count"]
+       / directional.groupby("axis", observed=True)["count"].transform("sum")
+   )
+   model.fit_anisotropy(
+       directional,
+       include_minor2=True,
+       fit_nugget=False,
+       weight_col="axis_weight",
+       inplace=True,
+   )
+
 The preferred verb-style names for new code are ``calc_experimental()`` and
 ``calc_average()``:
 
@@ -511,6 +543,17 @@ experimental cloud before calling ``fit_anisotropy()``:
    model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
    model.plot_map(cutoff=2500.0)
    model.plot_map(angle_aniso="estimate", cutoff=2500.0)
+
+For 3-D clouds, ``plot_map3d()`` draws a horizontal lag slice and a vertical
+fence aligned with the model or estimated major azimuth.  The raw cloud must
+include lag angles:
+
+.. code-block:: python
+
+   model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
+   model.plot_map3d(cutoff=2500.0)
+   model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
+   model.plot_map3d(cutoff=2500.0, fill_nan=True)  # display-only in-range smoothing
 
 ``variogram(h)`` and ``covariance(h)`` evaluate a lag-distance curve.  To
 evaluate between coordinates with anisotropy applied, use

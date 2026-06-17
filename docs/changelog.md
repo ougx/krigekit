@@ -2,6 +2,55 @@
 
 ## 0.2.4 (unreleased)
 
+### New — `plot_map3d` / `plot_vgm_map3d` overhaul
+
+The 3D variogram fence map received several improvements:
+
+**World-axis-aligned fences (new default)**
+
+Fences are now aligned with the X/Y/Z world axes by default
+(`rotate_fences=False`):
+
+- **Fence A** — horizontal XY plane (shows azimuth anisotropy)
+- **Fence B** (`n_fences ≥ 2`, default) — vertical XZ (East–West) plane (shows dip)
+- **Fence C** (`n_fences ≥ 3`) — vertical YZ (North–South) plane
+
+This makes the anisotropy angles readable directly from the plot axes.
+Pass `rotate_fences=True` to restore the previous behaviour where fences
+are rotated to the fitted model's principal planes.
+
+**Anisotropy axis lines**
+
+When `rotate_fences=False` and model angles are available, a red line is
+drawn on each fence showing the major axis projected onto that fence plane:
+
+- XY fence → azimuth direction (horizontal)
+- XZ fence → East–West dip component
+- YZ fence → North–South dip component (when `n_fences=3`)
+
+The legend label reads `major (az=…°, dip=…°)` and includes plunge when
+`n_fences=3`.  Lines lie IN their fence plane — they do not float in 3D
+space — making the angles unambiguous to read.
+
+**Z-order fix**
+
+Previously, three separate `plot_surface` calls were used — one per fence.
+Matplotlib's painter algorithm sorted depth per-collection, so one fence
+would always render on top of another regardless of viewing angle.  All
+fence polygons are now merged into a single `Poly3DCollection` so
+depth-sorting applies across all three fences together.
+
+**Rendering gap fix**
+
+Adjacent polygons in a `Poly3DCollection` left consistent sub-pixel gaps
+due to independent rasterization.  Fixed by drawing polygon edges in the
+same colour as their face (`edgecolors=face_color, linewidths=0.3`).
+
+**`fill_nan=False` parameter**
+
+Optional nearest-neighbour fill of empty lag bins before rendering.
+Off by default; useful when data are sparse and bins are patchy.
+
 ### Changed - Score transforms support kriging
 
 `set_nscore` and `set_uscore` now work for ordinary/simple kriging

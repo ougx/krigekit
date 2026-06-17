@@ -5,12 +5,14 @@ import matplotlib.pyplot as plt
 from krigekit import Kriging
 from krigekit.variogram import (
     _great_circle_dist,
+    _fill_nan_nearest,
     VariogramModel,
     VariogramSystem,
     avg_vgm,
     calc_cov,
     calc_vgm,
     cross_vgm,
+    directional_vgm,
     fit_vgm,
     filter_vgm,
     raw_vgm,
@@ -418,6 +420,94 @@ def test_variogram_model_plot_map_uses_cached_raw_and_model_angle():
     plt.close(fig)
 
 
+def test_variogram_model_plot_map3d_uses_cached_raw_and_model_angle():
+    rows = []
+    for dx in (-20.0, -10.0, 0.0, 10.0, 20.0):
+        for dy in (-20.0, -10.0, 0.0, 10.0, 20.0):
+            for dz in (-10.0, 0.0, 10.0):
+                if dx == 0.0 and dy == 0.0 and dz == 0.0:
+                    continue
+                distance = float(np.sqrt(dx ** 2 + dy ** 2 + dz ** 2))
+                if distance > 30.0:
+                    continue
+                rows.append({
+                    "d0": dx,
+                    "d1": dy,
+                    "d2": dz,
+                    "distance": distance,
+                    "angle_h": (90.0 - np.degrees(np.arctan2(dy, dx))) % 360.0,
+                    "variogram": distance / 30.0,
+                })
+
+    model = VariogramModel()
+    model.set_vgm(
+        vtype="sph",
+        sill=1.0,
+        a_major=40.0,
+        a_minor1=20.0,
+        a_minor2=10.0,
+        azimuth=90.0,
+        dip=15.0,
+    )
+    model.raw_variogram_ = pd.DataFrame(rows)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    out = model.plot_map3d(
+        dx=10.0,
+        dy=10.0,
+        dz=10.0,
+        cutoff=30.0,
+        ax=ax,
+        show_cbar=False,
+        rotate_fences=True,
+    )
+
+    assert out is ax
+    assert ax.get_xlabel() == "X lag"
+    assert "90.0" in ax.get_title()
+    assert "15.0" in ax.get_title()
+    plt.close(fig)
+
+
+def test_variogram_model_plot_map3d_no_angle_h_required():
+    """plot_map3d no longer requires angle_h; it uses direct projection."""
+    model = VariogramModel()
+    model.set_vgm(vtype="sph", sill=1.0, a_major=20.0, azimuth=0.0, dip=0.0)
+    # Cloud without angle_h column — must not raise
+    model.raw_variogram_ = pd.DataFrame({
+        "d0": [5.0, 10.0, 0.0, 0.0, 0.0, 0.0],
+        "d1": [0.0, 0.0, 5.0, 10.0, 0.0, 0.0],
+        "d2": [0.0, 0.0, 0.0, 0.0, 5.0, 10.0],
+        "distance": [5.0, 10.0, 5.0, 10.0, 5.0, 10.0],
+        "variogram": [0.3, 0.7, 0.3, 0.7, 0.3, 0.7],
+    })
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    out = model.plot_map3d(ax=ax, dx=5.0, dz=5.0, show_cbar=False)
+    assert out is ax
+    plt.close(fig)
+
+
+def test_plot_map3d_fill_nan_respects_support_mask():
+    vv = np.array([
+        [1.0, np.nan, np.nan],
+        [np.nan, np.nan, np.nan],
+    ])
+    support = np.array([
+        [True, True, False],
+        [False, True, False],
+    ])
+
+    filled = _fill_nan_nearest(vv, support_mask=support)
+
+    assert np.isfinite(filled[0, 1])
+    assert np.isfinite(filled[1, 1])
+    assert np.isnan(filled[0, 2])
+    assert np.isnan(filled[1, 0])
+    assert np.isnan(filled[1, 2])
+
+
 def test_variogram_system_calculates_direct_and_lmc_cross_clouds():
     coord = np.array([[0.0], [1.0], [2.0]])
     value1 = np.array([0.0, 1.0, 3.0])
@@ -595,3 +685,40 @@ def test_cross_vgm_accepts_1d_coordinates():
 
     assert len(cloud) == 4
     assert set(["index0", "index1", "distance", "variogram", "d0"]).issubset(cloud.columns)
+
+
+def test_directional_vgm_per_axis_bin_width():
+    """Each direction should receive h_bins bins regardless of axis length.
+
+    With a global h_width the short (Y) axis would get only ~1 bin while the
+    long (X) axis fills h_bins; per-axis width gives equal resolution on both.
+    """
+    # Major axis along X, range 100.  Minor axis along Y, range 10.
+    # Construct axis-aligned pairs: 50 along X (lag 2..100), 50 along Y (lag 0.2..10).
+    n = 50
+    h_bins = 5
+    raw = pd.DataFrame({
+        "d0": np.concatenate([np.linspace(2.0, 100.0, n), np.zeros(n)]),
+        "d1": np.concatenate([np.zeros(n), np.linspace(0.2, 10.0, n)]),
+        "distance": np.concatenate([np.linspace(2.0, 100.0, n),
+                                     np.linspace(0.2, 10.0, n)]),
+        "variogram": np.ones(2 * n) * 0.5,
+    })
+    directions = np.array([[1.0, 0.0], [0.0, 1.0]])  # X, Y
+
+    avg = directional_vgm(raw, directions, h_bins=h_bins, angle_tol=5.0)
+
+    # Each direction should fill ~h_bins bins (±1 for boundary pairs).
+    for j, name in enumerate(["X", "Y"]):
+        sub = avg[avg["direction"] == j]
+        assert h_bins <= len(sub) <= h_bins + 1, (
+            f"{name} axis: expected ~{h_bins} bins, got {len(sub)}.  "
+            "Per-axis h_width not applied."
+        )
+
+    # The lag column must reflect the projected (short) axis range, not the long one.
+    minor_max_lag = avg.loc[avg["direction"] == 1, "lag"].max()
+    assert minor_max_lag < 15.0, (
+        f"Minor-axis max lag {minor_max_lag:.1f} should be ~10, not the major-axis range. "
+        "Check that hh uses projected lag."
+    )

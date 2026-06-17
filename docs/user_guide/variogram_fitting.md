@@ -181,6 +181,52 @@ model.fit_anisotropy(
 structure it fits `sill`, `a_major`, and `a_minor1`; in 3-D it can also fit
 `a_minor2` when requested.
 
+### Fitting the short 3-D axis
+
+The shortest 3-D range, usually `a_minor2`, is often the least stable fitted
+parameter.  It needs close-lag pairs aligned with a narrow direction, and those
+pairs can be sparse even when the total number of observation pairs is large.
+
+Two settings help:
+
+- Prefer `h_bins` over a single fixed `h_width` for 3-D directional fitting.
+  When `h_width=None`, `calc_directional_average()` computes a separate
+  effective bin width for each axis as `max_projected_lag / h_bins`.  The short
+  `minor2` axis therefore gets narrower lag bins than the major axis, instead
+  of being represented by only a few coarse bins.
+- Balance fitting weights by axis.  Raw pair-count weights can let the
+  better-populated major and `minor1` directions dominate the least-squares
+  objective.  Normalize counts within each axis so each directional curve has
+  comparable influence.
+
+```python
+model.calc_experimental(cutoff=36.0, calc_angle=True, verbose=False)
+
+directional = model.calc_directional_average(
+    h_bins=18,        # per-axis effective h_width
+    cutoff=36.0,      # long enough to see the major range
+    angle_tol=20.0,   # tighter directions reduce cross-axis mixing
+)
+
+directional["axis_weight"] = (
+    directional["count"]
+    / directional.groupby("axis", observed=True)["count"].transform("sum")
+)
+
+model.fit_anisotropy(
+    directional,
+    include_minor2=True,
+    fit_nugget=False,
+    weight_col="axis_weight",
+    inplace=True,
+)
+```
+
+The 3-D gallery example uses this pattern.  In that synthetic case the fit
+improves from an overestimated short range to approximately
+`a_major = 29.7`, `a_minor1 = 11.6`, and `a_minor2 = 8.4` for a true model of
+`30`, `12`, and `8`.
+
 ## Variogram map
 
 For two-dimensional data, `plot_map()` displays the raw variogram cloud in lag
@@ -196,6 +242,52 @@ model.plot_map(angle_aniso="estimate", cutoff=2500.0)
 `angle_aniso="estimate"` overlays an automatically estimated orientation.
 Use that as an exploratory aid, then set an explicit `azimuth` before fitting
 the production model.
+
+For three-dimensional data, use `plot_map3d()`.  It draws up to three
+orthogonal fence sections through the lag-space origin, coloured by the
+average semivariogram value in each lag bin.
+
+By default (`rotate_fences=False`) the fences align with the world X/Y/Z
+axes so that anisotropy angles can be read directly off the axes:
+
+- **Fence A** (always) — horizontal XY plane; shows the azimuth pattern.
+- **Fence B** (`n_fences ≥ 2`, default) — vertical XZ (East–West) section;
+  shows the dip.
+- **Fence C** (`n_fences ≥ 3`) — vertical YZ (North–South) section.
+
+When model angles are supplied, a red line is drawn on each fence showing
+the projected major axis — azimuth direction on the XY fence, dip
+component on the vertical fences — so the fitted orientation can be
+compared against the empirical map.
+
+```python
+model.calc_experimental(cutoff=3000.0, verbose=False)
+
+# Two world-axis fences (default) with model-angle overlay.
+model.plot_map3d(cutoff=2500.0)
+
+# Estimate the orientation from the cloud if no model is fitted yet.
+model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
+
+# Three fences (adds North–South vertical section and plunge to label).
+model.plot_map3d(cutoff=2500.0, n_fences=3)
+
+# Rotate fences to the model's principal planes instead.
+model.plot_map3d(cutoff=2500.0, rotate_fences=True)
+
+# For sparse 3-D clouds, fill empty in-range display bins from nearest occupied bins.
+model.plot_map3d(cutoff=2500.0, fill_nan=True)
+```
+
+All fence polygons are rendered in a single `Poly3DCollection`, so
+depth-sorting is correct when rotating the interactive plot.
+By default, empty bins are left empty so the plot shows sampling support.
+`fill_nan=True` is a display-only nearest-neighbour fill for smoother example
+figures; it is constrained to the cutoff or maximum lag radius and does not
+change the raw or averaged variogram data.
+
+Pass `fill_nan=True` when data are sparse and the fence has many empty
+lag bins.
 
 ## Multivariable systems
 
