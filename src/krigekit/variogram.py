@@ -1952,6 +1952,89 @@ class VariogramSystem:
         nugget, mats = self._initial_lmc_matrices(template, include_nugget)
         return (nugget, mats) if include_nugget else mats
 
+    def set_markov_cross(self, primary, secondary, corr=None,
+                         structure="secondary", cross_nugget=0.0):
+        """Build the ``(primary, secondary)`` cross variogram by the Markov
+        Model 1 (MM1) collocated-cokriging assumption.
+
+        For a sparsely sampled primary and a densely sampled secondary the
+        cross-covariance cannot be fit from the primary's (often
+        nugget-dominated) structure -- a joint :meth:`fit_lmc` would drive it to
+        zero.  MM1 instead transfers it through the collocated correlation: the
+        cross adopts the nested structure of one variable
+        (``structure="secondary"`` by default -- the dense covariate that
+        carries the spatial continuity), and each cross partial sill is
+
+        .. math::  b_{ps}^{(k)} = \\rho \\, \\sqrt{b_{pp}^{(k)} \\, b_{ss}^{(k)}}
+
+        which is positive-semidefinite per structure for ``|rho| <= 1``, so the
+        coregionalization is valid by construction (no clamping needed).  This
+        is the appropriate model for sparse-hard + dense-soft cokriging
+        (Almeida & Journel, 1994; Goovaerts, 1997).  Markov Model 2 is not yet
+        implemented.
+
+        Parameters
+        ----------
+        primary, secondary : int
+            1-based indices; both auto-models must already be set via
+            :meth:`set_vgm` and share the same nested-structure count.
+        corr : float, optional
+            Collocated cross-correlation in ``[-1, 1]``.  If ``None`` it is
+            estimated from the collocated observations of the two variables
+            (which must share coordinates; otherwise pass ``corr`` explicitly).
+        structure : {"secondary", "primary"}
+            Which variable's structure shapes/ranges the cross adopts.
+        cross_nugget : float
+            Cross nugget partial sill (default 0).
+        """
+        if structure not in ("secondary", "primary"):
+            raise ValueError("structure must be 'secondary' or 'primary'")
+        pi = self._check_ivar(primary)
+        si = self._check_ivar(secondary)
+        if pi == si:
+            raise ValueError("primary and secondary must be different variables")
+        model_p = self._get_model(pi, pi, create=False)
+        model_s = self._get_model(si, si, create=False)
+        s_p = [comp.sill for comp in model_p.structures]
+        s_s = [comp.sill for comp in model_s.structures]
+        if not s_p or not s_s:
+            raise RuntimeError("set auto-models for both variables before set_markov_cross()")
+        if len(s_p) != len(s_s):
+            raise ValueError(
+                "primary and secondary auto-models must share the same number of "
+                f"nested structures (got {len(s_p)} and {len(s_s)})")
+
+        if corr is None:
+            obs_p = self._require_obs(pi)
+            obs_s = self._require_obs(si)
+            if not self._same_obs_grid(obs_p, obs_s):
+                raise ValueError(
+                    "cannot estimate corr: the two variables are not collocated; "
+                    "pass corr= explicitly")
+            corr = float(np.corrcoef(obs_p["value"], obs_s["value"])[0, 1])
+        corr = float(np.clip(corr, -1.0, 1.0))
+
+        base = model_s if structure == "secondary" else model_p
+        cross = VariogramModel()
+        for k, comp in enumerate(base.structures):
+            cross.set_vgm(
+                vtype=comp.vtype,
+                nugget=cross_nugget if k == 0 else 0.0,
+                sill=corr * float(np.sqrt(s_p[k] * s_s[k])),
+                a_major=comp.a_major,
+                a_minor1=comp.a_minor1,
+                a_minor2=comp.a_minor2,
+                azimuth=comp.azimuth,
+                dip=comp.dip,
+                plunge=comp.plunge,
+                product=comp.product,
+                append=k > 0,
+            )
+        self.models[self._pair_key(pi, si)] = cross
+        self.markov_corr_ = getattr(self, "markov_corr_", {})
+        self.markov_corr_[self._pair_key(pi, si)] = corr
+        return self
+
     def apply_to(self, kriging, replace=True, pairs=None):
         """Apply all pair models to a :class:`krigekit.Kriging` object."""
         pairs = sorted(self.models) if pairs is None else [self._pair_key(*p) for p in pairs]

@@ -2,6 +2,19 @@
 
 ## 0.2.5 (unreleased)
 
+### New — `VariogramSystem.set_markov_cross`
+
+Builds an indicator/covariate cross-variogram by the **Markov Model 1 (MM1)**
+collocated-cokriging assumption: the cross adopts the secondary variable's
+structure scaled by the collocated correlation,
+`b_ps = rho * sqrt(b_pp * b_ss)`, which is positive semidefinite by
+construction. This complements `fit_lmc()` — use `fit_lmc()` for co-sampled
+multivariate data, and `set_markov_cross()` for a sparse primary (e.g. well
+logs) cokriged with a dense secondary covariate (e.g. AEM), where a joint LMC
+fit would collapse the cross-covariance. `corr=None` estimates the correlation
+from collocated observations. See the *Multivariable systems* section of the
+variogram-fitting guide.
+
 ## 0.2.4
 
 ### New — `plot_map3d` / `plot_vgm_map3d` overhaul

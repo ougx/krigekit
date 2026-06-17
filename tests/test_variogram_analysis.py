@@ -578,6 +578,122 @@ def test_variogram_system_fit_lmc_returns_psd_coregionalization_matrix():
     )
 
 
+def test_fit_lmc_enforces_psd_under_invalid_cross():
+    """Even when the experimental cross-variogram is too strong for a valid LMC
+    (|b12| > sqrt(b11*b22), as happens with a strongly correlated indicator +
+    covariate), fit_lmc must return a positive-semidefinite coregionalization —
+    the L@L.T parameterization clamps the cross-sill to a valid value."""
+    h = np.linspace(0.2, 8.0, 40)
+    rng = 5.0
+    b11, b22, b12_bad = 1.0, 0.25, 0.8     # sqrt(b11*b22)=0.5 < 0.8 -> invalid
+
+    # the naive (independent per-pair) matrix is indefinite
+    naive = np.array([[b11, b12_bad], [b12_bad, b22]])
+    assert np.min(np.linalg.eigvalsh(naive)) < 0.0
+
+    system = VariogramSystem(nvar=2)
+    system.set_vgm(1, 1, vtype="sph", sill=b11, a_major=rng)
+    system.set_vgm(2, 2, vtype="sph", sill=b22, a_major=rng)
+    system.set_vgm(1, 2, vtype="sph", sill=0.3, a_major=rng)
+    for pair, sill in [((1, 1), b11), ((2, 2), b22), ((1, 2), b12_bad)]:
+        system.set_avg_vgm(*pair, pd.DataFrame({
+            ("distance", "mean"): h,
+            ("variogram", "mean"): calc_vgm("sph", h, psill=sill, rng=rng),
+            ("variogram", "count"): np.ones_like(h),
+        }))
+
+    fitted, result = system.fit_lmc(fit_nugget=False,
+                                    weight_col=("variogram", "count"))
+    B = fitted.get_lmc_matrices(include_nugget=False)[0]
+
+    assert result.success
+    assert np.min(np.linalg.eigvalsh(B)) >= -1e-8          # valid (PSD)
+    assert abs(B[0, 1]) <= np.sqrt(B[0, 0] * B[1, 1]) + 1e-6  # Cauchy-Schwarz holds
+    assert abs(B[0, 1]) < b12_bad                           # cross was pulled down
+
+
+def test_fit_lmc_three_variable_nested_recovers_and_is_psd():
+    """3 variables, 2 nested structures: recover both PSD sill matrices."""
+    h = np.linspace(0.2, 12.0, 50)
+    a0, a1 = 4.0, 20.0
+    B0 = np.array([[1.0, 0.5, 0.3], [0.5, 0.9, 0.2], [0.3, 0.2, 0.7]])
+    B1 = np.array([[0.5, 0.1, -0.1], [0.1, 0.4, 0.15], [-0.1, 0.15, 0.3]])
+    assert np.min(np.linalg.eigvalsh(B0)) >= 0 and np.min(np.linalg.eigvalsh(B1)) >= 0
+
+    system = VariogramSystem(nvar=3)
+    for i in range(1, 4):
+        for j in range(i, 4):
+            system.set_vgm(i, j, vtype="sph", sill=0.5, a_major=a0)
+            system.set_vgm(i, j, vtype="exp", sill=0.2, a_major=a1, append=True)
+            curve = (calc_vgm("sph", h, psill=B0[i - 1, j - 1], rng=a0)
+                     + calc_vgm("exp", h, psill=B1[i - 1, j - 1], rng=a1))
+            system.set_avg_vgm(i, j, pd.DataFrame({
+                ("distance", "mean"): h,
+                ("variogram", "mean"): curve,
+                ("variogram", "count"): np.ones_like(h),
+            }))
+
+    fitted, result = system.fit_lmc(fit_nugget=False, fit_ranges=False,
+                                    weight_col=("variogram", "count"))
+    mats = fitted.get_lmc_matrices(include_nugget=False)
+
+    assert result.success
+    np.testing.assert_allclose(mats[0], B0, rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(mats[1], B1, rtol=1e-4, atol=1e-4)
+    for B in mats:
+        assert np.min(np.linalg.eigvalsh(B)) >= -1e-8
+
+
+def test_set_markov_cross_formula_and_psd():
+    """MM1 cross-sill is rho*sqrt(s_p*s_s) and the coregionalization is PSD."""
+    s_p, s_s, rho = 0.25, 0.05, 0.9
+    system = VariogramSystem(nvar=2)
+    system.set_vgm(1, 1, vtype="exp", sill=s_p, a_major=6500.0)
+    system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
+    system.set_markov_cross(1, 2, corr=rho)
+
+    cross = system.models[(1, 2)].structures[0].sill
+    np.testing.assert_allclose(cross, rho * np.sqrt(s_p * s_s), rtol=1e-12)
+    B = np.array([[s_p, cross], [cross, s_s]])
+    assert np.min(np.linalg.eigvalsh(B)) >= -1e-12          # valid (PSD)
+    # cross adopts the secondary's range
+    assert system.models[(1, 2)].structures[0].a_major == 6500.0
+
+
+def test_set_markov_cross_estimates_corr_from_collocated_obs():
+    """With corr=None the collocated correlation is estimated from the data."""
+    rng = np.random.default_rng(0)
+    coord = rng.uniform(0.0, 100.0, size=(200, 2))
+    a = rng.normal(size=200)
+    b = 0.7 * a + 0.3 * rng.normal(size=200)          # correlated secondary
+    rho = float(np.corrcoef(a, b)[0, 1])
+
+    system = VariogramSystem(nvar=2)
+    system.set_obs(1, coord, a)
+    system.set_obs(2, coord, b)
+    system.set_vgm(1, 1, vtype="exp", sill=float(np.var(a)), a_major=30.0)
+    system.set_vgm(2, 2, vtype="exp", sill=float(np.var(b)), a_major=30.0)
+    system.set_markov_cross(1, 2)                      # corr estimated
+
+    np.testing.assert_allclose(system.markov_corr_[(1, 2)], rho, rtol=1e-10)
+    expected = rho * np.sqrt(np.var(a) * np.var(b))
+    np.testing.assert_allclose(system.models[(1, 2)].structures[0].sill,
+                               expected, rtol=1e-10)
+
+
+def test_set_markov_cross_stays_valid_where_strong_correlation():
+    """Even at strong correlation the cross stays inside the PSD bound, unlike
+    feeding a raw covariance computed against a mismatched variance."""
+    s_p, s_s = 0.25, 0.05
+    system = VariogramSystem(nvar=2)
+    system.set_vgm(1, 1, vtype="exp", sill=s_p, a_major=6500.0)
+    system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
+    system.set_markov_cross(1, 2, corr=0.95)
+
+    cross = system.models[(1, 2)].structures[0].sill
+    assert abs(cross) <= np.sqrt(s_p * s_s) + 1e-12      # never exceeds the bound
+
+
 def test_great_circle_distance_handles_antipodal_points():
     dist = _great_circle_dist(
         np.array([[0.0, 0.0]]),

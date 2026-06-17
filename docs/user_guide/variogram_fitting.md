@@ -318,6 +318,48 @@ fitted_system.apply_to(k)
 because it fits the requested pairs together while enforcing positive
 semidefinite sill matrices for each nested structure.
 
+### Markov-model cross-variograms (sparse primary + dense secondary)
+
+`fit_lmc()` fits the cross-variogram from data, which is correct when both
+variables are well sampled.  But when a **sparse primary** (e.g. categorical
+well logs) is cokriged with a **dense secondary** covariate (e.g. an airborne
+geophysical survey), the primary usually has little structured variance, so a
+valid (positive-semidefinite) LMC drives the cross-covariance toward zero and
+the covariate can no longer inform the primary.
+
+For that case use `set_markov_cross()`, which builds the cross by the **Markov
+Model 1** assumption: the cross adopts the secondary's structure, scaled by the
+collocated correlation,
+
+```{math}
+b_{ps}^{(k)} = \rho \, \sqrt{b_{pp}^{(k)} \, b_{ss}^{(k)}}
+```
+
+which is positive semidefinite by construction for ``|rho| <= 1`` — no clamping
+needed.
+
+```python
+system = VariogramSystem(nvar=2)
+system.set_obs(ivar=1, coord=well_xy, value=indicator)   # sparse primary
+system.set_obs(ivar=2, coord=aem_xy,  value=covariate)   # dense secondary
+
+system.set_vgm(ivar=1, jvar=1, vtype="exp", nugget=0.05, sill=0.20, a_major=6500.0)
+system.set_vgm(ivar=2, jvar=2, vtype="exp", nugget=0.02, sill=0.05, a_major=6500.0)
+
+# cross from the collocated correlation (the cross adopts variable 2's structure)
+system.set_markov_cross(primary=1, secondary=2, corr=0.8)
+system.apply_to(k)
+```
+
+Pass `corr=None` to estimate the correlation from collocated observations (the
+two variables must then share coordinates); otherwise compute it from the
+collocated subset and pass it explicitly.  Markov Model 2 is not yet
+implemented.
+
+In short: use `fit_lmc()` for co-sampled multivariate data, and
+`set_markov_cross()` for sparse-primary / dense-secondary collocated cokriging
+(Almeida & Journel, 1994; Goovaerts, 1997).
+
 ## Example gallery
 
 See the gallery example
