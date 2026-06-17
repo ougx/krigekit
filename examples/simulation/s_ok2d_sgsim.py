@@ -10,8 +10,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 
-data = pd.read_csv("../test_data/pc2d.csv") 
-grid = pd.read_csv("../test_data/grid2d.csv")
+data = pd.read_csv("../../test_data/pc2d.csv") 
+grid = pd.read_csv("../../test_data/grid2d.csv")
 
 # nsim is the number of realizations
 k = Kriging(nsim=3, bounds=[0,1]) 

@@ -38,9 +38,9 @@ def _find_data_dir():
     """Locate test_data when run as a script or through Sphinx-Gallery."""
     candidates = []
     if "__file__" in globals():
-        candidates.append(Path(__file__).resolve().parents[1] / "test_data")
+        candidates.append(Path(__file__).resolve().parents[2] / "test_data")
     cwd = Path.cwd().resolve()
-    candidates.extend([cwd / "test_data", cwd.parent / "test_data"])
+    candidates.extend([cwd / "test_data", cwd.parent / "test_data", cwd.parent.parent / "test_data"])
     for candidate in candidates:
         if candidate.exists():
             return candidate

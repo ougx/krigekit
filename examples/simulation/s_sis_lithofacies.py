@@ -99,7 +99,7 @@ CAT_COLORS = {"C": "#8B5E3C", "Cl": "#4682B4", "FS": "#DAA520", "G": "#696969"}
 # Load observations and build shared objects used across all sections
 # ---------------------------------------------------------------------------
 
-df         = pd.read_csv("../test_data/lithofacies.csv")
+df         = pd.read_csv("../../test_data/lithofacies.csv")
 obs_coord  = df[[X_COL, Y_COL]].values.astype(float)
 obs_cats   = df[CAT_COL].values
 cat_labels = sorted(df[CAT_COL].unique().tolist())   # ['C', 'Cl', 'FS', 'G']
@@ -111,7 +111,7 @@ props      = np.array([df[CAT_COL].eq(c).mean() for c in cat_labels])
 auto_sills = props * (1.0 - props)
 
 # Outcrop image dimensions needed for grid and axis extents
-img    = plt.imread("../test_data/lithofacies.png")
+img    = plt.imread("../../test_data/lithofacies.png")
 img_h, img_w = img.shape[:2]
 
 # Simulation grid

@@ -93,7 +93,7 @@ GRAIN_SD   = 0.3
 # Load observations, build grid, generate covariate
 # ---------------------------------------------------------------------------
 
-df         = pd.read_csv("../test_data/lithofacies.csv")
+df         = pd.read_csv("../../test_data/lithofacies.csv")
 obs_coord  = df[[X_COL, Y_COL]].values.astype(float)
 obs_cats   = df[CAT_COL].values
 cat_labels = sorted(df[CAT_COL].unique().tolist())   # ['C', 'Cl', 'FS', 'G']
@@ -115,7 +115,7 @@ indicators = [(obs_cats == c).astype(float) for c in cat_labels]
 cross_cov  = np.array([np.cov(ind, y)[0, 1] for ind in indicators])
 
 # Image, grid, shared colourmap
-img    = plt.imread("../test_data/lithofacies.png")
+img    = plt.imread("../../test_data/lithofacies.png")
 img_h, img_w = img.shape[:2]
 gx, gy     = np.meshgrid(np.linspace(0, img_w, NX),
                           np.linspace(0, img_h, NY))

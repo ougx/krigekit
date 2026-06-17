@@ -38,7 +38,7 @@ from krigekit import Kriging
 # ---------------------------------------------------------------------------
 # Load data (Isaaks & Srivastava 1989 case study setup)
 # ---------------------------------------------------------------------------
-df      = pd.read_csv("../test_data/walker.csv")
+df      = pd.read_csv("../../test_data/walker.csv")
 mask_u  = df["U"] != -999
 
 coord_v = df[["X", "Y"]].values.astype(float)              # V: all 470 obs

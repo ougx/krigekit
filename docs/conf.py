@@ -116,6 +116,8 @@ napoleon_google_docstring  = False
 napoleon_use_rtype         = False
 napoleon_use_param         = True
 
+from sphinx_gallery.sorting import ExplicitOrder
+
 _lib_so = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "../src/krigekit/libkriging.so")
 _lib_dll = _lib_so.replace("libkriging.so", "kriging.dll")
@@ -125,6 +127,13 @@ sphinx_gallery_conf = {
     "examples_dirs": "../examples",
     "gallery_dirs": "auto_examples",
     "filename_pattern": r".*\.py",
+    # Fix the section order: variogram → kriging → simulation → space_time
+    "subsection_order": ExplicitOrder([
+        "../examples/variogram",
+        "../examples/kriging",
+        "../examples/simulation",
+        "../examples/space_time",
+    ]),
     # Only execute gallery scripts when the compiled library is present.
     "plot_gallery": _lib_available,
 }

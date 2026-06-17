@@ -141,7 +141,7 @@ def plot_3d(
 # The fitted transformer ``qt`` is stored for back-transformation after
 # kriging.
 
-df = pd.read_csv("../test_data/ctet.csv")
+df = pd.read_csv("../../test_data/ctet.csv")
 df["datetime"] = pd.to_datetime(df["time"], format="%m/%d/%Y %H:%M").dt.date
 df["t"] = df["datetime"].apply(
     lambda dt: dt.year + dt.timetuple().tm_yday / 365
@@ -468,8 +468,8 @@ plt.show()
 # variability and is sufficient to yield well-conditioned kriging weights.
 
 # ── 3-D structured grid ────────────────────────────────────────────────────
-top  = np.loadtxt("../test_data/ctet_grid_top.asc",  skiprows=6)   # (nrow, ncol)
-botm = np.loadtxt("../test_data/ctet_grid_botm.asc", skiprows=6)
+top  = np.loadtxt("../../test_data/ctet_grid_top.asc",  skiprows=6)   # (nrow, ncol)
+botm = np.loadtxt("../../test_data/ctet_grid_botm.asc", skiprows=6)
 
 NZ = 7
 NROW, NCOL = top.shape          # 114, 140

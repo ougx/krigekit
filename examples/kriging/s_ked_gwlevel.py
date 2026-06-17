@@ -37,7 +37,7 @@ from krigekit import Kriging
 # ---------------------------------------------------------------------------
 # Load 2015 observations
 # ---------------------------------------------------------------------------
-df   = pd.read_csv("../test_data/obs_gwlevel.csv")
+df   = pd.read_csv("../../test_data/obs_gwlevel.csv")
 df15 = df[df["Year"] == 2015].dropna(subset=["Observed", "dem35"])
 
 obs_coord = df15[["x", "y"]].values.astype(float)

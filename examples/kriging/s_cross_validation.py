@@ -30,8 +30,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from krigekit import Kriging
 
-data = pd.read_csv("../test_data/pc2d.csv")
-grid = pd.read_csv("../test_data/grid2d.csv")
+data = pd.read_csv("../../test_data/pc2d.csv")
+grid = pd.read_csv("../../test_data/grid2d.csv")
 
 obs_coord = data[["x", "y"]].values
 obs_value = data["pc"].values

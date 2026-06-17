@@ -9,8 +9,8 @@ from krigekit import Kriging
 import pandas as pd
 import matplotlib.pyplot as plt
 
-data = pd.read_csv("../test_data/pc2d.csv") 
-grid = pd.read_csv("../test_data/grid2d.csv")
+data = pd.read_csv("../../test_data/pc2d.csv") 
+grid = pd.read_csv("../../test_data/grid2d.csv")
 
 # default is 2D univariate ordinary Kriging
 k = Kriging()

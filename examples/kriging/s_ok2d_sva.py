@@ -62,9 +62,9 @@ ROTATION = 35                       # grid bearing from north (degrees CW)
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
-obs   = pd.read_csv("../test_data/pc2d.csv")
-grid  = pd.read_csv("../test_data/grid2d.csv")
-river = pd.read_csv("../test_data/river_butte.csv")
+obs   = pd.read_csv("../../test_data/pc2d.csv")
+grid  = pd.read_csv("../../test_data/grid2d.csv")
+river = pd.read_csv("../../test_data/river_butte.csv")
 
 oc = obs[["x", "y"]].to_numpy(float)   # observation coordinates
 ov = obs["pc"].to_numpy(float)          # observed coarse fraction
