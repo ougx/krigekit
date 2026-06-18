@@ -21,10 +21,11 @@ plotted at spatial lag :math:`h_s = \\|\\mathbf{x}_i - \\mathbf{x}_j\\|`
 (metres) and temporal lag :math:`h_t = |t_i - t_j|` (years).
 
 CCl4 concentrations span three orders of magnitude (0.04–5 900 µg/L).
-A quantile (normal-score) transform is applied before computing the
-variogram: ranks are mapped to the standard normal so the transformed
-values are Gaussian by construction, suppressing outlier influence without
-assuming a specific parametric distribution such as log-normal.
+A uniform quantile transform is applied before computing the variogram:
+ranks are mapped to percentiles on ``[0, 1]``, suppressing outlier influence
+without assuming a specific parametric distribution such as log-normal.
+The dedicated ``st_variogram_fitting_ctet.py`` example documents the
+product-sum fitting and manual-adjustment workflow.
 """
 import time
 import numpy as np
@@ -136,8 +137,8 @@ def plot_3d(
 # decimal year as ``year + day_of_year / 365``, so 31 January 2005 becomes
 # ``2005 + 31/365 ≈ 2005.085``.
 #
-# CCl4 is then normal-score transformed: ranks are mapped to standard
-# normal quantiles using :class:`~sklearn.preprocessing.QuantileTransformer`.
+# CCl4 is then transformed to uniform quantile scores using
+# :class:`~sklearn.preprocessing.QuantileTransformer`.
 # The fitted transformer ``qt`` is stored for back-transformation after
 # kriging.
 
@@ -147,30 +148,30 @@ df["t"] = df["datetime"].apply(
     lambda dt: dt.year + dt.timetuple().tm_yday / 365
 )
 df = df.groupby(["well", "x","y","z","t"], as_index=False)["CCl4"].mean()
-qt = QuantileTransformer(random_state=0)
-df["nscore"] = qt.fit_transform(df[["CCl4"]]).ravel()
+qt = QuantileTransformer(output_distribution="uniform", random_state=0)
+df["uscore"] = qt.fit_transform(df[["CCl4"]]).ravel()
 
 print(f"Observations : {len(df):,}")
 print(f"Wells        : {df['well'].nunique()}")
 print(f"Time range   : {df['t'].min():.3f} – {df['t'].max():.3f}")
 print(f"CCl4 range   : {df['CCl4'].min():.3g} – {df['CCl4'].max():.3g} µg/L")
-print(f"Normal score : {df['nscore'].min():.2f} – {df['nscore'].max():.2f}")
+print(f"Uniform score: {df['uscore'].min():.2f} – {df['uscore'].max():.2f}")
 
 #%%
 # Spatial and temporal overview
 # ------------------------------
-# Well locations coloured by time-averaged normal score (left), and all
-# measurements plotted over time coloured by normal score (right).
+# Well locations coloured by time-averaged uniform score (left), and all
+# measurements plotted over time coloured by uniform score (right).
 
 mean_by_well = df.groupby("well").agg(
-    x=("x", "first"), y=("y", "first"), nscore=("nscore", "mean")
+    x=("x", "first"), y=("y", "first"), uscore=("uscore", "mean")
 ).reset_index()
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
 
 ax = axes[0]
 sc = ax.scatter(mean_by_well["x"] / 1000, mean_by_well["y"] / 1000,
-                c=mean_by_well["nscore"], cmap="plasma",
+                c=mean_by_well["uscore"], cmap="plasma",
                 vmin=0, vmax=1, s=55, edgecolors="k", linewidths=0.35)
 plt.colorbar(sc, ax=ax, label="Mean percentile (–)")
 ax.set_xlabel("Easting (km, UTM 11N)")
@@ -179,8 +180,8 @@ ax.set_title(f"Well locations  (n = {len(mean_by_well)} wells)")
 ax.set_aspect("equal")
 
 ax = axes[1]
-sc2 = ax.scatter(df["t"], df["nscore"],
-                 c=df["nscore"], cmap="plasma",
+sc2 = ax.scatter(df["t"], df["uscore"],
+                 c=df["uscore"], cmap="plasma",
                  vmin=0, vmax=1, s=6, alpha=0.6, linewidths=0)
 ax.set_xlabel("Time (decimal year)")
 ax.set_ylabel("Percentile (–)")
@@ -222,13 +223,13 @@ plt.show()
 # ``Z_SCALE = 5`` to account for vertical anisotropy — a first-attempt
 # value that can be tuned once the variogram structure is clearer.
 
-dm = df.groupby('well').nscore.count().sort_values()
+dm = df.groupby('well').uscore.count().sort_values()
 ws = dm[dm>6].index.values
 mask = df.well.isin(ws)
 Z_SCALE = 5  # vertical anisotropy factor (first attempt)
 X = np.column_stack([df.loc[mask, "x"], df.loc[mask, "y"], df.loc[mask, "z"] * Z_SCALE])
 T = df.loc[mask, "t"].to_numpy(float)
-V = df.loc[mask, "nscore"].to_numpy(float)
+V = df.loc[mask, "uscore"].to_numpy(float)
 
 i_idx, j_idx = np.triu_indices(mask.sum(), k=1)
 
@@ -298,7 +299,8 @@ print(vgm[["hs_m", "ht_yr", "gamma_mean", "n_pairs"]].head(12).to_string(index=F
 # behaviour for a coherent, slowly evolving groundwater plume and matches
 # the original De Cesare et al. (2001) convention of :math:`k \ge 0`.
 # Validity requires :math:`a, b > 0` and :math:`a + b + p > 0`
-# (positive total sill).  For normal-score data :math:`a + b + p \approx 1`.
+# (positive total sill).  Uniform-score variance is approximately
+# :math:`1/12`; the fitted product-sum coefficients need not sum to one.
 #
 # Parameters are optimised by weighted least squares over all occupied
 # (h_s, h_t) bins, with weights proportional to pair count.
@@ -380,7 +382,9 @@ print(f"  total sill = {a_ps + b_ps + p_ps:.4f}  (target ≈ 1, p ≤ 0)")
 # The experimental variogram surface plotted on the (h_s, h_t) grid.
 # Temporal slices (rows of constant h_t) will be used for model fitting
 # in the next step.
-# The variogram parameters are manually adjusted.
+# The variogram parameters are manually adjusted.  See
+# ``st_variogram_fitting_ctet.py`` for the constrained multistart fit,
+# identifiability diagnostics, and automatic-versus-production comparison.
 a_ps = 0.10
 b_ps = 0.06
 p_ps = -0.005
@@ -502,7 +506,7 @@ print(f"time_at      ={time_at_search:.1f} m/yr  (naive {a_s/a_t:.0f}, sill-corr
 
 # ── Observations ────────────────────────────────────────────────────────────
 obs_coord = df.loc[:, ["x", "y", "z", "t"]].values  # (nobs, 4)
-V         = df["nscore"].values
+V         = df["uscore"].values
 
 # Small nugget added to both spatial and temporal variograms to regularise
 # the kriging matrix.  Without it, monthly samples from the same well are
@@ -520,7 +524,7 @@ V         = df["nscore"].values
 NUGGET = 0.0005
 
 KRIGE_YEARS = [2009, 2011, 2013, 2015, 2017, 2019]
-nscore_vols = {}
+uscore_vols = {}
 for yr in KRIGE_YEARS:
     def runyr(yr, nmax=300):
         t0 = time.perf_counter()
@@ -537,14 +541,14 @@ for yr in KRIGE_YEARS:
         k.solve()
         est, _ = k.get_results(copy=True)
         del k
-        nscore_vols[yr] = est.reshape(NZ, NROW, NCOL)
+        uscore_vols[yr] = est.reshape(NZ, NROW, NCOL)
         t1 = time.perf_counter()
         print(f"    ns=[{est.min():.2f}, {est.max():.2f}]; Elapsed time (sec): {t1-t0}")
     runyr(yr, nmax=50)
-# Back-transform normal scores to CCl4 concentration (µg/L)
+# Back-transform uniform scores to CCl4 concentration (µg/L)
 conc_vols = {
     yr: qt.inverse_transform(
-        nscore_vols[yr].ravel().reshape(-1, 1)
+        uscore_vols[yr].ravel().reshape(-1, 1)
     ).reshape(NZ, NROW, NCOL)
     for yr in KRIGE_YEARS
 }

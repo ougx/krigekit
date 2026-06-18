@@ -328,7 +328,7 @@ kriging:
 ```python
 from sklearn.preprocessing import QuantileTransformer
 
-qt = QuantileTransformer(random_state=0)
+qt = QuantileTransformer(output_distribution="normal", random_state=0)
 df["nscore"] = qt.fit_transform(df[["value"]]).ravel()
 
 # krige in normal-score space ...
@@ -348,36 +348,92 @@ normal-score values.
 
 ## Fitting the product-sum variogram
 
-Fit the three scalar parameters $(a, b, p)$ and marginal ranges $(a_s, a_t)$
-by weighted least-squares over the experimental variogram bins:
+Use `VariogramModel` to calculate the experimental lag surface and fit the
+three scalar parameters $(a, b, p)$ and marginal ranges $(a_s, a_t)$ by
+weighted least-squares:
 
 ```python
-from scipy.optimize import minimize
+from krigekit import VariogramModel
 
-def gamma_ps(hs, ht, a, b, p, a_s, a_t):
-    gs = sph(hs, a_s)     # normalised spatial marginal
-    gt = gauss(ht, a_t)   # normalised temporal marginal (Gaussian)
-    return a * gs + b * gt + p * gs * gt
+model = VariogramModel()
+model.set_obs(spatial_coord, transformed_value, times=observation_time)
+model.calc_experimental(
+    cutoff=5500.0,
+    t_cutoff=13.0,
+    anisotropy={"anis1": 1.0, "anis2": 0.2},
+)
+model.calc_average(
+    h_col="anisotropic_distance",
+    h_width=500.0,
+    t_col="time_lag",
+    t_width=0.5,
+)
 
-def wls(params):
-    a, b, p, a_s, a_t = params
-    if a <= 0 or b <= 0 or a_s <= 0 or a_t <= 0:
-        return 1e12
-    if p > 0 or a + b + p <= 0:
-        return 1e12
-    pred = gamma_ps(hs_bins, ht_bins, a, b, p, a_s, a_t)
-    return float(np.sum(n_pairs * (pred - gamma_bins) ** 2))
+model.fit_spacetime_product_sum(
+    spatial_vtype="sph",
+    temporal_vtype="gau",
+    starts=[
+        (0.10, 0.06, -0.005, 5000.0, 9.0),
+        (0.12, 0.04, -0.020, 3000.0, 10.0),
+    ],
+    bounds=[
+        (0.0, 0.30), (0.0, 0.20), (-0.20, 0.0),
+        (1000.0, 8000.0), (1.0, 13.0),
+    ],
+    weight_cap_quantile=0.90,
+)
 
-res = minimize(wls, x0=[0.11, 0.025, -0.01, 2500, 6.5],
-               method="Nelder-Mead",
-               options={"xatol": 1e-7, "fatol": 1e-10, "maxiter": 20000})
-a_ps, b_ps, p_ps, a_s, a_t = res.x
+a_ps, b_ps, p_ps, a_s, a_t = model.spacetime_params_
+predicted_gamma = model.calc_spacetime_variogram(hs, ht)
 ```
 
-Weighting by pair count (`n_pairs`) gives greater influence to statistically
-stable bins containing more data pairs.  Because short-lag bins often contain
-many more pairs than long-lag bins, inspect the fitted surface visually to ensure
-longer-range structure is not under-represented.
+`distance` in the raw cloud remains the physical Euclidean lag used by
+variogram maps and diagnostics. `anisotropic_distance` is the equivalent
+major-axis lag calculated after applying the engine-compatible azimuth, dip,
+plunge, and minor/major ratios. Consequently, the fitted spatial range is the
+major range. Do not pre-scale the coordinate array when this option is used.
+
+For evaluation at coordinate pairs, use
+`model.calc_spacetime_variogram_between(coord0, coord1, time0, time1)`.
+`calc_spacetime_variogram(hs, ht)` remains useful when `hs` is already a scalar
+physical or anisotropy-adjusted spatial lag.
+
+The fit uses pair counts as weights. `weight_cap_quantile` limits the influence
+of exceptionally populous bins so that the short-lag region does not overwhelm
+the rest of the surface. Inspect the fitted surface and all multistart results
+in `model.spacetime_fit_results_`; the lowest objective alone does not establish
+that all five parameters are well identified.
+
+After cross-validation, manually adjusted parameters can be stored on the same
+object and converted to the covariance form expected by `SpaceTimeKriging`:
+
+```python
+model.set_spacetime_params((0.10, 0.06, -0.005, 5000.0, 9.0))
+specs = model.to_spacetime_kriging_specs()
+
+k.set_st_model(specs["model"], k_ps=specs["k_ps"])
+k.set_vgm(ivar=1, istruct=1, **specs["spatial_spec"])
+k.set_vgm_temporal(ivar=1, istruct=1, **specs["temporal_spec"])
+k.set_search(ivar=1, time_at=specs["time_at"])
+```
+
+The constraints `a + p > 0` and `b + p > 0` ensure that the converted
+covariance marginal sills
+
+$$
+C_S(0)=a+p,\qquad C_T(0)=b+p
+$$
+
+are both positive. Checking only `a + b + p > 0` is insufficient for the
+covariance conversion used by `SpaceTimeKriging`.
+
+The `st_variogram_fitting_ctet.py` gallery example applies these constraints to
+`test_data/ctet.csv` with capped pair-count weights and multiple starting
+points. It also demonstrates a common failure mode: the lowest-residual
+solution collapses the temporal covariance sill and hits a range bound because
+the five product-sum parameters are weakly identified by the available lag
+surface. The example therefore compares the automatic fit with the rounded,
+cross-validation-informed production model used by `st_ok3d_ctet.py`.
 
 Kernel choice for the temporal marginal:
 

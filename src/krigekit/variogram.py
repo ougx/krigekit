@@ -20,6 +20,7 @@ Conventions
   - ``index0``: index of the first point of the pair
   - ``index1``: index of the second point of the pair
   - ``distance``: Euclidean (spatial) lag ``|h|``
+  - ``anisotropic_distance``: optional equivalent major-axis lag
   - ``variogram``: semivariance of the pair,
     ``0.5 * (z_i - z_j) ** 2``
   - ``d0..d{k}``: signed lag components (``coord1 - coord0``) per dimension
@@ -46,7 +47,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from matplotlib.colors import Normalize
-from scipy.optimize import curve_fit, least_squares
+from scipy.optimize import curve_fit, least_squares, minimize
 from scipy.spatial.transform import Rotation
 
 
@@ -303,6 +304,18 @@ class VariogramModel:
         self._params = None
         self._pcov = None
         self._fitted_model = None
+        self.spacetime_params_ = None
+        self.spacetime_fit_result_ = None
+        self.spacetime_fit_results_ = None
+        self.spacetime_spatial_vtype_ = None
+        self.spacetime_temporal_vtype_ = None
+        self.spacetime_anisotropy_ = {
+            "anis1": 1.0,
+            "anis2": 1.0,
+            "azimuth": 0.0,
+            "dip": 0.0,
+            "plunge": 0.0,
+        }
         if structures is not None:
             for i, spec in enumerate(structures):
                 spec = dict(spec)
@@ -359,6 +372,9 @@ class VariogramModel:
         self._params = None
         self._pcov = None
         self._fitted_model = None
+        self.spacetime_params_ = None
+        self.spacetime_fit_result_ = None
+        self.spacetime_fit_results_ = None
 
     def set_obs(self, coord, value, times=None):
         """Store observations for empirical variogram calculation.
@@ -412,6 +428,16 @@ class VariogramModel:
         if self.obs_coord is None or self.obs_value is None:
             raise RuntimeError("call set_obs() before experimental()")
         kwargs.setdefault("times", self.obs_time)
+        if "anisotropy" in kwargs and kwargs["anisotropy"] is not None:
+            self.set_spacetime_anisotropy(**kwargs["anisotropy"])
+        elif "anisotropy" not in kwargs and self.spacetime_anisotropy_ != {
+            "anis1": 1.0,
+            "anis2": 1.0,
+            "azimuth": 0.0,
+            "dip": 0.0,
+            "plunge": 0.0,
+        }:
+            kwargs["anisotropy"] = dict(self.spacetime_anisotropy_)
         cloud = raw_vgm(self.obs_coord, self.obs_value, **kwargs)
         if store:
             self._raw = cloud
@@ -740,6 +766,318 @@ class VariogramModel:
             out.append(params)
         out.extend(extras)
         return tuple(out)
+
+    def calc_spacetime_variogram(self, spatial_lag, temporal_lag, params=None):
+        """Evaluate the fitted product-sum space-time semivariogram.
+
+        Parameters
+        ----------
+        spatial_lag, temporal_lag : array-like
+            Broadcastable spatial and temporal lag arrays.
+        params : array-like, optional
+            ``(a, b, p, spatial_range, temporal_range)``. If omitted, use
+            ``spacetime_params_`` from :meth:`fit_spacetime_product_sum` or
+            :meth:`set_spacetime_params`.
+        """
+        if params is None:
+            params = self.spacetime_params_
+        if params is None:
+            raise RuntimeError(
+                "call fit_spacetime_product_sum() or set_spacetime_params() first"
+            )
+        if self.spacetime_spatial_vtype_ is None:
+            raise RuntimeError("space-time marginal model types are not configured")
+
+        a, b, p, spatial_range, temporal_range = np.asarray(
+            params, dtype=float
+        ).reshape(-1)
+        gs = calc_vgm(
+            self.spacetime_spatial_vtype_,
+            spatial_lag,
+            rng=spatial_range,
+        )
+        gt = calc_vgm(
+            self.spacetime_temporal_vtype_,
+            temporal_lag,
+            rng=temporal_range,
+        )
+        return a * gs + b * gt + p * gs * gt
+
+    def calc_spacetime_variogram_between(
+        self,
+        coord0,
+        coord1,
+        time0,
+        time1,
+        *,
+        pairwise=False,
+        params=None,
+    ):
+        """Evaluate the space-time variogram between coordinates.
+
+        Spatial lag vectors are rotated and scaled using the anisotropy stored
+        by :meth:`set_spacetime_anisotropy`. The resulting distance is the
+        equivalent lag along the major axis, in the original coordinate units.
+        """
+        lag = calc_lag_vectors(coord0, coord1, pairwise=pairwise)
+        spatial_lag = calc_anisotropic_lag(lag, **self.spacetime_anisotropy_)
+        time0 = np.asarray(time0, dtype=float)
+        time1 = np.asarray(time1, dtype=float)
+        if pairwise:
+            temporal_lag = np.abs(time1.reshape(1, -1) - time0.reshape(-1, 1))
+        else:
+            temporal_lag = np.abs(time1 - time0)
+        result = self.calc_spacetime_variogram(
+            spatial_lag,
+            temporal_lag,
+            params=params,
+        )
+        return result if pairwise else np.asarray(result).squeeze()
+
+    def set_spacetime_anisotropy(
+        self,
+        *,
+        anis1=1.0,
+        anis2=1.0,
+        azimuth=0.0,
+        dip=0.0,
+        plunge=0.0,
+    ):
+        """Set spatial anisotropy for product-sum fitting and evaluation.
+
+        ``anis1`` and ``anis2`` are minor/major range ratios, matching the
+        Fortran engine. Angles use the engine convention: azimuth clockwise
+        from north and dip positive downward.
+        """
+        if anis1 <= 0.0 or anis2 <= 0.0:
+            raise ValueError("anis1 and anis2 must be positive")
+        self.spacetime_anisotropy_ = {
+            "anis1": float(anis1),
+            "anis2": float(anis2),
+            "azimuth": float(azimuth),
+            "dip": float(dip),
+            "plunge": float(plunge),
+        }
+        return self
+
+    def set_spacetime_params(
+        self,
+        params,
+        *,
+        spatial_vtype=None,
+        temporal_vtype=None,
+    ):
+        """Manually set product-sum space-time parameters.
+
+        ``params`` is ``(a, b, p, spatial_range, temporal_range)``. Valid
+        covariance conversion requires ``p <= 0``, ``a + p > 0`` and
+        ``b + p > 0``.
+        """
+        params = np.asarray(params, dtype=float).reshape(-1)
+        if len(params) != 5:
+            raise ValueError(
+                "params must be (a, b, p, spatial_range, temporal_range)"
+            )
+        a, b, p, spatial_range, temporal_range = params
+        if a <= 0.0 or b <= 0.0:
+            raise ValueError("a and b must be positive")
+        if p > 0.0 or a + p <= 0.0 or b + p <= 0.0:
+            raise ValueError("require p <= 0, a + p > 0 and b + p > 0")
+        if spatial_range <= 0.0 or temporal_range <= 0.0:
+            raise ValueError("spatial and temporal ranges must be positive")
+
+        if spatial_vtype is not None:
+            self.spacetime_spatial_vtype_ = resolve_model(spatial_vtype)
+        if temporal_vtype is not None:
+            self.spacetime_temporal_vtype_ = resolve_model(temporal_vtype)
+        if self.spacetime_spatial_vtype_ is None:
+            self.spacetime_spatial_vtype_ = "sph"
+        if self.spacetime_temporal_vtype_ is None:
+            self.spacetime_temporal_vtype_ = "gau"
+
+        self.spacetime_params_ = params.copy()
+        return self
+
+    def fit_spacetime_product_sum(
+        self,
+        avgvgm=None,
+        *,
+        spatial_vtype="sph",
+        temporal_vtype="gau",
+        starts=None,
+        bounds=None,
+        spatial_col=None,
+        temporal_col=("time_lag", "mean"),
+        variogram_col=("variogram", "mean"),
+        count_col=("variogram", "count"),
+        weight_cap_quantile=0.90,
+        min_marginal_sill=1.0e-4,
+        options=None,
+        avg_kwargs=None,
+    ):
+        """Fit a constrained product-sum model to averaged space-time bins.
+
+        The fitted form is
+
+        ``a*g_s(h_s) + b*g_t(h_t) + p*g_s(h_s)*g_t(h_t)``,
+
+        where both marginal variograms have unit sill. Multiple starting
+        points are fitted with SLSQP; the successful result with the smallest
+        weighted objective is stored.
+
+        Returns
+        -------
+        VariogramModel
+            ``self`` with ``spacetime_params_``, ``spacetime_fit_result_`` and
+            ``spacetime_fit_results_`` populated.
+        """
+        if avgvgm is None:
+            if self._avg is None:
+                avgvgm = self.calc_average(**(avg_kwargs or {}))
+            else:
+                avgvgm = self._avg
+        if not isinstance(avgvgm, pd.DataFrame) or len(avgvgm) == 0:
+            raise ValueError("avgvgm must be a non-empty pandas DataFrame")
+
+        if spatial_col is None:
+            anisotropic_col = ("anisotropic_distance", "mean")
+            spatial_col = (
+                anisotropic_col
+                if anisotropic_col in avgvgm.columns
+                else ("distance", "mean")
+            )
+        for column in (spatial_col, temporal_col, variogram_col, count_col):
+            if column not in avgvgm.columns:
+                raise KeyError(f"column {column!r} is not present in avgvgm")
+
+        self.spacetime_spatial_vtype_ = resolve_model(spatial_vtype)
+        self.spacetime_temporal_vtype_ = resolve_model(temporal_vtype)
+        hs = np.asarray(avgvgm[spatial_col], dtype=float)
+        ht = np.asarray(avgvgm[temporal_col], dtype=float)
+        gamma = np.asarray(avgvgm[variogram_col], dtype=float)
+        count = np.asarray(avgvgm[count_col], dtype=float)
+        valid = (
+            np.isfinite(hs)
+            & np.isfinite(ht)
+            & np.isfinite(gamma)
+            & np.isfinite(count)
+            & (count > 0.0)
+        )
+        hs, ht, gamma, count = hs[valid], ht[valid], gamma[valid], count[valid]
+        if len(gamma) == 0:
+            raise ValueError("avgvgm contains no finite positive-count bins")
+
+        if weight_cap_quantile is None:
+            capped_count = count
+        else:
+            if not 0.0 < weight_cap_quantile <= 1.0:
+                raise ValueError("weight_cap_quantile must be in (0, 1]")
+            cap = float(np.quantile(count, weight_cap_quantile))
+            capped_count = np.minimum(count, cap)
+        weights = capped_count / np.max(capped_count)
+
+        if starts is None:
+            starts = [(0.1, 0.05, -0.005, np.nanmax(hs), np.nanmax(ht))]
+        starts = [np.asarray(start, dtype=float).reshape(-1) for start in starts]
+        if any(len(start) != 5 for start in starts):
+            raise ValueError("each start must contain five product-sum parameters")
+        if bounds is None:
+            bounds = [
+                (0.0, np.inf),
+                (0.0, np.inf),
+                (-np.inf, 0.0),
+                (np.finfo(float).eps, np.inf),
+                (np.finfo(float).eps, np.inf),
+            ]
+
+        def predict(params):
+            a, b, p, spatial_range, temporal_range = params
+            gs = calc_vgm(self.spacetime_spatial_vtype_, hs, rng=spatial_range)
+            gt = calc_vgm(self.spacetime_temporal_vtype_, ht, rng=temporal_range)
+            return a * gs + b * gt + p * gs * gt
+
+        def objective(params):
+            residual = predict(params) - gamma
+            return float(np.sum(weights * residual ** 2))
+
+        constraints = [
+            {
+                "type": "ineq",
+                "fun": lambda x: x[0] + x[2] - min_marginal_sill,
+            },
+            {
+                "type": "ineq",
+                "fun": lambda x: x[1] + x[2] - min_marginal_sill,
+            },
+        ]
+        fit_options = {"maxiter": 5000, "ftol": 1.0e-12}
+        fit_options.update(options or {})
+        results = [
+            minimize(
+                objective,
+                x0=start,
+                method="SLSQP",
+                bounds=bounds,
+                constraints=constraints,
+                options=fit_options,
+            )
+            for start in starts
+        ]
+        successful = [result for result in results if result.success]
+        if not successful:
+            messages = "; ".join(str(result.message) for result in results)
+            raise RuntimeError(f"all product-sum fits failed: {messages}")
+
+        best = min(successful, key=lambda result: result.fun)
+        self.spacetime_fit_results_ = results
+        self.spacetime_fit_result_ = best
+        self.set_spacetime_params(best.x)
+        return self
+
+    def to_spacetime_kriging_specs(
+        self,
+        *,
+        z_scale=None,
+        spatial_nugget=0.0,
+        temporal_nugget=0.0,
+    ):
+        """Convert fitted product-sum parameters to engine-ready dictionaries."""
+        if self.spacetime_params_ is None:
+            raise RuntimeError(
+                "call fit_spacetime_product_sum() or set_spacetime_params() first"
+            )
+        anisotropy = dict(self.spacetime_anisotropy_)
+        if z_scale is not None:
+            if z_scale <= 0.0:
+                raise ValueError("z_scale must be positive")
+            anisotropy["anis2"] = 1.0 / float(z_scale)
+        a, b, p, spatial_range, temporal_range = self.spacetime_params_
+        sill_s = a + p
+        sill_t = b + p
+        k_ps = -p / (sill_s * sill_t)
+        time_at = (spatial_range / temporal_range) * (sill_s / sill_t)
+        return {
+            "model": "product_sum",
+            "k_ps": float(k_ps),
+            "spatial_spec": {
+                "vtype": self.spacetime_spatial_vtype_,
+                "nugget": float(spatial_nugget),
+                "sill": float(sill_s),
+                "a_major": float(spatial_range),
+                "a_minor1": float(spatial_range * anisotropy["anis1"]),
+                "a_minor2": float(spatial_range * anisotropy["anis2"]),
+                "azimuth": anisotropy["azimuth"],
+                "dip": anisotropy["dip"],
+                "plunge": anisotropy["plunge"],
+            },
+            "temporal_spec": {
+                "vtype": self.spacetime_temporal_vtype_,
+                "nugget": float(temporal_nugget),
+                "sill": float(sill_t),
+                "at_k": float(temporal_range),
+            },
+            "time_at": float(time_at),
+        }
 
     def _default_anisotropic_fit_p0(self, include_minor2: bool, fit_nugget: bool = True):
         """Build default ``(sill, major, minor1[, minor2], ..., [nugget])`` params."""
@@ -1166,30 +1504,7 @@ class VariogramModel:
     @staticmethod
     def _coordinate_lags(coord0, coord1, pairwise: bool = False):
         """Return lag vectors ``coord1 - coord0`` for row-wise or pairwise use."""
-        coord0 = np.asarray(coord0, dtype=float)
-        coord1 = np.asarray(coord1, dtype=float)
-        if coord0.ndim == 1:
-            coord0 = coord0.reshape(1, -1)
-        if coord1.ndim == 1:
-            coord1 = coord1.reshape(1, -1)
-        if coord0.ndim != 2 or coord1.ndim != 2:
-            raise ValueError("coordinates must have shape (n, dim) or (dim,)")
-        if coord0.shape[1] != coord1.shape[1]:
-            raise ValueError("coordinate arrays must share the same dimensionality")
-        if coord0.shape[1] not in (1, 2, 3):
-            raise ValueError("coordinates must be 1D, 2D or 3D")
-        if pairwise:
-            return coord1[None, :, :] - coord0[:, None, :]
-        if coord0.shape[0] == coord1.shape[0]:
-            return coord1 - coord0
-        if coord0.shape[0] == 1:
-            return coord1 - coord0[0]
-        if coord1.shape[0] == 1:
-            return coord1[0] - coord0
-        raise ValueError(
-            "coordinate arrays must have matching lengths, or one array must "
-            "contain a single coordinate; pass pairwise=True for an n x m matrix"
-        )
+        return calc_lag_vectors(coord0, coord1, pairwise=pairwise)
 
     @staticmethod
     def _anisotropic_hr(comp, lag):
@@ -1199,17 +1514,14 @@ class VariogramModel:
         (2D lags are embedded in 3D), then scaled by the per-axis ranges of the
         model frame ``(x=a_minor1, y=a_major, z=a_minor2)``.
         """
-        lag = np.asarray(lag, dtype=float)
-        dim = lag.shape[-1]
-        if dim == 1:
-            return np.abs(lag[..., 0]) / comp.a_major
-        flat = lag.reshape(-1, dim)
-        if dim == 2:
-            flat = np.column_stack([flat, np.zeros(len(flat))])
-        rotated = _engine_rotation(comp.azimuth, comp.dip, comp.plunge).apply(flat)
-        ranges = np.array([comp.a_minor1, comp.a_major, comp.a_minor2], dtype=float)
-        hr = np.sqrt(np.sum((rotated / ranges) ** 2, axis=-1))
-        return hr.reshape(lag.shape[:-1])
+        return calc_anisotropic_lag(
+            lag,
+            anis1=comp.a_minor1 / comp.a_major,
+            anis2=comp.a_minor2 / comp.a_major,
+            azimuth=comp.azimuth,
+            dip=comp.dip,
+            plunge=comp.plunge,
+        ) / comp.a_major
 
     def _component_covariance_between(self, comp, lag):
         """Evaluate one structure's covariance contribution for lag vectors."""
@@ -2079,6 +2391,72 @@ class VariogramSystem:
 # ---------------------------------------------------------------------------
 # 2. Distance helpers
 # ---------------------------------------------------------------------------
+def calc_lag_vectors(coord0, coord1, pairwise=False):
+    """Return signed lag vectors ``coord1 - coord0``.
+
+    Coordinates may be single points or ``(n, dim)`` arrays. By default,
+    matching rows are compared and a single point is broadcast. With
+    ``pairwise=True`` the result has shape ``(n0, n1, dim)``.
+    """
+    coord0 = np.asarray(coord0, dtype=float)
+    coord1 = np.asarray(coord1, dtype=float)
+    if coord0.ndim == 1:
+        coord0 = coord0.reshape(1, -1)
+    if coord1.ndim == 1:
+        coord1 = coord1.reshape(1, -1)
+    if coord0.ndim != 2 or coord1.ndim != 2:
+        raise ValueError("coordinates must have shape (n, dim) or (dim,)")
+    if coord0.shape[1] != coord1.shape[1]:
+        raise ValueError("coordinate arrays must share the same dimensionality")
+    if coord0.shape[1] not in (1, 2, 3):
+        raise ValueError("coordinates must be 1D, 2D or 3D")
+    if pairwise:
+        return coord1[None, :, :] - coord0[:, None, :]
+    if coord0.shape[0] == coord1.shape[0]:
+        return coord1 - coord0
+    if coord0.shape[0] == 1:
+        return coord1 - coord0[0]
+    if coord1.shape[0] == 1:
+        return coord1[0] - coord0
+    raise ValueError(
+        "coordinate arrays must have matching lengths, or one array must "
+        "contain a single coordinate; pass pairwise=True for an n x m matrix"
+    )
+
+
+def calc_anisotropic_lag(
+    lag,
+    *,
+    anis1=1.0,
+    anis2=1.0,
+    azimuth=0.0,
+    dip=0.0,
+    plunge=0.0,
+):
+    """Calculate engine-compatible equivalent major-axis lag distance.
+
+    ``anis1`` and ``anis2`` are the first and second minor/major range ratios.
+    Isotropic input therefore uses both ratios equal to one. The returned lag
+    remains in coordinate units; dividing it by the major range gives the
+    reduced lag used by the variogram kernels.
+    """
+    if anis1 <= 0.0 or anis2 <= 0.0:
+        raise ValueError("anis1 and anis2 must be positive")
+    lag = np.asarray(lag, dtype=float)
+    if lag.ndim == 0 or lag.shape[-1] not in (1, 2, 3):
+        raise ValueError("lag must have a final coordinate dimension of 1, 2 or 3")
+    dim = lag.shape[-1]
+    if dim == 1:
+        return np.abs(lag[..., 0])
+    flat = lag.reshape(-1, dim)
+    if dim == 2:
+        flat = np.column_stack([flat, np.zeros(len(flat))])
+    rotated = _engine_rotation(azimuth, dip, plunge).apply(flat)
+    scale = np.array([anis1, 1.0, anis2], dtype=float)
+    distance = np.sqrt(np.sum((rotated / scale) ** 2, axis=-1))
+    return distance.reshape(lag.shape[:-1])
+
+
 def _great_circle_dist(coord1, coord2, earth_r=6371.2):
     """Great-circle distance for ``(lon, lat)`` coordinates (degrees)."""
     coord1 = np.radians(coord1)
@@ -2125,7 +2503,7 @@ def _choose_data(coords, vals, nmax, times=None):
 
 def _pair_lags(coords0, coords1, val0, val1, cutoff,
                time0, time1, time_cutoff, calc_angle,
-               valB0=None, valB1=None, great_circle=False):
+               valB0=None, valB1=None, great_circle=False, anisotropy=None):
     """Compute lags and (cross-)semivariances between one point and a block.
 
     ``coords0`` holds a single point (shape ``(1, dim)``); ``coords1`` holds the
@@ -2141,13 +2519,17 @@ def _pair_lags(coords0, coords1, val0, val1, cutoff,
     lag ``distance`` is the great-circle distance; the signed components and
     azimuth are still derived from the planar degree differences.
     """
-    dh = coords1 - coords0                       # signed lag components
+    dh = calc_lag_vectors(coords0, coords1)
     if great_circle:
         hlag = _great_circle_dist(np.broadcast_to(coords0, coords1.shape), coords1)
+        selection_lag = hlag
     else:
-        hlag = np.linalg.norm(dh, axis=1)        # |h|
+        hlag = calc_anisotropic_lag(dh)
+        selection_lag = hlag
+        if anisotropy is not None:
+            selection_lag = calc_anisotropic_lag(dh, **anisotropy)
 
-    mask = hlag <= cutoff
+    mask = selection_lag <= cutoff
     if time0 is not None:
         tlag = np.abs(time1 - time0)
         mask &= tlag <= time_cutoff
@@ -2159,6 +2541,8 @@ def _pair_lags(coords0, coords1, val0, val1, cutoff,
     dim = coords1.shape[1]
     dh = dh[mask]
     out["distance"] = hlag[mask]
+    if anisotropy is not None:
+        out["anisotropic_distance"] = selection_lag[mask]
     dA = val1[mask] - val0
     if valB0 is None:
         out["variogram"] = 0.5 * dA ** 2
@@ -2196,7 +2580,7 @@ def _build_cloud(dim, idx0, idx1, records, i0s, i1s):
     dh = np.concatenate(records["dh"], axis=0)
     for k in range(dim):
         out[f"d{k}"] = dh[:, k]
-    for key in ("time_lag", "dh_hori", "angle_h", "angle_v"):
+    for key in ("anisotropic_distance", "time_lag", "dh_hori", "angle_h", "angle_v"):
         if records[key]:
             out[key] = np.concatenate(records[key])
     return pd.DataFrame(out)
@@ -2205,7 +2589,8 @@ def _build_cloud(dim, idx0, idx1, records, i0s, i1s):
 def _empty_records():
     """Create empty list accumulators for variogram-cloud columns."""
     return {k: [] for k in
-            ("distance", "variogram", "dh", "time_lag", "dh_hori", "angle_h", "angle_v")}
+            ("distance", "anisotropic_distance", "variogram", "dh", "time_lag",
+             "dh_hori", "angle_h", "angle_v")}
 
 
 def _accumulate(records, pair):
@@ -2253,8 +2638,8 @@ def _axis_dip_mask(angle_h, angle_v, target_h, target_v, h_tol, v_tol):
 
 
 def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
-            calc_angle=False, maxobs=None, seed=None, verbose=True,
-            great_circle=False):
+             calc_angle=False, maxobs=None, seed=None, verbose=True,
+             great_circle=False, anisotropy=None):
     """Compute the raw empirical variogram cloud (all admissible pairs).
 
     Parameters
@@ -2280,6 +2665,11 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
     great_circle : bool, optional
         Treat 2D coordinates as ``(lon, lat)`` in degrees and use the
         great-circle distance (km) for the ``distance`` lag and ``cutoff``.
+    anisotropy : dict, optional
+        Arguments accepted by :func:`calc_anisotropic_lag`. When supplied,
+        ``cutoff`` is applied to the equivalent major-axis lag and the cloud
+        includes an ``anisotropic_distance`` column. The physical Euclidean
+        lag remains available as ``distance``.
 
     Returns
     -------
@@ -2297,6 +2687,11 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
         raise ValueError("coordinates must be 1D, 2D or 3D")
     if great_circle and dim != 2:
         raise ValueError("great_circle requires 2D (lon, lat) coordinates")
+    if great_circle and anisotropy is not None:
+        raise ValueError("great_circle and Cartesian anisotropy cannot be combined")
+    if anisotropy is not None:
+        anisotropy = dict(anisotropy)
+        calc_anisotropic_lag(np.zeros((1, dim)), **anisotropy)
 
     if seed is not None:
         random.seed(seed)
@@ -2312,7 +2707,8 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
         pair = _pair_lags(
             coords[i:i + 1], coords[i + 1:], vals[i], vals[i + 1:], cutoff,
             times[i] if has_time else None, times[i + 1:] if has_time else None,
-            t_cutoff, calc_angle, great_circle=great_circle)
+            t_cutoff, calc_angle, great_circle=great_circle,
+            anisotropy=anisotropy)
         mask = pair["mask"]
         if np.any(mask):
             i0s.append(np.full(np.count_nonzero(mask), i))
@@ -2326,7 +2722,8 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
 
 
 def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.inf,
-                  calc_angle=False, maxobs=None, seed=None, verbose=True):
+                  calc_angle=False, maxobs=None, seed=None, verbose=True,
+                  anisotropy=None):
     """Traditional (LMC) cross-variogram cloud on **collocated** data.
 
     Both variables are measured at the same ``coords`` (isotopic data).  Pairs
@@ -2357,6 +2754,9 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
         raise ValueError("coords, valsA and valsB must have matching lengths")
     if dim not in (1, 2, 3):
         raise ValueError("coordinates must be 1D, 2D or 3D")
+    if anisotropy is not None:
+        anisotropy = dict(anisotropy)
+        calc_anisotropic_lag(np.zeros((1, dim)), **anisotropy)
 
     if seed is not None:
         random.seed(seed)
@@ -2374,7 +2774,8 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
         pair = _pair_lags(
             coords[i:i + 1], coords[i + 1:], valsA[i], valsA[i + 1:], cutoff,
             times[i] if has_time else None, times[i + 1:] if has_time else None,
-            t_cutoff, calc_angle, valB0=valsB[i], valB1=valsB[i + 1:])
+            t_cutoff, calc_angle, valB0=valsB[i], valB1=valsB[i + 1:],
+            anisotropy=anisotropy)
         mask = pair["mask"]
         if np.any(mask):
             i0s.append(np.full(np.count_nonzero(mask), i))
@@ -2389,7 +2790,8 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
 
 def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
               timesA=None, timesB=None, t_cutoff=np.inf, calc_angle=False,
-              maxobs=None, maxobsA=None, maxobsB=None, seed=None, verbose=True):
+              maxobs=None, maxobsA=None, maxobsB=None, seed=None, verbose=True,
+              anisotropy=None):
     """Cross-variogram cloud between two co-located variables A and B.
 
     Pairs are formed across the two data sets (every A vs every B).  When
@@ -2424,6 +2826,9 @@ def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
     dim = dA
     if dim not in (1, 2, 3):
         raise ValueError("coordinates must be 1D, 2D or 3D")
+    if anisotropy is not None:
+        anisotropy = dict(anisotropy)
+        calc_anisotropic_lag(np.zeros((1, dim)), **anisotropy)
 
     if maxobs is not None:
         maxobsA = maxobsA or min(maxobs, nA)
@@ -2449,7 +2854,7 @@ def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
         pair = _pair_lags(
             coordsA[i:i + 1], coordsB, valsA[i], valsB, cutoff,
             timesA[i] if has_time else None, timesB if has_time else None,
-            t_cutoff, calc_angle)
+            t_cutoff, calc_angle, anisotropy=anisotropy)
         mask = pair["mask"]
         if np.any(mask):
             i0s.append(np.full(np.count_nonzero(mask), i))

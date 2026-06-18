@@ -51,6 +51,8 @@ from krigekit.kriging_indicator import (   # noqa: F401
 from krigekit.variogram import (   # noqa: F401
     VariogramModel,
     VariogramSystem,
+    calc_anisotropic_lag,
+    calc_lag_vectors,
 )
 
 from importlib.metadata import version, PackageNotFoundError
@@ -65,6 +67,8 @@ __all__ = [
     "IndicatorKriging",
     "VariogramModel",
     "VariogramSystem",
+    "calc_anisotropic_lag",
+    "calc_lag_vectors",
     # convenience functions
     "ordinary_kriging",
     "cokriging",

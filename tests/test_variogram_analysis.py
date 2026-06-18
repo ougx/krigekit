@@ -9,7 +9,9 @@ from krigekit.variogram import (
     VariogramModel,
     VariogramSystem,
     avg_vgm,
+    calc_anisotropic_lag,
     calc_cov,
+    calc_lag_vectors,
     calc_vgm,
     cross_vgm,
     directional_vgm,
@@ -82,6 +84,69 @@ def test_variogram_model_calc_variogram_applies_2d_anisotropy():
     np.testing.assert_allclose(north, calc_vgm("sph", 5.0, psill=1.0, rng=10.0))
     np.testing.assert_allclose(east, calc_vgm("sph", 5.0, psill=1.0, rng=5.0))
     assert north < east
+
+
+def test_shared_anisotropic_lag_matches_model_coordinate_evaluation():
+    lag = calc_lag_vectors([0.0, 0.0], [[0.0, 5.0], [5.0, 0.0]])
+    distance = calc_anisotropic_lag(
+        lag,
+        anis1=0.5,
+        azimuth=0.0,
+    )
+    np.testing.assert_allclose(distance, [5.0, 10.0])
+
+    model = VariogramModel().set_vgm(
+        vtype="sph",
+        sill=1.0,
+        a_major=10.0,
+        a_minor1=5.0,
+        azimuth=0.0,
+    )
+    expected = calc_vgm("sph", distance, rng=10.0)
+    actual = model.calc_variogram(
+        [[0.0, 0.0], [0.0, 0.0]],
+        [[0.0, 5.0], [5.0, 0.0]],
+    )
+    np.testing.assert_allclose(actual, expected)
+
+
+def test_raw_vgm_preserves_physical_and_anisotropic_distances():
+    cloud = raw_vgm(
+        [[0.0, 0.0], [0.0, 4.0], [2.0, 0.0]],
+        [0.0, 1.0, 2.0],
+        cutoff=5.0,
+        anisotropy={"anis1": 0.5, "azimuth": 0.0},
+        verbose=False,
+    )
+
+    assert "anisotropic_distance" in cloud
+    north = cloud.loc[(cloud["d0"] == 0.0) & (cloud["d1"] == 4.0)].iloc[0]
+    east = cloud.loc[(cloud["d0"] == 2.0) & (cloud["d1"] == 0.0)].iloc[0]
+    assert north["distance"] == 4.0
+    assert north["anisotropic_distance"] == 4.0
+    assert east["distance"] == 2.0
+    assert east["anisotropic_distance"] == 4.0
+
+
+def test_spacetime_variogram_between_applies_stored_anisotropy():
+    model = VariogramModel()
+    model.set_spacetime_anisotropy(anis1=0.5, azimuth=0.0)
+    model.set_spacetime_params(
+        (0.10, 0.06, -0.005, 10.0, 2.0),
+        spatial_vtype="sph",
+        temporal_vtype="gau",
+    )
+
+    north = model.calc_spacetime_variogram_between(
+        [0.0, 0.0], [0.0, 5.0], 0.0, 0.0
+    )
+    east = model.calc_spacetime_variogram_between(
+        [0.0, 0.0], [5.0, 0.0], 0.0, 0.0
+    )
+    assert north < east
+    specs = model.to_spacetime_kriging_specs()
+    assert specs["spatial_spec"]["a_major"] == 10.0
+    assert specs["spatial_spec"]["a_minor1"] == 5.0
 
 
 def test_variogram_model_calc_covariance_pairwise_matrix():
@@ -268,6 +333,73 @@ def test_variogram_model_apply_temporal_to_replays_product_specs():
             "product": True,
         },
     ]
+
+
+def test_variogram_model_fit_spacetime_product_sum_and_convert_specs():
+    truth = np.array([0.10, 0.06, -0.005, 5000.0, 9.0])
+    hs, ht = np.meshgrid(
+        np.linspace(250.0, 5250.0, 11),
+        np.linspace(0.25, 12.75, 14),
+    )
+    gs = calc_vgm("sph", hs.ravel(), rng=truth[3])
+    gt = calc_vgm("gau", ht.ravel(), rng=truth[4])
+    gamma = truth[0] * gs + truth[1] * gt + truth[2] * gs * gt
+    avg = pd.DataFrame({
+        ("distance", "mean"): hs.ravel(),
+        ("time_lag", "mean"): ht.ravel(),
+        ("variogram", "mean"): gamma,
+        ("variogram", "count"): 100.0,
+    })
+
+    model = VariogramModel()
+    returned = model.fit_spacetime_product_sum(
+        avg,
+        starts=[(0.09, 0.05, -0.003, 4500.0, 8.0)],
+        bounds=[
+            (0.01, 0.20),
+            (0.01, 0.15),
+            (-0.05, 0.0),
+            (1000.0, 8000.0),
+            (1.0, 20.0),
+        ],
+    )
+
+    assert returned is model
+    assert model.spacetime_fit_result_.success
+    assert len(model.spacetime_fit_results_) == 1
+    np.testing.assert_allclose(
+        model.calc_spacetime_variogram(hs, ht),
+        gamma.reshape(hs.shape),
+        rtol=2e-3,
+        atol=2e-4,
+    )
+
+    specs = model.to_spacetime_kriging_specs(z_scale=5.0)
+    assert specs["model"] == "product_sum"
+    assert specs["spatial_spec"]["vtype"] == "sph"
+    assert specs["temporal_spec"]["vtype"] == "gau"
+    np.testing.assert_allclose(
+        specs["spatial_spec"]["a_minor2"],
+        model.spacetime_params_[3] / 5.0,
+    )
+    assert specs["k_ps"] >= 0.0
+    assert specs["time_at"] > 0.0
+
+
+def test_variogram_model_set_spacetime_params_validates_marginal_sills():
+    model = VariogramModel()
+    model.set_spacetime_params(
+        [0.10, 0.06, -0.005, 5000.0, 9.0],
+        spatial_vtype="sph",
+        temporal_vtype="gau",
+    )
+    np.testing.assert_allclose(
+        model.spacetime_params_,
+        [0.10, 0.06, -0.005, 5000.0, 9.0],
+    )
+
+    with np.testing.assert_raises(ValueError):
+        model.set_spacetime_params([0.10, 0.004, -0.005, 5000.0, 9.0])
 
 
 def test_fit_vgm_returns_variogram_model_from_dict_template():

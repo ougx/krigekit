@@ -20,6 +20,28 @@ plus leave-one-well-out reconstructions for sparse wells H0017 and H1477. A
 2008.5 grid snapshot compares contemporaneous-only spatial kriging against
 all-years space-time kriging with a reproducible 20% snapshot holdout.
 
+### New - CCl4 product-sum variogram fitting example
+
+`VariogramModel` now provides `fit_spacetime_product_sum()`,
+`calc_spacetime_variogram()`, `set_spacetime_params()`, and
+`to_spacetime_kriging_specs()` for a class-based fitting, adjustment, and
+kriging-transfer workflow.
+
+Spatial lag geometry is shared through `calc_lag_vectors()` and
+`calc_anisotropic_lag()`. Empirical variogram functions accept an `anisotropy`
+mapping, preserve physical `distance`, and add `anisotropic_distance` for
+fitting. `VariogramModel.calc_spacetime_variogram_between()` applies the same
+geometry when evaluating coordinate and time pairs.
+
+Added `st_variogram_fitting_ctet.py`, which uses that workflow to calculate the
+empirical space-time variogram for `test_data/ctet.csv`, perform constrained
+multistart product-sum fitting, diagnose weakly identified boundary solutions,
+compare the automatic fit with the manually adjusted production model, and
+print the engine-ready covariance parameters.
+
+The existing CCl4 kriging example now explicitly identifies its transform as a
+uniform quantile transform rather than a normal-score transform.
+
 ### New — `VariogramSystem.set_markov_cross`
 
 Builds an indicator/covariate cross-variogram by the **Markov Model 1 (MM1)**
