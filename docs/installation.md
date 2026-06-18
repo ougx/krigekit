@@ -1,108 +1,118 @@
 # Installation
 
-## Requirements
+## Install from PyPI
 
-| Component | Minimum version |
+The recommended installation uses the precompiled binary wheel from PyPI:
+
+```bash
+python -m pip install krigekit
+```
+
+The wheel includes the compiled Fortran kriging engine. A Fortran compiler,
+manual DLL installation, and a source checkout are not required.
+
+Precompiled wheels are available for supported Python versions on:
+
+| Platform | Architecture |
 |---|---|
-| Python | 3.10 |
-| NumPy | 1.24 |
-| pandas | 1.5 |
-| SciPy | 1.10 |
-| matplotlib | 3.6 |
-| scikit-learn | 1.2 |
-| Fortran compiler | gfortran, Intel ifx, or Intel ifort |
+| Linux | x86_64 |
+| macOS | arm64 (Apple Silicon) and x86_64 |
+| Windows | x86_64 |
 
-## Option A — conda / mamba (recommended)
-
-The `environment.yml` in the project root creates a ready-to-use environment
-with all runtime, development, and docs dependencies pre-installed.
-
-```bash
-mamba env create -f environment.yml   # create once
-mamba activate krigekit              # activate every session
-```
-
-To update an existing environment after pulling new changes:
-
-```bash
-mamba env update -f environment.yml --prune
-```
+Precompiled wheels are currently published for Python 3.10, 3.11, and 3.12.
+pip installs the required NumPy, pandas, SciPy, matplotlib, and scikit-learn
+dependencies automatically.
 
 :::{tip}
-`mamba` is a drop-in replacement for `conda` with faster dependency solving.
-If you only have `conda`, substitute `conda` for `mamba` in the commands above.
-:::
-
-## Option B — pip
-
-### Step 1 — Clone the repository
+Upgrade pip first if it does not select a binary wheel:
 
 ```bash
-git clone https://github.com/your-username/krigekit.git
+python -m pip install --upgrade pip
+python -m pip install krigekit
+```
+:::
+
+### Verify the installation
+
+```bash
+python -c "import krigekit; print(krigekit.__version__)"
+```
+
+You can also run a small import check:
+
+```python
+from krigekit import Kriging, SpaceTimeKriging, VariogramModel
+
+k = Kriging(ndim=2, nvar=1)
+del k
+```
+
+## Install in a conda environment
+
+conda-forge packaging is not currently required. Create an environment and
+install the precompiled PyPI wheel with pip:
+
+```bash
+conda create -n krigekit python=3.12
+conda activate krigekit
+python -m pip install krigekit
+```
+
+`mamba` can be substituted for `conda`.
+
+## Build from source
+
+Building from source is intended for contributors, custom compiler settings,
+or platforms without a compatible wheel. It requires a Fortran compiler such
+as gfortran, Intel ifx, or Intel ifort.
+
+```bash
+git clone https://github.com/ougx/krigekit.git
 cd krigekit
 ```
 
-### Step 2 — Compile the Fortran library
+Compile the shared library:
 
-The shared library (`libkriging.so` on Linux/macOS, `kriging.dll` on Windows)
-must be compiled before use.  Run `build_lib.py` from the project root:
-
-**Linux / macOS (gfortran)**
+**Linux or macOS with gfortran**
 
 ```bash
-python build_lib.py
-# explicit compiler:
 python build_lib.py --compiler gfortran
-# debug build:
-python build_lib.py --opt debug
 ```
 
-**Windows (Intel ifx)**
+**Windows with Intel ifx**
 
 ```bat
 call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat"
 python build_lib.py --compiler ifx
 ```
 
-**Windows (gfortran via MSYS2 / rtools)**
+**Windows with MinGW gfortran**
 
 ```bash
 python build_lib.py --compiler gfortran
 ```
 
-The script compiles all Fortran sources in `src/libkriging/` in dependency
-order and places the compiled library inside `src/krigekit/`.
-
-:::{note}
-Pass `--no-openmp` to disable OpenMP if your compiler or environment does not
-support it.  Single-threaded performance is unaffected for most workloads.
-:::
-
-### Step 3 — Install the Python package
+The build script places `libkriging.so`, `libkriging.dylib`, or `kriging.dll`
+inside `src/krigekit/`. Then install the local package:
 
 ```bash
-pip install -e .        # editable install (recommended for development)
-# or:
-pip install .
+python -m pip install -e ".[dev]"
+python -m pytest
 ```
 
-### Step 4 — Verify
+Useful build options:
 
 ```bash
-pip install -e ".[dev]"
-pytest
+python build_lib.py --opt debug
+python build_lib.py --no-openmp
+python build_lib.py --hcache 0
 ```
 
-All tests should pass.  If the shared library is missing, you will get an
-`OSError` when importing `krigekit`.
+## Build the documentation
 
-### Docs dependencies (optional)
-
-To build this documentation locally:
+From a source checkout:
 
 ```bash
-pip install -e ".[docs]"
-cd docs
-sphinx-build . _build/html
-# open _build/html/index.html
+python -m pip install -e ".[docs]"
+python -m sphinx -b html docs docs/_build/html
 ```

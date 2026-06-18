@@ -3,9 +3,9 @@ krigekit
 =========
 Python wrapper for a Fortran kriging and SGSIM engine.
 
-The shared library (libkriging.so / kriging.dll) must be compiled from the
-Fortran sources in the ``fortran/`` directory and placed in this package
-directory before use.  See the README for build instructions.
+PyPI binary wheels include the compiled Fortran library. A source build is
+needed only for development, custom compiler settings, or unsupported
+platforms. See the installation guide for details.
 
 Public API
 ----------

@@ -3,6 +3,14 @@
 **krigekit** is a Python interface to a high-performance Fortran kriging and
 Sequential Gaussian Simulation engine, parallelised with OpenMP.
 
+Install the precompiled package from PyPI:
+
+```bash
+python -m pip install krigekit
+```
+
+The binary wheel includes the Fortran engine; no compiler is required.
+
 ::::{grid} 2
 :::{grid-item-card} Quick start
 :link: quickstart
