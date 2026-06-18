@@ -259,13 +259,14 @@ contains
 
   integer(c_int) function krige_st_set_vgm(handle, ivar, jvar, vtype, &
       nugget, sill, a_major, a_minor1, a_minor2, &
-      azimuth, dip, plunge) &
+      azimuth, dip, plunge, is_product) &
       bind(C, name='krige_st_set_vgm') result(ierr)
     integer(c_intptr_t),    intent(in), value :: handle
     integer(c_int),         intent(in), value :: ivar, jvar
     character(kind=c_char), intent(in)        :: vtype(*)
     real(c_double),         intent(in), value :: nugget, sill, a_major, a_minor1, a_minor2
     real(c_double),         intent(in), value :: azimuth, dip, plunge
+    integer(c_int),         intent(in), value :: is_product
     type(t_kriging_st), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -282,17 +283,19 @@ contains
                      a_minor2 = real(a_minor2), &
                      azimuth  = real(azimuth), &
                      dip      = real(dip), &
-                     plunge   = real(plunge))
+                     plunge   = real(plunge), &
+                     product  = (is_product /= 0))
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_vgm
 
   integer(c_int) function krige_st_set_vgm_temporal(handle, ivar, jvar, vtype, &
-      nugget, sill, at_k) &
+      nugget, sill, at_k, is_product) &
       bind(C, name='krige_st_set_vgm_temporal') result(ierr)
     integer(c_intptr_t),    intent(in), value :: handle
     integer(c_int),         intent(in), value :: ivar, jvar
     character(kind=c_char), intent(in)        :: vtype(*)
     real(c_double),         intent(in), value :: nugget, sill, at_k
+    integer(c_int),         intent(in), value :: is_product
     type(t_kriging_st), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -304,7 +307,8 @@ contains
                                vtype  = c2fstr(vtype), &
                                nugget = real(nugget), &
                                sill   = real(sill), &
-                               at_k   = real(at_k))
+                               at_k   = real(at_k), &
+                               product = (is_product /= 0))
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_vgm_temporal
 

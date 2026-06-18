@@ -193,15 +193,17 @@ contains
   ! Unlike the spatial kriging set_vgm, there is no per-block index:
   ! the ST variogram is stationary (no varying_vgm mode).
   !=============================================================================
-  subroutine set_vgm(self, ivar, jvar, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge)
+  subroutine set_vgm(self, ivar, jvar, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge, product)
     class(t_kriging_st), intent(inout) :: self
     integer,             intent(in)    :: ivar, jvar
     character(*), optional, intent(in) :: vtype
     real,         optional, intent(in) :: nugget, sill, a_major, a_minor1, a_minor2
     real,         optional, intent(in) :: azimuth, dip, plunge
+    logical,      optional, intent(in) :: product
     ! local
     character(len=3) :: vtype_
     real             :: nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_
+    logical          :: product_
     if (.not. associated(self%vgm)) then
       call kriging_error('set_vgm', 'call initialize() before set_vgm()')
       return
@@ -215,14 +217,15 @@ contains
     azimuth_  = 0.0      ; if (present(azimuth )) azimuth_ = azimuth
     dip_      = 0.0      ; if (present(dip     )) dip_ = dip
     plunge_   = 0.0      ; if (present(plunge  )) plunge_ = plunge
+    product_  = .false.  ; if (present(product )) product_ = product
     if (.not. kriging_check_pair_index('set_vgm', ivar, jvar, 1, self%nvar)) return
     if (jvar == ivar) then
-      call self%vgm(ivar, jvar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+      call self%vgm(ivar, jvar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product_)
       if (kriging_failed()) return
     else if (jvar > ivar) then
-      call self%vgm(ivar, jvar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+      call self%vgm(ivar, jvar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product_)
       if (kriging_failed()) return
-      call self%vgm(jvar, ivar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_)
+      call self%vgm(jvar, ivar, 1)%add_spatial(trim(vtype_), nugget_, sill_, a_major_, a_minor1_, a_minor2_, azimuth_, dip_, plunge_, product_)
       if (kriging_failed()) return
     else
       call kriging_error('set_vgm', 'jvar must be >= ivar')
@@ -233,25 +236,26 @@ contains
 
   !=============================================================================
   ! set_vgm_temporal — add one nested TEMPORAL structure to vgm(ivar,jvar)%ct
-  !   spec: "vtype nugget sill at_k"    (simplified 4-param format)
+  !   spec: "vtype nugget sill at_k [product]"
   !=============================================================================
-  subroutine set_vgm_temporal(self, ivar, jvar, vtype,nugget,sill,at_k)
+  subroutine set_vgm_temporal(self, ivar, jvar, vtype,nugget,sill,at_k,product)
     class(t_kriging_st), intent(inout) :: self
     integer,             intent(in)    :: ivar, jvar
     character(*), optional, intent(in) :: vtype
     real,         optional, intent(in) :: nugget, sill, at_k
+    logical,      optional, intent(in) :: product
     if (.not. associated(self%vgm)) then
       call kriging_error('set_vgm_temporal', 'call initialize() before set_vgm_temporal()')
       return
     end if
     if (.not. kriging_check_pair_index('set_vgm_temporal', ivar, jvar, 1, self%nvar)) return
     if (jvar == ivar) then
-      call self%vgm(ivar, jvar, 1)%add_temporal(vtype,nugget,sill,at_k)
+      call self%vgm(ivar, jvar, 1)%add_temporal(vtype,nugget,sill,at_k,product)
       if (kriging_failed()) return
     else if (jvar > ivar) then
-      call self%vgm(ivar, jvar, 1)%add_temporal(vtype,nugget,sill,at_k)
+      call self%vgm(ivar, jvar, 1)%add_temporal(vtype,nugget,sill,at_k,product)
       if (kriging_failed()) return
-      call self%vgm(jvar, ivar, 1)%add_temporal(vtype,nugget,sill,at_k)
+      call self%vgm(jvar, ivar, 1)%add_temporal(vtype,nugget,sill,at_k,product)
       if (kriging_failed()) return
     else
       call kriging_error('set_vgm_temporal', 'jvar must be >= ivar')

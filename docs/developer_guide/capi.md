@@ -714,6 +714,45 @@ int krige_st_set_st_model(int64_t handle,
 
 Sets global ST model parameters shared by all variogram entries.
 
+### `krige_st_set_vgm`
+
+```c
+int krige_st_set_vgm(int64_t handle,
+    int ivar,
+    int jvar,
+    const char *vtype,
+    double nugget,
+    double sill,
+    double a_major,
+    double a_minor1,
+    double a_minor2,
+    double azimuth,
+    double dip,
+    double plunge,
+    int is_product) // 0 = additive, 1 = multiply the preceding spatial structure
+```
+
+Adds one spatial marginal structure. Consecutive structures with
+`is_product=1` are multiplied in covariance space, matching
+`krige_set_vgm`.
+
+### `krige_st_set_vgm_temporal`
+
+```c
+int krige_st_set_vgm_temporal(int64_t handle,
+    int ivar,
+    int jvar,
+    const char *vtype,
+    double nugget,
+    double sill,
+    double at_k,
+    int is_product) // 0 = additive, 1 = multiply the preceding temporal structure
+```
+
+Adds one temporal marginal structure. `at_k` is in the same units as the
+observation time coordinate. Consecutive structures with `is_product=1` are
+multiplied in covariance space, matching `krige_set_vgm`.
+
 ### `krige_st_set_search`
 
 ```c

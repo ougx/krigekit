@@ -681,6 +681,32 @@ to the same ``a_major``:
 - To add a second independent product group, place a non-product structure
   between the two groups.
 
+Weak periodic modulation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A pure decay-times-periodic product makes the periodic kernel control the
+full covariance amplitude. For a weaker seasonal signal, add a non-periodic
+background group and give the product group a smaller sill:
+
+.. math::
+
+   C(h) = A\,G(h;a) + B\,G(h;a)\cos(2\pi h),
+
+with :math:`0 < B \ll A`. For annual data measured in years:
+
+.. code-block:: python
+
+   temporal = VariogramModel()
+   temporal.set_vgm("gau", nugget=3.4, sill=38.5, a_major=34.6)
+   temporal.set_vgm("gau", sill=2.6, a_major=34.6)
+   temporal.set_vgm("hol", sill=1.0, a_major=0.5, product=True)
+
+   temporal.apply_temporal_to(k, ivar=1, jvar=1)
+
+The ``hol`` period is ``2 * a_major``, so ``a_major=0.5`` is one year.
+``SpaceTimeKriging.set_vgm_temporal`` accepts the same ``product=True``
+semantics for temporal marginal structures.
+
 Anisotropic model
 -----------------
 

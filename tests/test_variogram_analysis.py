@@ -240,6 +240,36 @@ def test_variogram_model_apply_to_kriging_replays_specs():
     assert np.isfinite(var[0])
 
 
+def test_variogram_model_apply_temporal_to_replays_product_specs():
+    class TemporalRecorder:
+        def __init__(self):
+            self.calls = []
+
+        def set_vgm_temporal(self, **kwargs):
+            self.calls.append(kwargs)
+
+    model = VariogramModel()
+    model.set_vgm(vtype="gau", nugget=0.2, sill=3.0, a_major=25.0)
+    model.set_vgm(vtype="hol", sill=1.0, a_major=0.5, product=True)
+
+    recorder = TemporalRecorder()
+    returned = model.apply_temporal_to(recorder, ivar=1, jvar=1)
+
+    assert returned is recorder
+    assert recorder.calls == [
+        {
+            "ivar": 1, "jvar": 1, "vtype": "gau",
+            "nugget": 0.2, "sill": 3.0, "at_k": 25.0,
+            "product": False,
+        },
+        {
+            "ivar": 1, "jvar": 1, "vtype": "hol",
+            "nugget": 0.0, "sill": 1.0, "at_k": 0.5,
+            "product": True,
+        },
+    ]
+
+
 def test_fit_vgm_returns_variogram_model_from_dict_template():
     h = np.linspace(0.2, 8.0, 30)
     true_model = VariogramModel()

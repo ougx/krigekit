@@ -361,7 +361,13 @@ class TestConvenienceFunction:
             obs_value=value,
             grid_coord=gcoord,
             grid_time=gtime,
-            spatial_spec=dict(vtype="exp", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100),
+            spatial_spec=[
+                dict(vtype="gau", nugget=0, sill=0.8,
+                     a_major=500, a_minor1=300, a_minor2=100),
+                dict(vtype="cyc", nugget=0, sill=1.0,
+                     a_major=250, a_minor1=150, a_minor2=50,
+                     product=True),
+            ],
             temporal_spec=dict(vtype="exp", nugget=0, sill=0.5, at_k=10.0),
             joint_sills=[],       # not used for product_sum
             model="product_sum",
@@ -509,6 +515,63 @@ class TestNestedStructures:
         est, var = k.get_results()
         assert np.all(var >= 0)
         assert np.all(np.isfinite(est))
+
+    def test_product_temporal(self, obs_data_1var, grid_data):
+        """A temporal product member is accepted and produces finite results."""
+        coord, value = obs_data_1var
+        gcoord, gtime = grid_data
+
+        k = SpaceTimeKriging(nvar=1)
+        k.set_st_model("product_sum", k_ps=0.01)
+        k.set_obs(1, coord, value, nmax=20)
+        k.set_vgm(
+            1, 1, vtype="sph", nugget=0.05, sill=0.8,
+            a_major=500, a_minor1=300, a_minor2=100,
+        )
+        k.set_vgm_temporal(
+            1, 1, vtype="gau", nugget=0.05, sill=0.4, at_k=30.0,
+        )
+        k.set_vgm_temporal(
+            1, 1, vtype="hol", nugget=0.0, sill=1.0, at_k=0.5,
+            product=True,
+        )
+        k.set_grid(gcoord, gtime)
+        k.set_search(1, time_at=10.0)
+        k.solve()
+        est, var = k.get_results()
+
+        assert np.all(np.isfinite(est))
+        assert np.all(np.isfinite(var))
+        assert np.all(var >= 0)
+
+    def test_product_spatial(self, obs_data_1var, grid_data):
+        """A spatial product member is accepted and produces finite results."""
+        coord, value = obs_data_1var
+        gcoord, gtime = grid_data
+
+        k = SpaceTimeKriging(nvar=1)
+        k.set_st_model("product_sum", k_ps=0.01)
+        k.set_obs(1, coord, value, nmax=20)
+        k.set_vgm(
+            1, 1, vtype="gau", nugget=0.05, sill=0.8,
+            a_major=500, a_minor1=300, a_minor2=100,
+        )
+        k.set_vgm(
+            1, 1, vtype="cyc", nugget=0.0, sill=1.0,
+            a_major=250, a_minor1=150, a_minor2=50,
+            product=True,
+        )
+        k.set_vgm_temporal(
+            1, 1, vtype="gau", nugget=0.05, sill=0.4, at_k=30.0,
+        )
+        k.set_grid(gcoord, gtime)
+        k.set_search(1, time_at=10.0)
+        k.solve()
+        est, var = k.get_results()
+
+        assert np.all(np.isfinite(est))
+        assert np.all(np.isfinite(var))
+        assert np.all(var >= 0)
 
 
 # ===========================================================================

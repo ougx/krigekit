@@ -147,11 +147,11 @@ _st_set_grad = _status_cfun("krige_st_set_grad", [
 _st_set_vgm = _status_cfun("krige_st_set_vgm", [
     ctypes.c_int64, _c_int, _c_int, ctypes.c_char_p,
     _c_double, _c_double, _c_double, _c_double, _c_double,
-    _c_double, _c_double, _c_double,
+    _c_double, _c_double, _c_double, _c_int,
 ])
 _st_set_vgm_temporal = _status_cfun("krige_st_set_vgm_temporal", [
     ctypes.c_int64, _c_int, _c_int, ctypes.c_char_p,
-    _c_double, _c_double, _c_double,
+    _c_double, _c_double, _c_double, _c_int,
 ])
 _st_set_vgm_joint_sills = _status_cfun("krige_st_set_vgm_joint_sills", [
     ctypes.c_int64, _c_int, _c_int, _c_int, _ptr_dbl,
@@ -606,12 +606,16 @@ class SpaceTimeKriging:
         a_minor1: Optional[float] = None,
         a_minor2: Optional[float] = None,
         azimuth: float = 0.0, dip: float = 0.0, plunge: float = 0.0,
+        product: bool = False,
     ):
-        """
-        Add one spatial nested structure to vgm(ivar, jvar).
-        Call multiple times for nested models.
+        """Add one spatial marginal structure to ``vgm(ivar, jvar)``.
 
-        Same parameters as :meth:`Kriging.set_vgm` — see that docstring.
+        Parameters match :meth:`Kriging.set_vgm`, including ``product``.
+        When ``product=True``, this structure is multiplied with the
+        immediately preceding spatial structure in covariance space.
+
+        Call repeatedly for nested models. The first structure cannot be a
+        product member.
         """
         if a_minor1 is None:
             a_minor1 = a_major
@@ -621,25 +625,44 @@ class SpaceTimeKriging:
                     str(vtype).encode(),
                     _c_double(nugget), _c_double(sill), _c_double(a_major),
                     _c_double(a_minor1), _c_double(a_minor2),
-                    _c_double(azimuth), _c_double(dip), _c_double(plunge))
+                    _c_double(azimuth), _c_double(dip), _c_double(plunge),
+                    _c_int(1 if product else 0))
 
     # ------------------------------------------------------------------
     def set_vgm_temporal(
         self, ivar: int, jvar: int, vtype: str,
         nugget: float = 0.0, sill: float = 1.0, at_k: float = 1.0,
+        product: bool = False,
     ):
-        """
-        Add one temporal nested structure to vgm(ivar, jvar).
-        Call multiple times for nested models.
+        """Add one temporal marginal structure.
 
-        vtype  : variogram type (e.g. 'sph', 'exp', 'gau')
-        nugget : nugget contribution of this structure
-        sill   : partial sill of this structure
-        at_k   : temporal practical range (same time units as observations)
+        Parameters
+        ----------
+        ivar, jvar : int
+            One-based variable-pair indices.
+        vtype : str
+            Variogram type such as ``"sph"``, ``"exp"``, ``"gau"`` or
+            ``"hol"``.
+        nugget : float, optional
+            Nugget contribution of this structure.
+        sill : float, optional
+            Partial sill of this structure.
+        at_k : float, optional
+            Temporal practical range or period parameter, in the same units as
+            the observation time coordinate.
+        product : bool, optional
+            Multiply this structure with the immediately preceding temporal
+            structure in covariance space instead of adding it.
+
+        Notes
+        -----
+        Call this method repeatedly for nested models. The first structure
+        cannot be a product member.
         """
         _st_set_vgm_temporal(_h(self._handle), _c_int(ivar), _c_int(jvar),
                               str(vtype).encode(),
-                              _c_double(nugget), _c_double(sill), _c_double(at_k))
+                              _c_double(nugget), _c_double(sill), _c_double(at_k),
+                              _c_int(1 if product else 0))
 
     # ------------------------------------------------------------------
     def set_vgm_joint_sills(self, ivar: int, jvar: int, *sills: float):

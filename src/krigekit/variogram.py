@@ -1520,6 +1520,35 @@ class VariogramModel:
             kriging.set_vgm(ivar=ivar, jvar=jvar, **spec)
         return kriging
 
+    def to_temporal_specs(self):
+        """Return structures accepted by ``SpaceTimeKriging.set_vgm_temporal``.
+
+        The one-dimensional ``a_major`` value is renamed to ``at_k``.  Spatial
+        anisotropy fields are intentionally omitted because temporal marginal
+        structures are one-dimensional.
+        """
+        return [
+            {
+                "vtype": comp.vtype,
+                "nugget": comp.nugget,
+                "sill": comp.sill,
+                "at_k": comp.a_major,
+                "product": comp.product,
+            }
+            for comp in self.structures
+        ]
+
+    def apply_temporal_to(self, kriging, ivar: int, jvar: int):
+        """Append this model to a ``SpaceTimeKriging`` temporal marginal.
+
+        The target pair should not already contain temporal structures.  The
+        space-time API currently resets spatial and temporal marginals
+        together, so this helper deliberately does not offer a replace mode.
+        """
+        for spec in self.to_temporal_specs():
+            kriging.set_vgm_temporal(ivar=ivar, jvar=jvar, **spec)
+        return kriging
+
     def __len__(self):
         """Return the number of stored structures."""
         return len(self.structures)

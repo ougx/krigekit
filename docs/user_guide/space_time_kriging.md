@@ -219,6 +219,41 @@ k.set_vgm_temporal(ivar=1, jvar=1, vtype="gau",
 `set_vgm_joint_sills` is **not** used with `product_sum`; the coupling is
 handled entirely by `k_ps`.
 
+### Product structures in spatial and temporal marginals
+
+Both marginal setters support `product=True` with the same convention as
+`Kriging.set_vgm()`:
+
+```python
+# Spatial Gaussian envelope multiplied by a 3-D-valid periodic structure.
+k.set_vgm(1, 1, vtype="gau", sill=0.8, a_major=5000.0)
+k.set_vgm(
+    1, 1,
+    vtype="cyc",
+    sill=1.0,
+    a_major=1000.0,
+    product=True,
+)
+
+# Temporal Gaussian envelope multiplied by an annual hole effect.
+k.set_vgm_temporal(1, 1, vtype="gau", sill=0.4, at_k=30.0)
+k.set_vgm_temporal(
+    1, 1,
+    vtype="hol",
+    sill=1.0,
+    at_k=0.5,
+    product=True,
+)
+```
+
+The first member of each marginal cannot be a product structure. Product
+nesting affects the spatial marginal $C_S$ or temporal marginal $C_T$.
+Use a kernel valid for the spatial dimensionality; for example, `hol` is not
+positive definite in 3-D space, while `cyc` is valid.
+For the sum-metric model, `set_vgm_joint_sills()` still defines separate
+additive joint terms for each stored spatial component; it does not multiply
+the joint terms according to the spatial product groups.
+
 ## Temporal search scale
 
 The KD-tree neighbour search operates in the combined
@@ -355,6 +390,75 @@ Kernel choice for the temporal marginal:
 
 Use leave-one-out cross-validation to confirm the kernel choice
 (see `_diag_at_kernel.py` in the examples for a systematic sweep).
+
+### Long-term decay with an annual cycle
+
+Repeated groundwater-level measurements often show a slow multi-year loss of
+correlation plus a weaker annual cycle. Estimate the temporal marginal from
+**within-well pairs only**. Pairing observations from different wells mixes
+spatial differences into the temporal variogram.
+
+For `obs_gwlevel.csv`, first convert hydraulic head to depth to water,
+`dem10 - sl_lev_va`, to remove the broad topographic trend. The temporal
+semivariance is unchanged because `dem10` is constant within a well.
+
+$$
+C_T(h) = A\,G(h;a_T) + B\,G(h;a_T)\cos(2\pi h),
+$$
+
+where
+
+$$
+G(h;a_T)=\exp\left[-3.0625\left(\frac{h}{a_T}\right)^2\right].
+$$
+
+The corresponding semivariogram is
+
+$$
+\gamma_T(h)=\eta+A[1-G(h;a_T)]
+ +B[1-G(h;a_T)\cos(2\pi h)].
+$$
+
+This is an additive Gaussian background plus a second Gaussian multiplied by
+an annual hole-effect structure:
+
+```python
+temporal = VariogramModel()
+temporal.set_vgm("gau", nugget=eta, sill=A, a_major=a_t)
+temporal.set_vgm("gau", sill=B, a_major=a_t)
+temporal.set_vgm("hol", sill=1.0, a_major=0.5, product=True)
+
+temporal.apply_temporal_to(k, ivar=1, jvar=1)
+```
+
+For `hol`, the covariance is $\cos(\pi h/a)$, so its period is $2a$.
+Therefore `a_major=0.5` gives a one-year period when time is measured in
+years.
+
+Do not use a single `gau * cyc` product for a weak seasonal signal without
+checking its amplitude. The current `cyc` kernel has a fixed normalized
+half-period correlation of $\exp(-2)\approx0.135$, which imposes a much
+stronger oscillation than this groundwater dataset supports. The additive
+background plus smaller `gau * hol` product estimates the seasonal amplitude
+through `B` while remaining positive definite.
+
+See `examples/space_time/st_variogram_fitting_gwlevel.py` for the complete fit
+and half-year kriged hydrographs for wells H0049 and H0001 from 1980 through
+2020. The example retains observations at the target wells, adds a small
+observation-error variance to regularize repeated measurements at identical
+coordinates, and plots 95% kriging intervals. It also includes a stricter
+leave-one-well-out reconstruction for H0017 and H1477. Each sparse well has
+only one withheld observation but 17 neighboring wells with at least 30
+observations within 30,000 ft.
+
+The example also compares a gridded snapshot at `timeindex=2008.5`. A seeded
+20% holdout removes 65 of the 325 contemporaneous measurements. Spatial
+kriging uses only the remaining 2008.5 data, while space-time kriging may also
+use other dates, including other measurements from the withheld wells. In this
+demonstration the holdout RMSE decreases from about `26.63 ft` for the spatial
+baseline to `1.73 ft` for space-time kriging. This evaluates reconstruction of
+a sparsely sampled **date**; it is intentionally different from
+leave-one-well-out validation.
 
 ## Cross-validation
 

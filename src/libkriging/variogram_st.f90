@@ -33,7 +33,7 @@
 ! Spec formats
 ! ------------
 ! Spatial (same as base variogram):
-!   "vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge"
+!   "vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge [product]"
 !
 ! Temporal (simplified 1D):
 !   "vtype nugget sill at_k"
@@ -278,42 +278,48 @@ contains
 
 
   !=============================================================================
-  ! add_spatial — parse a full 9-param spatial spec and add to cs
-  !   spec: "vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge"
+  ! add_spatial — parse a spatial spec and add to cs
+  !   spec: "vtype nugget sill a_major a_minor1 a_minor2 azimuth dip plunge [product]"
   !=============================================================================
-  subroutine add_spatial_vgm_st(self, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge)
+  subroutine add_spatial_vgm_st(self, vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge, product)
     class(vgm_struct_st), intent(inout) :: self
     character(*),         intent(in) :: vtype
     real,                 intent(in) :: nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge
+    logical, optional,    intent(in) :: product
+    logical :: product_
 
-
+    product_ = .false.; if (present(product)) product_ = product
     self%cs%ndim = self%ndim
     call self%cs%add_args(trim(vtype), nugget, sill, &
-                          a_major, a_minor1, a_minor2, azimuth, dip, plunge)
+                          a_major, a_minor1, a_minor2, azimuth, dip, plunge, &
+                          product=product_)
   end subroutine add_spatial_vgm_st
 
 
   !=============================================================================
-  ! add_temporal — parse a simplified 4-param temporal spec and add to ct
-  !   spec: "vtype nugget sill at_k"
+  ! add_temporal — parse a simplified temporal spec and add to ct
+  !   spec: "vtype nugget sill at_k [product]"
   !   at_k: temporal practical range for this nested structure (physical time units)
   !   Expanded to isotropic geometry: a_major=a_minor1=a_minor2=at_k, angles=0
   !=============================================================================
-  subroutine add_temporal_vgm_st(self, vtype, nugget, sill, at_k)
+  subroutine add_temporal_vgm_st(self, vtype, nugget, sill, at_k, product)
     class(vgm_struct_st), intent(inout) :: self
     character(*), optional, intent(in) :: vtype
     real,         optional, intent(in) :: nugget, sill, at_k
+    logical,      optional, intent(in) :: product
 
     character(24) :: vtype_
     real          :: nugget_, sill_, at_k_
+    logical       :: product_
 
     self%ct%ndim = 1
     vtype_  = 'sph' ; if (present(vtype )) vtype_  = vtype
     nugget_ = 0.0   ; if (present(nugget)) nugget_ = nugget
     sill_   = 1.0   ; if (present(sill  )) sill_   = sill
     at_k_   = 1.0   ; if (present(at_k  )) at_k_   = at_k
+    product_ = .false.; if (present(product)) product_ = product
     call self%ct%add_args(trim(vtype_), nugget_, sill_, &
-                          at_k_, at_k_, at_k_, 0.0, 0.0, 0.0)
+                          at_k_, at_k_, at_k_, 0.0, 0.0, 0.0, product=product_)
   end subroutine add_temporal_vgm_st
 
 

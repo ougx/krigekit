@@ -2,6 +2,24 @@
 
 ## 0.2.5 (unreleased)
 
+### New - Product structures in space-time marginal variograms
+
+`SpaceTimeKriging.set_vgm()` and `set_vgm_temporal()` now accept
+`product=True`, giving spatial and temporal marginals the same product-nesting
+semantics as `Kriging.set_vgm()`. This allows valid quasi-periodic covariances
+such as a long-term Gaussian decay multiplied by a hole-effect structure.
+`VariogramModel` adds
+`to_temporal_specs()` and `apply_temporal_to()` to replay fitted temporal
+models into the space-time engine.
+
+The new groundwater-level gallery example fits separate spatial and temporal
+marginals from `obs_gwlevel.csv`, including a weak annual cycle whose amplitude
+decays over the long-term Gaussian range. It also kriges half-year groundwater
+level series for H0049 and H0001 from 1980 through 2020 with uncertainty bands,
+plus leave-one-well-out reconstructions for sparse wells H0017 and H1477. A
+2008.5 grid snapshot compares contemporaneous-only spatial kriging against
+all-years space-time kriging with a reproducible 20% snapshot holdout.
+
 ### New — `VariogramSystem.set_markov_cross`
 
 Builds an indicator/covariate cross-variogram by the **Markov Model 1 (MM1)**

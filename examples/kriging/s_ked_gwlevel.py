@@ -38,11 +38,11 @@ from krigekit import Kriging
 # Load 2015 observations
 # ---------------------------------------------------------------------------
 df   = pd.read_csv("../../test_data/obs_gwlevel.csv")
-df15 = df[df["Year"] == 2015].dropna(subset=["Observed", "dem35"])
+df15 = df[df["timeindex"] == 2015].dropna(subset=["sl_lev_va", "dem10"])
 
 obs_coord = df15[["x", "y"]].values.astype(float)
-obs_wl    = df15["Observed"].values.astype(float)   # groundwater level (m)
-obs_dem   = df15["dem35"].values.astype(float)       # land-surface elevation (m)
+obs_wl    = df15["sl_lev_va"].values.astype(float)   # groundwater level (m)
+obs_dem   = df15["dem10"].values.astype(float)       # land-surface elevation (m)
 
 r_wl_dem = np.corrcoef(obs_wl, obs_dem)[0, 1]
 print(f"N = {len(obs_wl)} wells  |  r(water level, DEM) = {r_wl_dem:.3f}")
