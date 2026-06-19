@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.5 (unreleased)
+## 0.2.7 (unreleased)
+
+## 0.2.6
 
 ### Changed - Variogram analysis module architecture
 
@@ -64,6 +66,8 @@ print the engine-ready covariance parameters.
 
 The existing CCl4 kriging example now explicitly identifies its transform as a
 uniform quantile transform rather than a normal-score transform.
+
+## 0.2.5
 
 ### New — `VariogramSystem.set_markov_cross`
 
