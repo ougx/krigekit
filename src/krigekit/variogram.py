@@ -309,6 +309,13 @@ class VariogramModel:
         self.spacetime_fit_results_ = None
         self.spacetime_spatial_vtype_ = None
         self.spacetime_temporal_vtype_ = None
+        self.sum_metric_params_ = None
+        self.sum_metric_fit_result_ = None
+        self.sum_metric_spatial_model_ = None
+        self.sum_metric_temporal_model_ = None
+        self.sum_metric_transform_ = None
+        self.sum_metric_time_nugget_ = 0.0
+        self.sum_metric_time_sill_ = 1.0
         self.spacetime_anisotropy_ = {
             "anis1": 1.0,
             "anis2": 1.0,
@@ -375,6 +382,8 @@ class VariogramModel:
         self.spacetime_params_ = None
         self.spacetime_fit_result_ = None
         self.spacetime_fit_results_ = None
+        self.sum_metric_params_ = None
+        self.sum_metric_fit_result_ = None
 
     def set_obs(self, coord, value, times=None):
         """Store observations for empirical variogram calculation.
@@ -1033,6 +1042,196 @@ class VariogramModel:
         self.spacetime_fit_result_ = best
         self.set_spacetime_params(best.x)
         return self
+
+    def calc_spacetime_sum_metric_variogram(
+        self,
+        spatial_lag,
+        temporal_lag,
+        params=None,
+    ):
+        """Evaluate a fitted sum-metric space-time semivariogram.
+
+        ``params`` contains ``spatial_scale, temporal_scale``, one joint sill
+        per spatial structure, and the joint temporal scale ``at``.
+        """
+        if params is None:
+            params = self.sum_metric_params_
+        if params is None or self.sum_metric_spatial_model_ is None:
+            raise RuntimeError("call fit_spacetime_sum_metric() first")
+
+        params = np.asarray(params, dtype=float).reshape(-1)
+        spatial_scale, temporal_scale = params[:2]
+        joint_sills = params[2:-1]
+        at = params[-1]
+        hs, ht = np.broadcast_arrays(
+            np.asarray(spatial_lag, dtype=float),
+            np.asarray(temporal_lag, dtype=float),
+        )
+
+        total = (
+            spatial_scale * self.sum_metric_spatial_model_.variogram(hs)
+            + temporal_scale * self.sum_metric_temporal_model_.variogram(ht)
+        )
+        dw = calc_vgm(
+            self.sum_metric_transform_,
+            ht,
+            psill=self.sum_metric_time_sill_,
+            rng=at,
+            nugget=self.sum_metric_time_nugget_,
+        )
+        dw = np.where(np.abs(ht) <= np.finfo(float).eps, 0.0, dw)
+        for sill, comp in zip(
+            joint_sills,
+            self.sum_metric_spatial_model_.structures,
+        ):
+            if comp.vtype == "nug":
+                continue
+            hst = np.sqrt((hs / comp.a_major) ** 2 + dw ** 2)
+            total = total + sill * calc_vgm(comp.vtype, hst, rng=1.0)
+        return total
+
+    def fit_spacetime_sum_metric(
+        self,
+        spatial_model,
+        temporal_model,
+        avgvgm=None,
+        *,
+        transform="lin",
+        time_nugget=0.0,
+        time_sill=1.0,
+        p0=None,
+        bounds=None,
+        spatial_col=("distance", "mean"),
+        temporal_col=("time_lag", "mean"),
+        variogram_col=("variogram", "mean"),
+        count_col=("variogram", "count"),
+        weight_cap_quantile=0.90,
+        max_nfev=20_000,
+        avg_kwargs=None,
+    ):
+        """Fit sum-metric coupling while retaining fitted marginal shapes.
+
+        The fit estimates a spatial marginal scale, temporal marginal scale,
+        one non-negative joint sill per spatial structure, and the joint
+        temporal scale ``at``. Allowing the two marginal scales to adjust avoids
+        forcing separately fitted boundary marginals to explain the entire
+        interior space-time lag surface.
+        """
+        if not isinstance(spatial_model, VariogramModel):
+            raise TypeError("spatial_model must be a VariogramModel")
+        if not isinstance(temporal_model, VariogramModel):
+            raise TypeError("temporal_model must be a VariogramModel")
+        if not spatial_model.structures or not temporal_model.structures:
+            raise ValueError("spatial_model and temporal_model must contain structures")
+        if avgvgm is None:
+            if self._avg is None:
+                avgvgm = self.calc_average(**(avg_kwargs or {}))
+            else:
+                avgvgm = self._avg
+        if not isinstance(avgvgm, pd.DataFrame) or len(avgvgm) == 0:
+            raise ValueError("avgvgm must be a non-empty pandas DataFrame")
+        for column in (spatial_col, temporal_col, variogram_col, count_col):
+            if column not in avgvgm.columns:
+                raise KeyError(f"column {column!r} is not present in avgvgm")
+        if time_sill <= 0.0:
+            raise ValueError("time_sill must be positive")
+
+        hs = np.asarray(avgvgm[spatial_col], dtype=float)
+        ht = np.asarray(avgvgm[temporal_col], dtype=float)
+        gamma = np.asarray(avgvgm[variogram_col], dtype=float)
+        count = np.asarray(avgvgm[count_col], dtype=float)
+        valid = (
+            np.isfinite(hs)
+            & np.isfinite(ht)
+            & np.isfinite(gamma)
+            & np.isfinite(count)
+            & (count > 0.0)
+        )
+        hs, ht, gamma, count = hs[valid], ht[valid], gamma[valid], count[valid]
+        if len(gamma) == 0:
+            raise ValueError("avgvgm contains no finite positive-count bins")
+
+        if weight_cap_quantile is None:
+            capped_count = count
+        else:
+            if not 0.0 < weight_cap_quantile <= 1.0:
+                raise ValueError("weight_cap_quantile must be in (0, 1]")
+            capped_count = np.minimum(
+                count,
+                np.quantile(count, weight_cap_quantile),
+            )
+        weights = np.sqrt(capped_count / np.max(capped_count))
+
+        nstruct = len(spatial_model.structures)
+        max_time = max(float(np.nanmax(ht)), 1.0)
+        if p0 is None:
+            p0 = np.r_[1.0, 1.0, np.full(nstruct, 0.05), max_time]
+        p0 = np.asarray(p0, dtype=float).reshape(-1)
+        if len(p0) != nstruct + 3:
+            raise ValueError(
+                "p0 must contain spatial_scale, temporal_scale, one joint "
+                "sill per spatial structure, and at"
+            )
+        if bounds is None:
+            bounds = (
+                np.r_[0.0, 0.0, np.zeros(nstruct), np.finfo(float).eps],
+                np.r_[np.inf, np.inf, np.full(nstruct, np.inf), np.inf],
+            )
+
+        self.sum_metric_spatial_model_ = spatial_model
+        self.sum_metric_temporal_model_ = temporal_model
+        self.sum_metric_transform_ = resolve_model(transform)
+        self.sum_metric_time_nugget_ = float(time_nugget)
+        self.sum_metric_time_sill_ = float(time_sill)
+
+        result = least_squares(
+            lambda params: weights * (
+                self.calc_spacetime_sum_metric_variogram(hs, ht, params)
+                - gamma
+            ),
+            x0=p0,
+            bounds=bounds,
+            max_nfev=max_nfev,
+        )
+        if not result.success:
+            raise RuntimeError(f"sum-metric fit failed: {result.message}")
+        self.sum_metric_params_ = result.x.copy()
+        self.sum_metric_fit_result_ = result
+        return self
+
+    def to_sum_metric_kriging_specs(self):
+        """Return fitted sum-metric marginal, coupling, and search parameters."""
+        if self.sum_metric_params_ is None:
+            raise RuntimeError("call fit_spacetime_sum_metric() first")
+        spatial_scale, temporal_scale = self.sum_metric_params_[:2]
+        joint_sills = self.sum_metric_params_[2:-1]
+        at = self.sum_metric_params_[-1]
+        spatial_specs = []
+        for spec in self.sum_metric_spatial_model_.to_kriging_specs():
+            spec = dict(spec)
+            spec.pop("append", None)
+            if not spec["product"]:
+                spec["nugget"] = float(spec["nugget"] * spatial_scale)
+                spec["sill"] = float(spec["sill"] * spatial_scale)
+            spatial_specs.append(spec)
+        temporal_specs = []
+        for spec in self.sum_metric_temporal_model_.to_temporal_specs():
+            spec = dict(spec)
+            if not spec["product"]:
+                spec["nugget"] = float(spec["nugget"] * temporal_scale)
+                spec["sill"] = float(spec["sill"] * temporal_scale)
+            temporal_specs.append(spec)
+        return {
+            "model": "sum_metric",
+            "transform": self.sum_metric_transform_,
+            "at": float(at),
+            "time_nugget": self.sum_metric_time_nugget_,
+            "time_sill": self.sum_metric_time_sill_,
+            "spatial_specs": spatial_specs,
+            "temporal_specs": temporal_specs,
+            "joint_sills": joint_sills.astype(float).tolist(),
+            "time_at": float(at),
+        }
 
     def to_spacetime_kriging_specs(
         self,

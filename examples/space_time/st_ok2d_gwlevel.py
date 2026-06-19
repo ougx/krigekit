@@ -30,6 +30,18 @@ The two marginals need different pair definitions:
 * The **temporal** variogram uses pairs from the same well only.  Mixing
   different wells would fold the spatial gradient into the temporal marginal.
 
+.. note::
+
+   For the integrated automatic fitting workflow based on
+   :class:`~krigekit.VariogramModel`, including ``set_obs()``, ``set_vgm()``,
+   and ``fit()``, see ``examples/variogram/st_variogram_fitting_gwlevel.py``.
+   This space-time kriging example keeps the marginal calculations and temporal
+   parameter fit separate and explicit so the spatial, long-term temporal, and
+   annual product-covariance contributions are easier to examine. The companion
+   example also fits a nonzero sum-metric coupling term from the full
+   space-time lag surface. This script retains a zero joint sill intentionally
+   to isolate the marginal and annual-cycle behavior in the later comparisons.
+
 The temporal covariance combines a smooth long-term Gaussian decay with a
 smaller annually periodic term:
 
@@ -119,6 +131,11 @@ print(
 # ------------------------
 # A long-term mean is more stable than selecting one survey date, and requiring
 # at least ten observations prevents short records from adding noisy well means.
+#
+# The companion ``st_variogram_fitting_gwlevel.py`` example performs this fit
+# through the complete ``VariogramModel`` workflow.  The calculations remain
+# visible here to keep the focus on how separately estimated spatial and
+# temporal marginals form the later space-time covariance.
 
 well_mean = (
     data.groupby("WellID")

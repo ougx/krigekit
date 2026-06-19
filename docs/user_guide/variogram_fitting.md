@@ -181,6 +181,47 @@ model.fit_anisotropy(
 structure it fits `sill`, `a_major`, and `a_minor1`; in 3-D it can also fit
 `a_minor2` when requested.
 
+## Sum-metric space-time coupling
+
+After fitting spatial and temporal marginals separately, calculate a full
+space-time lag surface and fit the coupling with
+`fit_spacetime_sum_metric()`:
+
+```python
+joint = VariogramModel()
+joint.set_obs(obs_xy, obs_value, times=obs_time)
+joint.calc_experimental(
+    cutoff=120_000.0,
+    t_cutoff=20.0,
+    maxobs=2500,
+    seed=2026,
+    verbose=False,
+)
+joint.calc_average(
+    h_width=5000.0,
+    t_col="time_lag",
+    t_width=0.5,
+)
+
+joint.fit_spacetime_sum_metric(
+    spatial_model,
+    temporal_model,
+    transform="lin",
+    p0=(1.0, 1.0, 100.0, 20.0),
+)
+specs = joint.to_sum_metric_kriging_specs()
+```
+
+The flat parameter order is `spatial_scale`, `temporal_scale`, one
+`joint_sill` per spatial structure, and `at`. The marginal scales reconcile
+models fitted on the spatial and temporal boundaries with the interior
+space-time surface. Fixing `time_sill=1` avoids redundancy between
+`time_sill` and `at` for the linear temporal metric transform.
+
+The groundwater-level gallery example demonstrates this workflow, including
+transfer of the scaled marginals, joint sill, and temporal metric scale to
+`SpaceTimeKriging`.
+
 ### Fitting the short 3-D axis
 
 The shortest 3-D range, usually `a_minor2`, is often the least stable fitted

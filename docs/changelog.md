@@ -20,6 +20,11 @@ plus leave-one-well-out reconstructions for sparse wells H0017 and H1477. A
 2008.5 grid snapshot compares contemporaneous-only spatial kriging against
 all-years space-time kriging with a reproducible 20% snapshot holdout.
 
+`VariogramModel.fit_spacetime_sum_metric()` now fits marginal amplitude
+refinements, one joint sill per spatial structure, and the joint temporal scale
+from a full space-time lag surface. `to_sum_metric_kriging_specs()` converts the
+result directly to `SpaceTimeKriging` inputs.
+
 ### New - CCl4 product-sum variogram fitting example
 
 `VariogramModel` now provides `fit_spacetime_product_sum()`,

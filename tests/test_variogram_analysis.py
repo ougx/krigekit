@@ -402,6 +402,71 @@ def test_variogram_model_set_spacetime_params_validates_marginal_sills():
         model.set_spacetime_params([0.10, 0.004, -0.005, 5000.0, 9.0])
 
 
+def test_variogram_model_fit_spacetime_sum_metric_and_convert_specs():
+    spatial = VariogramModel().set_vgm(
+        "sph",
+        nugget=0.1,
+        sill=2.0,
+        a_major=10.0,
+    )
+    temporal = VariogramModel()
+    temporal.set_vgm("gau", nugget=0.05, sill=0.6, a_major=4.0)
+    temporal.set_vgm("hol", sill=1.0, a_major=0.5, product=True)
+
+    hs, ht = np.meshgrid(
+        np.linspace(1.0, 15.0, 8),
+        np.linspace(0.25, 6.0, 9),
+    )
+    truth = np.array([0.8, 1.2, 0.4, 3.0])
+    dw = calc_vgm("lin", ht, rng=truth[3])
+    hst = np.sqrt((hs / 10.0) ** 2 + dw ** 2)
+    gamma = (
+        truth[0] * spatial.variogram(hs)
+        + truth[1] * temporal.variogram(ht)
+        + truth[2] * calc_vgm("sph", hst, rng=1.0)
+    )
+    avg = pd.DataFrame({
+        ("distance", "mean"): hs.ravel(),
+        ("time_lag", "mean"): ht.ravel(),
+        ("variogram", "mean"): gamma.ravel(),
+        ("variogram", "count"): np.full(gamma.size, 100),
+    })
+
+    model = VariogramModel()
+    returned = model.fit_spacetime_sum_metric(
+        spatial,
+        temporal,
+        avgvgm=avg,
+        p0=(1.0, 1.0, 0.2, 2.0),
+        bounds=(
+            (0.0, 0.0, 0.0, 0.5),
+            (2.0, 2.0, 2.0, 10.0),
+        ),
+    )
+
+    assert returned is model
+    np.testing.assert_allclose(
+        model.sum_metric_params_,
+        truth,
+        rtol=2.0e-3,
+        atol=2.0e-3,
+    )
+    specs = model.to_sum_metric_kriging_specs()
+    assert specs["model"] == "sum_metric"
+    np.testing.assert_allclose(specs["joint_sills"], [truth[2]], rtol=2.0e-3)
+    np.testing.assert_allclose(
+        specs["spatial_specs"][0]["sill"],
+        truth[0] * 2.0,
+        rtol=2.0e-3,
+    )
+    np.testing.assert_allclose(
+        specs["temporal_specs"][0]["sill"],
+        truth[1] * 0.6,
+        rtol=2.0e-3,
+    )
+    assert specs["temporal_specs"][1]["sill"] == 1.0
+
+
 def test_fit_vgm_returns_variogram_model_from_dict_template():
     h = np.linspace(0.2, 8.0, 30)
     true_model = VariogramModel()
