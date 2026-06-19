@@ -40,6 +40,7 @@ module kriging_indicator
   contains
     procedure :: set_sim    => set_sim_indicator
     procedure :: prepare    => prepare_indicator
+    procedure :: search_neighbors => search_neighbors_indicator
     procedure :: sim_draw   => sim_draw_indicator
     procedure :: post_solve => post_solve_indicator
   end type t_kriging_indicator
@@ -99,6 +100,30 @@ contains
 
 
   !============================================================================
+  ! search_neighbors_indicator
+  !
+  ! Reuse the standard multivariate observation search, but only admit prior
+  ! simulated blocks for indicator variables.  Variables ncat+1:nvar are
+  ! secondary covariates: they condition every draw through their observations
+  ! and cross-covariances, but they are not simulated by SIS.  Treating prior
+  ! blocks as secondary-variable neighbours would condition later nodes on the
+  ! secondary estimates stored in block%value rather than on observed AEM data.
+  !============================================================================
+  subroutine search_neighbors_indicator(self, ivar, ctx)
+    class(t_kriging_indicator), intent(inout) :: self
+    integer,                    intent(in)    :: ivar
+    type(t_kriging_ctx),        intent(inout) :: ctx
+    integer :: kcat
+
+    call self%t_kriging%search_neighbors(ivar, ctx)
+    if (kriging_failed() .or. self%nsim == 0) return
+
+    kcat = merge(self%ncat, self%nvar, self%ncat > 0 .and. self%ncat <= self%nvar)
+    if (ivar > kcat) ctx%nnear(self%nvar + ivar) = 0
+  end subroutine search_neighbors_indicator
+
+
+  !============================================================================
   ! sim_draw_indicator
   !
   ! Replaces the default Gaussian perturbation with a categorical CDF draw.
@@ -153,8 +178,11 @@ contains
       end if
     end do
 
-    val           = 0.0
-    val(drawn)    = 1.0
+    ! Only indicators are simulated.  Preserve secondary-variable conditional
+    ! estimates for diagnostics; search_neighbors_indicator prevents them from
+    ! being used as previously simulated conditioning values.
+    val(:kcat)        = 0.0
+    val(drawn)        = 1.0
   end subroutine sim_draw_indicator
 
 

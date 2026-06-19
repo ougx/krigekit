@@ -201,6 +201,28 @@ class IndicatorKriging(Kriging):
         self._nobsdrift    = np.zeros(self.nvar, dtype=np.uint32)
         self._nvgm_struct  = np.zeros([self.nvar, self.nvar], dtype=np.uint32)
 
+    def get_results(self, copy: bool = False, squeeze: bool = True):
+        """Return indicator results, excluding secondary covariate channels.
+
+        The kriging engine stores all ``nvar`` estimates internally because
+        secondary variables participate in the cokriging system.  Public
+        indicator results contain only the first ``ncat`` variables, matching
+        the probability or one-hot category array documented by this class.
+        """
+        estimate, variance = super().get_results(copy=False, squeeze=squeeze)
+        estimate = np.asarray(estimate)
+        variance = np.asarray(variance)
+
+        if estimate.ndim >= 2:
+            estimate = estimate[:, :self.ncat, ...]
+        if variance.ndim >= 3:
+            variance = variance[:, :self.ncat, :self.ncat]
+
+        if copy:
+            estimate = np.array(estimate, order="C", copy=True)
+            variance = np.array(variance, order="C", copy=True)
+        return estimate, variance
+
     # ------------------------------------------------------------------
     def set_sim(
         self,

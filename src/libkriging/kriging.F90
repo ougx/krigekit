@@ -464,7 +464,7 @@ contains
             call kriging_error(subname, trim(msg))
             return
           end if
-          if (.not. self%vgm(jvar, ivar, ib)%is_valid(allow_neg_sill=(ivar /= jvar))) then
+          if (.not. self%vgm(jvar, ivar, ib)%is_valid(allow_neg_cross=(ivar /= jvar))) then
             write(msg, '(A,I0,A,I0,A,I0,A)') &
               't_kriging_sva: variogram is not valid for block ', ib, &
               ', ivar=', ivar, ', jvar=', jvar, &
@@ -805,10 +805,16 @@ contains
         end do columnloop
 
         !-- Drift/unbiasedness rows at npp+1:matsize for obs+sim columns.
-        !   obs%drift(:,1,:): rows 1:ndrift = external drift; ndrift+1:end = unbiasedness indicators.
+        !   Observation data have one drift channel; simulated block data have
+        !   one channel per variable.
         if (ndrift + naug > 0) then
-          matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
-            obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
+          if (kvar > self%nvar) then
+            matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
+              obs1%drift(:, ivar, inear(1:nnear(kvar), kvar))
+          else
+            matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
+              obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
+          end if
         end if
 
         !-- Gradient pair augmentation: one group per variable, appended after obs+sim columns.
@@ -987,7 +993,7 @@ contains
     type(t_kriging_ctx), intent(inout) :: ctx
 
     integer :: i, j, k1, ivgm, ivar, jvar
-    real    :: lag(self%ndim), base_cov
+    real    :: lag(self%ndim), base_cov, cov_ij, cov_ji, rs
 
     lag  = 0.0
     ivgm = merge(ctx%iblock, 1, self%varying_vgm)
@@ -1003,6 +1009,8 @@ contains
       nblockpnt => self%block%nblockpnt(ctx%iblock), &
       var       => self%block%variance(:, :, ctx%iblock))
 
+      rs = self%block%rangescale(ctx%iblock)
+
       do ivar = 1, self%nvar
         do jvar = ivar, self%nvar
           associate( vgm => self%vgm(ivar, jvar, ivgm) )
@@ -1017,27 +1025,21 @@ contains
               do i = 1, nblockpnt
                 base_cov = base_cov + vgm%cov0 * weight(k1+i) * weight(k1+i)
                 do j = i+1, nblockpnt
-                  lag = coord(:, k1+i) - coord(:, k1+j)
+                  lag = (coord(:, k1+i) - coord(:, k1+j)) / rs
                   base_cov = base_cov + COV(vgm, lag) * &
                     weight(k1+i) * weight(k1+j) * 2.0
                 end do
               end do
             end if
           end associate
-          var(ivar, jvar) = &
-            base_cov - dot_product(x(ivar, 1:matsize), rhsB(jvar, 1:matsize))
-          if (ivar /= jvar) var(jvar, ivar) = var(ivar, jvar) ! symmetrise
-        end do
-      end do
-
-      !-- Clamp diagonal to >= 0 (negative values arise only from numerical noise).
-      !-- Symmetrise off-diagonal: both (C_ij - x_i^T c0_j) and (C_ji - x_j^T c0_i)
-      !   are theoretically equal by symmetry of K; averaging suppresses residual asymmetry.
-      do ivar = 1, self%nvar
-        var(ivar, ivar) = max(var(ivar, ivar), 0.0)
-        do jvar = ivar + 1, self%nvar
-          var(jvar, ivar) = max(var(jvar, ivar), 0.0)
-          var(ivar, jvar) = var(jvar, ivar)
+          cov_ij = base_cov - dot_product(x(ivar, 1:matsize), rhsB(jvar, 1:matsize))
+          if (ivar == jvar) then
+            var(ivar, ivar) = max(cov_ij, 0.0)
+          else
+            cov_ji = base_cov - dot_product(x(jvar, 1:matsize), rhsB(ivar, 1:matsize))
+            var(ivar, jvar) = 0.5 * (cov_ij + cov_ji)
+            var(jvar, ivar) = var(ivar, jvar)
+          end if
         end do
       end do
 

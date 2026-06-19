@@ -388,18 +388,19 @@ contains
     integer :: k
     character(256) :: msg
 
-    ok = self%cs%is_valid(allow_neg_sill=(ivar /= jvar)) .and. &
-         self%ct%is_valid(allow_neg_sill=(ivar /= jvar))
+    ok = self%cs%is_valid(allow_neg_cross=(ivar /= jvar)) .and. &
+         self%ct%is_valid(allow_neg_cross=(ivar /= jvar))
 
     if (self%model == ST_MODEL_SUM_METRIC) then
-      !-- Joint sills must be set and non-negative
+      !-- Joint sills must be set.  Direct-pair sills are non-negative;
+      !-- cross-pair sills may be negative in a valid LMC.
       if (.not. allocated(self%sill_st)) then
         write(msg,'(A,I0,A,I0,A)') &
           'WARNING vgm_struct_st(',ivar,',',jvar,'): sill_st not set for sum-metric model'
         ok = .false.
       else
         do k = 1, size(self%sill_st)
-          if (self%sill_st(k) < 0.0) then
+          if (self%sill_st(k) < 0.0 .and. ivar == jvar) then
             write(msg,'(A,I0,A,I0,A,I0)') &
               'WARNING vgm_struct_st(',ivar,',',jvar,'): negative joint sill at structure ', k
             ok = .false.
@@ -414,7 +415,9 @@ contains
       ok = .false.
     end if
 
-    if (self%cov0 <= 0.0) then
+    ! A direct variance must be positive.  Cross-covariance at zero lag may
+    ! be negative or zero, so its sign is not a pairwise validity criterion.
+    if (self%cov0 <= 0.0 .and. ivar == jvar) then
       write(msg,'(A,I0,A,I0,A)') &
         'WARNING vgm_struct_st(',ivar,',',jvar,'): cov0 not computed (call compute_cov0)'
       ok = .false.

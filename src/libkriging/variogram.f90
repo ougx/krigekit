@@ -785,17 +785,18 @@ contains
   end function struct_tostr
 
   !-- Heuristic positive-definiteness check.
-  function struct_is_valid(this, allow_neg_sill) result(ok)
+  function struct_is_valid(this, allow_neg_cross) result(ok)
     class(vgm_struct), intent(in)           :: this
-    logical,           intent(in), optional :: allow_neg_sill
-    ! allow_neg_sill: when .true., skip the sill >= 0 check.
-    ! Cross-variograms (ivar /= jvar) may have negative partial sills in a
-    ! valid LMC, so callers should pass allow_neg_sill=.true. for those pairs.
-    logical :: ok, neg_sill_ok
+    logical,           intent(in), optional :: allow_neg_cross
+    ! Cross-variograms may have negative nugget and structured partial sills
+    ! when the corresponding coregionalization matrices are positive
+    ! semidefinite.  Direct variograms must keep both contributions
+    ! non-negative.
+    logical :: ok, neg_cross_ok
     integer :: iv
     character(256) :: msg
-    neg_sill_ok = .false.
-    if (present(allow_neg_sill)) neg_sill_ok = allow_neg_sill
+    neg_cross_ok = .false.
+    if (present(allow_neg_cross)) neg_cross_ok = allow_neg_cross
     ok = .true.
     if (this%ndim < 1 .or. this%ndim > 3) then
       write(*,'(A,I0)') 'WARNING: ndim must be 1, 2 or 3, got ', this%ndim; ok = .false.
@@ -803,12 +804,12 @@ contains
     do iv = 1, this%nstruct
       associate(c => this%structs(iv))
 
-        if (c%nugget < 0.0) then
+        if (c%nugget < 0.0 .and. .not. neg_cross_ok) then
           write(*,'(A,I0,A)') &
             'WARNING vgm_struct: structure ', iv, ': negative nugget'
           ok = .false.
         end if
-        if (c%sill < 0.0 .and. .not. neg_sill_ok) then
+        if (c%sill < 0.0 .and. .not. neg_cross_ok) then
           write(*,'(A,I0,A)') &
             'WARNING vgm_struct: structure ', iv, ': negative sill'
           ok = .false.
@@ -843,7 +844,7 @@ contains
         end if
       end associate
       if (.not. ok) then
-        call kriging_error('is_valid_vgm_st', trim(msg))
+        call kriging_error('struct_is_valid', trim(msg))
         return
       end if
     end do

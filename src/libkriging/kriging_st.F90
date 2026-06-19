@@ -815,10 +815,16 @@ contains
         end do columnloop
 
         !-- Drift/unbiasedness rows at npp+1:matsize for obs+sim columns.
-        !   obs%drift(:,1,:): rows 1:ndrift = external drift; ndrift+1:end = unbiasedness indicators.
+        !   Observation data have one drift channel; simulated block data have
+        !   one channel per variable.
         if (ndrift + naug > 0) then
-          matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
-            obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
+          if (kvar > self%nvar) then
+            matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
+              obs1%drift(:, ivar, inear(1:nnear(kvar), kvar))
+          else
+            matA(npp+1:matsize, istart(kvar)+1:istart(kvar)+nnear(kvar)) = &
+              obs1%drift(:, 1, inear(1:nnear(kvar), kvar))
+          end if
         end if
 
         !-- Gradient pair augmentation: one group per variable, appended after obs+sim columns.
@@ -992,7 +998,7 @@ contains
     type(t_kriging_ctx), intent(inout) :: ctx
 
     integer :: i, j, k1, ivar, jvar
-    real    :: lag(self%nlag), base_cov
+    real    :: lag(self%nlag), base_cov, cov_ij, cov_ji
 
     lag = 0.0
 
@@ -1027,20 +1033,14 @@ contains
               end do
             end if
           end associate
-          var(ivar, jvar) = &
-            base_cov - dot_product(x(ivar, 1:matsize), rhsB(jvar, 1:matsize))
-          if (ivar /= jvar) var(jvar, ivar) = var(ivar, jvar) ! symmetrise
-        end do
-      end do
-
-      !-- Clamp diagonal to >= 0 (negative values arise only from numerical noise).
-      !-- Symmetrise off-diagonal: both (C_ij - x_i^T c0_j) and (C_ji - x_j^T c0_i)
-      !   are theoretically equal by symmetry of K; averaging suppresses residual asymmetry.
-      do ivar = 1, self%nvar
-        var(ivar, ivar) = max(var(ivar, ivar), 0.0)
-        do jvar = ivar + 1, self%nvar
-          var(jvar, ivar) = max(var(jvar, ivar), 0.0)
-          var(ivar, jvar) = var(jvar, ivar)
+          cov_ij = base_cov - dot_product(x(ivar, 1:matsize), rhsB(jvar, 1:matsize))
+          if (ivar == jvar) then
+            var(ivar, ivar) = max(cov_ij, 0.0)
+          else
+            cov_ji = base_cov - dot_product(x(jvar, 1:matsize), rhsB(ivar, 1:matsize))
+            var(ivar, jvar) = 0.5 * (cov_ij + cov_ji)
+            var(jvar, ivar) = var(ivar, jvar)
+          end if
         end do
       end do
 

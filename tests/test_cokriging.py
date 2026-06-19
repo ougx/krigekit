@@ -148,6 +148,35 @@ def _build_cok(coord_v, val_v, coord_u, val_u, grid, nmax=20, **args):
     return k
 
 
+def test_negative_cross_nugget_and_sill_are_accepted():
+    """A PSD LMC may contain negative cross-nugget and cross-sill entries."""
+    coord = np.array([
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [1.0, 1.0],
+    ])
+    k = Kriging(ndim=2, nvar=2, std_ck=True)
+    k.set_obs(ivar=1, coord=coord, value=[0.0, 1.0, 0.5, 1.5], nmax=4)
+    k.set_obs(ivar=2, coord=coord, value=[1.5, 0.5, 1.0, 0.0], nmax=4)
+
+    # Both coregionalization matrices are positive definite:
+    # nugget [[0.2, -0.1], [-0.1, 0.2]]
+    # sill   [[0.8, -0.2], [-0.2, 0.8]]
+    k.set_vgm(1, 1, "sph", nugget=0.2, sill=0.8, a_major=2.0)
+    k.set_vgm(2, 2, "sph", nugget=0.2, sill=0.8, a_major=2.0)
+    k.set_vgm(1, 2, "sph", nugget=-0.1, sill=-0.2, a_major=2.0)
+
+    k.set_grid(coord=np.array([[0.5, 0.5]]))
+    k.set_search(ivar=1)
+    k.set_search(ivar=2)
+    k.solve()
+
+    estimate, variance = k.get_results()
+    assert np.all(np.isfinite(estimate))
+    assert np.all(np.isfinite(variance))
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
