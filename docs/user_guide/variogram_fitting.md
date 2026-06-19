@@ -5,6 +5,18 @@ analysis.  It stores observations, empirical variogram clouds, averaged bins,
 fit parameters, and nested model structures before the model is applied to a
 `Kriging` object.
 
+Use `SpaceTimeVariogramModel` when fitting a full space-time lag surface. It
+contains separate `spatial` and `temporal` `VariogramModel` marginals and owns
+the product-sum or sum-metric coupling parameters:
+
+```python
+from krigekit import SpaceTimeVariogramModel, VariogramModel
+
+spatial = VariogramModel()
+temporal = VariogramModel()
+joint = SpaceTimeVariogramModel(spatial=spatial, temporal=temporal)
+```
+
 Use it when you want to:
 
 - calculate raw and averaged experimental variograms,
@@ -12,6 +24,15 @@ Use it when you want to:
 - fit one or more nested structures with optional weights,
 - manually adjust a fitted model before kriging,
 - reuse the same model definition with `Kriging.set_vgm()`.
+
+Use `VariogramSystem` for direct and cross variograms involving multiple
+variables:
+
+| Class | Role |
+|---|---|
+| `VariogramModel` | One spatial or temporal marginal |
+| `SpaceTimeVariogramModel` | Full space-time surface and coupling |
+| `VariogramSystem` | Multivariable direct/cross variograms and LMC fitting |
 
 ## Basic workflow
 
@@ -45,9 +66,36 @@ estimate, variance = k.get_results()
 ```
 
 `calc_experimental()` stores the raw variogram cloud on the model.
-`calc_average()` bins that cloud by lag distance.  `fit()` updates the
-structure parameters using the current averaged table unless a table is passed
-explicitly.
+`calc_average()` bins that cloud by lag distance. `fit()` uses the cached
+averaged table unless a table is passed explicitly. By default it returns
+`(fitted_model, covariance)` and leaves the template structures unchanged;
+`inplace=True` replaces the template structures with the fitted values.
+
+For irregular pair densities, pass explicit bin edges instead of one fixed
+width. This keeps narrow bins where short-lag detail matters and wider bins
+where pairs become sparse:
+
+```python
+avg = model.calc_average(
+    h_width=[0.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]
+)
+```
+
+Space-time clouds can use independent variable-width spatial and temporal
+bins:
+
+```python
+avg = model.calc_average(
+    h_width=[0.0, 100.0, 250.0, 500.0, 1000.0, 2500.0],
+    t_col="time_lag",
+    t_width=[0.0, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+)
+```
+
+Each array gives bin edges. Intervals are left-closed and right-open, while
+the last interval includes its final edge. Pairs outside the supplied edge
+range are omitted. Scalar `h_width` and `t_width` values retain fixed-width
+behavior.
 
 The cached workflow state is available through sklearn-style attributes:
 
@@ -71,8 +119,7 @@ Call `set_vgm()` once per structure.  The keyword names match
 model = VariogramModel()
 model.set_obs(obs_coord, obs_value)
 
-model.set_vgm(vtype="nug", nugget=0.04, sill=0.0, a_major=1.0)
-model.set_vgm(vtype="sph", nugget=0.0, sill=0.35, a_major=250.0)
+model.set_vgm(vtype="sph", nugget=0.04, sill=0.35, a_major=250.0)
 model.set_vgm(vtype="exp", nugget=0.0, sill=0.55, a_major=900.0)
 
 model.calc_experimental(cutoff=2500.0, verbose=False)
@@ -81,8 +128,21 @@ model.fit(inplace=True)
 ```
 
 For ordinary one-dimensional lag fitting, the flat fit vector is ordered as
-`sill, a_major` for each non-nugget structure, followed by a single trailing
-`nugget` when `fit_nugget=True`.
+`sill, a_major` for every stored structure, followed by a single trailing
+`nugget` when `fit_nugget=True`. Store that nugget on the first structure;
+normally there is no need to add a separate `vtype="nug"` structure.
+
+Product covariance groups use the same convention as the kriging API:
+
+```python
+temporal = VariogramModel()
+temporal.set_vgm("gau", sill=0.4, a_major=30.0)
+temporal.set_vgm("hol", sill=1.0, a_major=0.5, product=True)
+```
+
+The hole-effect covariance is multiplied with the preceding Gaussian
+covariance instead of added. Product members use the same flat fitting order as
+additive structures.
 
 The model can be copied into kriging in either form:
 
@@ -97,57 +157,122 @@ for spec in model.to_kriging_specs(replace=True):
     k.set_vgm(ivar=1, jvar=1, **spec)
 ```
 
-## Weighted fitting
+## Anisotropy detection
 
-Weighted fitting is useful because averaged bins do not carry equal
-information.  Bins based on many observation pairs are usually more stable than
-bins based on a few pairs.
+Detecting preferred directions before fitting ranges prevents fitting the
+isotropic average of what are actually two or three distinct ranges.  The
+standard sequence is:
 
-```python
-model.fit(weight_col=("variogram", "count"), inplace=True)
-```
+1. Compute the raw cloud with `calc_angle=True`.
+2. Inspect a variogram map or run `estimate_aniso_angle()`.
+3. Lock `azimuth` (and `dip` for 3-D) in the model template.
+4. Proceed to directional range fitting.
 
-`weight_col` gives larger influence to larger weights.  With the default
-averaged table, the pair count is stored under the multi-index column
-`("variogram", "count")`.
+### Variogram map (2-D)
 
-Alternatively, use SciPy-style standard deviations:
-
-```python
-model.fit(sigma_col="sigma", inplace=True)
-```
-
-Do not pass `weights` or `weight_col` together with `sigma` or `sigma_col`.
-
-## Manual adjustment
-
-Numerical optimizers often produce a useful starting point rather than the
-final geological model.  After fitting, adjust the flat parameter vector with
-`set_params()`:
+`plot_map()` bins the raw cloud by signed lag offset (`d0`, `d1`) and renders
+the result as a pcolormesh.  The direction of minimum semivariance is the
+major (maximum continuity) axis.
 
 ```python
-model.fit(inplace=True)
-model.set_params([0.35, 250.0, 0.55, 900.0, 0.04])
+model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
+
+# Plain map.
+model.plot_map(cutoff=2500.0)
+
+# Overlay an automatically estimated orientation.
+model.plot_map(angle_aniso="estimate", cutoff=2500.0)
 ```
 
-For fields outside the flat fit vector, such as anisotropy angles or fixed
-minor ranges, adjust a structure directly:
+`angle_aniso="estimate"` calls `estimate_aniso_angle()` internally and overlays
+the result.  Use the map to sanity-check the estimate, then set an explicit
+`azimuth` in the model template before fitting.
+
+### Variogram map (3-D)
+
+`plot_map3d()` draws up to three orthogonal fence sections through the
+lag-space origin, coloured by average semivariance.  By default
+(`rotate_fences=False`) the fences align with the world X/Y/Z axes so that
+model angles can be read directly off the plot:
+
+- **Fence A** (always) — horizontal XY plane; shows the azimuth pattern.
+- **Fence B** (`n_fences ≥ 2`, default) — vertical XZ (East–West) section;
+  shows the dip.
+- **Fence C** (`n_fences ≥ 3`) — vertical YZ (North–South) section.
+
+When model angles are supplied, a red line is projected onto each fence
+showing the major-axis direction so the fitted orientation can be compared
+against the empirical map.
 
 ```python
-model.set_structure_params(0, a_minor1=120.0, azimuth=35.0)
+model.calc_experimental(cutoff=3000.0, verbose=False)
+
+# Two world-axis fences (default) with model-angle overlay.
+model.plot_map3d(cutoff=2500.0)
+
+# Estimate the orientation from the cloud if no model is fitted yet.
+model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
+
+# Three fences (adds North–South vertical section).
+model.plot_map3d(cutoff=2500.0, n_fences=3)
+
+# Rotate fences to the model's principal planes instead.
+model.plot_map3d(cutoff=2500.0, rotate_fences=True)
+
+# For sparse 3-D clouds, fill empty in-range bins from nearest occupied bins.
+model.plot_map3d(cutoff=2500.0, fill_nan=True)
 ```
 
-If all structures share the same orientation and minor-to-major ratio,
-`set_anisotropy()` is shorter:
+All fence polygons are rendered in a single `Poly3DCollection` so depth-sorting
+is correct when rotating the interactive plot.  `fill_nan=True` is a
+display-only nearest-neighbour fill constrained to the cutoff radius; it does
+not change the underlying data.
+
+### Automated direction estimation
+
+`estimate_aniso_angle()` runs weighted PCA on the near-origin lag cloud and
+returns the major-axis direction as `(azimuth,)` for 2-D or
+`(azimuth, dip)` for 3-D, along with approximate axis half-lengths:
 
 ```python
-model.set_anisotropy(anis1=0.35, azimuth=35.0)
+from krigekit import estimate_aniso_angle
+
+model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
+raw = model.raw_variogram_
+
+# 2-D: returns ((azimuth_deg,), axis_lengths)
+(azimuth,), lengths = estimate_aniso_angle(raw)
+print(f"Major axis azimuth: {azimuth:.1f}°,  ratio: {lengths[0]/lengths[1]:.2f}")
+
+# 3-D: returns ((azimuth_deg, dip_deg), axis_lengths)
+(azimuth, dip), lengths = estimate_aniso_angle(raw, dim3d=True)
 ```
 
-## Directional anisotropy
+The returned `azimuth` and `dip` can be fed directly into `set_vgm()` or
+`set_anisotropy()`:
 
-When the major-axis orientation is known or estimated visually, fit major and
-minor ranges by averaging the empirical cloud along that fixed orientation.
+```python
+model.set_vgm(
+    vtype="sph",
+    sill=0.8,
+    nugget=0.05,
+    a_major=1000.0,
+    a_minor1=300.0,
+    azimuth=azimuth,   # from estimate_aniso_angle
+)
+```
+
+The estimate uses a short-lag neighbourhood (default: 25th-percentile of lag
+distances) so that only the near-origin, high-continuity pairs influence the
+PCA.  Pass `r_max` explicitly to control the neighbourhood radius.  The
+estimate is exploratory — always cross-check it against the variogram map before
+locking the angle in the production model.
+
+## Directional anisotropy fitting
+
+Once the orientation is established from the map or automated estimate, fix
+`azimuth` (and `dip` for 3-D) in the model template and fit major and minor
+ranges from directional averages.
 
 ```python
 model = VariogramModel()
@@ -158,7 +283,7 @@ model.set_vgm(
     nugget=0.05,
     a_major=1000.0,
     a_minor1=300.0,
-    azimuth=90.0,
+    azimuth=90.0,       # locked from detection step
 )
 
 model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
@@ -179,50 +304,9 @@ model.fit_anisotropy(
 
 `fit_anisotropy()` keeps `azimuth`, `dip`, and `plunge` fixed.  For each
 structure it fits `sill`, `a_major`, and `a_minor1`; in 3-D it can also fit
-`a_minor2` when requested.
+`a_minor2` when `include_minor2=True`.
 
-## Sum-metric space-time coupling
-
-After fitting spatial and temporal marginals separately, calculate a full
-space-time lag surface and fit the coupling with
-`fit_spacetime_sum_metric()`:
-
-```python
-joint = VariogramModel()
-joint.set_obs(obs_xy, obs_value, times=obs_time)
-joint.calc_experimental(
-    cutoff=120_000.0,
-    t_cutoff=20.0,
-    maxobs=2500,
-    seed=2026,
-    verbose=False,
-)
-joint.calc_average(
-    h_width=5000.0,
-    t_col="time_lag",
-    t_width=0.5,
-)
-
-joint.fit_spacetime_sum_metric(
-    spatial_model,
-    temporal_model,
-    transform="lin",
-    p0=(1.0, 1.0, 100.0, 20.0),
-)
-specs = joint.to_sum_metric_kriging_specs()
-```
-
-The flat parameter order is `spatial_scale`, `temporal_scale`, one
-`joint_sill` per spatial structure, and `at`. The marginal scales reconcile
-models fitted on the spatial and temporal boundaries with the interior
-space-time surface. Fixing `time_sill=1` avoids redundancy between
-`time_sill` and `at` for the linear temporal metric transform.
-
-The groundwater-level gallery example demonstrates this workflow, including
-transfer of the scaled marginals, joint sill, and temporal metric scale to
-`SpaceTimeKriging`.
-
-### Fitting the short 3-D axis
+## Fitting the short 3-D axis
 
 The shortest 3-D range, usually `a_minor2`, is often the least stable fitted
 parameter.  It needs close-lag pairs aligned with a narrow direction, and those
@@ -268,67 +352,154 @@ improves from an overestimated short range to approximately
 `a_major = 29.7`, `a_minor1 = 11.6`, and `a_minor2 = 8.4` for a true model of
 `30`, `12`, and `8`.
 
-## Variogram map
+## Weighted fitting
 
-For two-dimensional data, `plot_map()` displays the raw variogram cloud in lag
-space.  This is useful before fitting anisotropy because it shows whether the
-chosen major direction agrees with the experimental continuity.
-
-```python
-model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
-model.plot_map(cutoff=2500.0)
-model.plot_map(angle_aniso="estimate", cutoff=2500.0)
-```
-
-`angle_aniso="estimate"` overlays an automatically estimated orientation.
-Use that as an exploratory aid, then set an explicit `azimuth` before fitting
-the production model.
-
-For three-dimensional data, use `plot_map3d()`.  It draws up to three
-orthogonal fence sections through the lag-space origin, coloured by the
-average semivariogram value in each lag bin.
-
-By default (`rotate_fences=False`) the fences align with the world X/Y/Z
-axes so that anisotropy angles can be read directly off the axes:
-
-- **Fence A** (always) — horizontal XY plane; shows the azimuth pattern.
-- **Fence B** (`n_fences ≥ 2`, default) — vertical XZ (East–West) section;
-  shows the dip.
-- **Fence C** (`n_fences ≥ 3`) — vertical YZ (North–South) section.
-
-When model angles are supplied, a red line is drawn on each fence showing
-the projected major axis — azimuth direction on the XY fence, dip
-component on the vertical fences — so the fitted orientation can be
-compared against the empirical map.
+Weighted fitting is useful because averaged bins do not carry equal
+information.  Bins based on many observation pairs are usually more stable than
+bins based on a few pairs.
 
 ```python
-model.calc_experimental(cutoff=3000.0, verbose=False)
-
-# Two world-axis fences (default) with model-angle overlay.
-model.plot_map3d(cutoff=2500.0)
-
-# Estimate the orientation from the cloud if no model is fitted yet.
-model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
-
-# Three fences (adds North–South vertical section and plunge to label).
-model.plot_map3d(cutoff=2500.0, n_fences=3)
-
-# Rotate fences to the model's principal planes instead.
-model.plot_map3d(cutoff=2500.0, rotate_fences=True)
-
-# For sparse 3-D clouds, fill empty in-range display bins from nearest occupied bins.
-model.plot_map3d(cutoff=2500.0, fill_nan=True)
+model.fit(weight_col=("variogram", "count"), inplace=True)
 ```
 
-All fence polygons are rendered in a single `Poly3DCollection`, so
-depth-sorting is correct when rotating the interactive plot.
-By default, empty bins are left empty so the plot shows sampling support.
-`fill_nan=True` is a display-only nearest-neighbour fill for smoother example
-figures; it is constrained to the cutoff or maximum lag radius and does not
-change the raw or averaged variogram data.
+`weight_col` gives larger influence to larger weights.  With the default
+averaged table, the pair count is stored under the multi-index column
+`("variogram", "count")`.
 
-Pass `fill_nan=True` when data are sparse and the fence has many empty
-lag bins.
+Alternatively, use SciPy-style standard deviations:
+
+```python
+model.fit(sigma_col="sigma", inplace=True)
+```
+
+Do not pass `weights` or `weight_col` together with `sigma_col`.
+
+## Manual adjustment
+
+Numerical optimizers often produce a useful starting point rather than the
+final geological model.  After fitting, adjust the flat parameter vector with
+`set_params()`:
+
+```python
+model.fit(inplace=True)
+model.set_params([0.35, 250.0, 0.55, 900.0, 0.04])
+```
+
+For fields outside the flat fit vector, such as anisotropy angles or fixed
+minor ranges, adjust a structure directly:
+
+```python
+model.set_structure_params(0, a_minor1=120.0, azimuth=35.0)
+```
+
+If all structures share the same orientation and minor-to-major ratio,
+`set_anisotropy()` is shorter:
+
+```python
+model.set_anisotropy(ratio_minor1=0.35, azimuth=35.0)
+```
+
+`anis1` and `anis2` remain accepted aliases, but `ratio_minor1` and
+`ratio_minor2` are clearer in new variogram-analysis code.
+
+## Space-time coupling
+
+Fit the spatial and temporal boundary marginals as ordinary `VariogramModel`
+objects, then compose them in a `SpaceTimeVariogramModel` for the full
+two-dimensional lag surface.
+
+### Sum-metric coupling
+
+After fitting spatial and temporal marginals separately, calculate a full
+space-time lag surface and fit the coupling with
+`fit_sum_metric()`:
+
+```python
+from krigekit import SpaceTimeVariogramModel
+
+joint = SpaceTimeVariogramModel(
+    spatial=spatial_model,
+    temporal=temporal_model,
+)
+joint.set_obs(obs_xy, obs_value, times=obs_time)
+joint.calc_experimental(
+    cutoff=120_000.0,
+    t_cutoff=20.0,
+    maxobs=2500,
+    seed=2026,
+    verbose=False,
+)
+joint.calc_average(
+    h_width=5000.0,
+    t_col="time_lag",
+    t_width=0.5,
+)
+
+joint.fit_sum_metric(
+    transform="lin",
+    p0=(1.0, 1.0, 100.0, 20.0),
+    weight_cap_quantile=0.90,
+)
+specs = joint.to_sum_metric_kriging_specs()
+```
+
+The flat parameter order is `spatial_scale`, `temporal_scale`, one
+`joint_sill` per spatial structure, and `at`. The marginal scales reconcile
+models fitted on the spatial and temporal boundaries with the interior
+space-time surface. Fixing `time_sill=1` avoids redundancy between
+`time_sill` and `at` for the linear temporal metric transform. Capping pair
+counts prevents a few densely populated bins from dominating the surface fit.
+
+The groundwater-level gallery example demonstrates this workflow, including
+transfer of the scaled marginals, joint sill, and temporal metric scale to
+`SpaceTimeKriging`.
+
+### Product-sum coupling
+
+For a product-sum model, calculate and average the full space-time cloud, then
+fit the coefficients and marginal ranges.  When the spatial data are
+anisotropic, pass the spatial anisotropy to `calc_experimental()` so that the
+stored cloud uses the equivalent major-axis lag for spatial binning:
+
+```python
+joint = SpaceTimeVariogramModel()
+joint.set_obs(obs_xyz, transformed_value, times=obs_time)
+joint.calc_experimental(
+    cutoff=5500.0,
+    t_cutoff=13.0,
+    anisotropy={"anis1": 1.0, "anis2": 0.2},
+    verbose=False,
+)
+joint.calc_average(
+    h_col="anisotropic_distance",
+    h_width=500.0,
+    t_col="time_lag",
+    t_width=0.5,
+)
+
+joint.fit_product_sum(
+    spatial_vtype="sph",
+    temporal_vtype="gau",
+    starts=[
+        (0.10, 0.06, -0.005, 5000.0, 9.0),
+        (0.12, 0.04, -0.020, 3000.0, 10.0),
+    ],
+    bounds=[
+        (0.0, 0.30),
+        (0.0, 0.20),
+        (-0.20, 0.0),
+        (1000.0, 8000.0),
+        (1.0, 13.0),
+    ],
+    weight_cap_quantile=0.90,
+)
+specs = joint.to_spacetime_kriging_specs()
+```
+
+The fitted vector is `(a, b, p, spatial_range, temporal_range)`. Valid
+covariance conversion requires `p <= 0`, `a + p > 0`, and `b + p > 0`.
+Inspect `spacetime_fit_results_` because product-sum parameters can be weakly
+identified even when the fitted surface looks reasonable.
 
 ## Multivariable systems
 
@@ -403,8 +574,11 @@ In short: use `fit_lmc()` for co-sampled multivariate data, and
 
 ## Example gallery
 
-See the gallery example
-`examples/s_variogram_fitting.py` for a complete indicator variogram workflow:
-it computes the empirical cloud, fits a two-structure anisotropic model for the
-`lithofacies.csv` data, rounds the fitted parameters, and applies the model to
-ordinary kriging.
+Relevant examples:
+
+- `examples/variogram/s_variogram_fitting.py`: nested 2-D indicator variogram.
+- `examples/variogram/s_variogram_fitting_3d.py`: 3-D directional anisotropy.
+- `examples/variogram/st_variogram_fitting_gwlevel.py`: marginal and
+  sum-metric coupling fitting.
+- `examples/variogram/st_variogram_fitting_ctet.py`: product-sum fitting and
+  manual adjustment.

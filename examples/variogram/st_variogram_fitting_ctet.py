@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import QuantileTransformer
 
-from krigekit import VariogramModel
+from krigekit import SpaceTimeVariogramModel
 
 
 def _find_data_dir():
@@ -101,7 +101,7 @@ coord = np.column_stack([
 time = selected["t"].to_numpy()
 score = selected["uscore"].to_numpy()
 
-model = VariogramModel()
+model = SpaceTimeVariogramModel()
 model.set_obs(coord, score, times=time)
 model.calc_experimental(
     cutoff=MAX_HS,

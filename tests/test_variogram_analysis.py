@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from krigekit import Kriging
+from krigekit import Kriging, SpaceTimeVariogramModel
 from krigekit.variogram import (
     _great_circle_dist,
     _fill_nan_nearest,
@@ -129,7 +129,7 @@ def test_raw_vgm_preserves_physical_and_anisotropic_distances():
 
 
 def test_spacetime_variogram_between_applies_stored_anisotropy():
-    model = VariogramModel()
+    model = SpaceTimeVariogramModel()
     model.set_spacetime_anisotropy(anis1=0.5, azimuth=0.0)
     model.set_spacetime_params(
         (0.10, 0.06, -0.005, 10.0, 2.0),
@@ -147,6 +147,42 @@ def test_spacetime_variogram_between_applies_stored_anisotropy():
     specs = model.to_spacetime_kriging_specs()
     assert specs["spatial_spec"]["a_major"] == 10.0
     assert specs["spatial_spec"]["a_minor1"] == 5.0
+
+
+def test_spacetime_variogram_model_composes_marginals():
+    model = SpaceTimeVariogramModel()
+    returned = model.set_vgm("sph", sill=1.0, a_major=10.0)
+    model.set_vgm_temporal("gau", sill=0.2, at_k=3.0)
+
+    assert returned is model
+    assert model.spatial.to_kriging_specs()[0]["vtype"] == "sph"
+    assert model.temporal.to_temporal_specs()[0]["vtype"] == "gau"
+
+
+def test_variogram_model_legacy_spacetime_fit_uses_cached_average():
+    hs, ht = np.meshgrid([1.0, 2.0], [0.5, 1.0])
+    gamma = 0.1 * calc_vgm("sph", hs, rng=3.0)
+    avg = pd.DataFrame({
+        ("distance", "mean"): hs.ravel(),
+        ("time_lag", "mean"): ht.ravel(),
+        ("variogram", "mean"): gamma.ravel(),
+        ("variogram", "count"): 10.0,
+    })
+    legacy = VariogramModel()
+    legacy.avg_variogram_ = avg
+    returned = legacy.fit_spacetime_product_sum(
+        starts=[(0.1, 0.01, 0.0, 3.0, 2.0)],
+        bounds=[
+            (0.001, 1.0),
+            (0.001, 1.0),
+            (-0.5, 0.0),
+            (0.5, 10.0),
+            (0.5, 10.0),
+        ],
+    )
+
+    assert returned is legacy
+    assert legacy.spacetime_params_ is not None
 
 
 def test_variogram_model_calc_covariance_pairwise_matrix():
@@ -335,7 +371,7 @@ def test_variogram_model_apply_temporal_to_replays_product_specs():
     ]
 
 
-def test_variogram_model_fit_spacetime_product_sum_and_convert_specs():
+def test_spacetime_variogram_model_fit_product_sum_and_convert_specs():
     truth = np.array([0.10, 0.06, -0.005, 5000.0, 9.0])
     hs, ht = np.meshgrid(
         np.linspace(250.0, 5250.0, 11),
@@ -351,7 +387,7 @@ def test_variogram_model_fit_spacetime_product_sum_and_convert_specs():
         ("variogram", "count"): 100.0,
     })
 
-    model = VariogramModel()
+    model = SpaceTimeVariogramModel()
     returned = model.fit_spacetime_product_sum(
         avg,
         starts=[(0.09, 0.05, -0.003, 4500.0, 8.0)],
@@ -386,8 +422,8 @@ def test_variogram_model_fit_spacetime_product_sum_and_convert_specs():
     assert specs["time_at"] > 0.0
 
 
-def test_variogram_model_set_spacetime_params_validates_marginal_sills():
-    model = VariogramModel()
+def test_spacetime_variogram_model_set_params_validates_marginal_sills():
+    model = SpaceTimeVariogramModel()
     model.set_spacetime_params(
         [0.10, 0.06, -0.005, 5000.0, 9.0],
         spatial_vtype="sph",
@@ -402,7 +438,7 @@ def test_variogram_model_set_spacetime_params_validates_marginal_sills():
         model.set_spacetime_params([0.10, 0.004, -0.005, 5000.0, 9.0])
 
 
-def test_variogram_model_fit_spacetime_sum_metric_and_convert_specs():
+def test_spacetime_variogram_model_fit_sum_metric_and_convert_specs():
     spatial = VariogramModel().set_vgm(
         "sph",
         nugget=0.1,
@@ -432,10 +468,8 @@ def test_variogram_model_fit_spacetime_sum_metric_and_convert_specs():
         ("variogram", "count"): np.full(gamma.size, 100),
     })
 
-    model = VariogramModel()
+    model = SpaceTimeVariogramModel(spatial=spatial, temporal=temporal)
     returned = model.fit_spacetime_sum_metric(
-        spatial,
-        temporal,
         avgvgm=avg,
         p0=(1.0, 1.0, 0.2, 2.0),
         bounds=(
@@ -989,6 +1023,60 @@ def test_avg_vgm_directional_filter_keeps_opposite_pairs():
     avg = avg_vgm(cloud, h_width=10.0, angleh=90.0, angleh_tor=5.0)
 
     assert avg[("variogram", "count")].sum() == len(cloud)
+
+
+def test_avg_vgm_accepts_variable_spatial_bin_edges():
+    cloud = pd.DataFrame({
+        "distance": [0.0, 4.9, 5.0, 14.9, 15.0, 40.0, 41.0],
+        "variogram": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 99.0],
+    })
+
+    avg = avg_vgm(cloud, h_width=[0.0, 5.0, 15.0, 40.0])
+
+    np.testing.assert_array_equal(
+        avg[("variogram", "count")].to_numpy(),
+        [2, 2, 2],
+    )
+    np.testing.assert_allclose(
+        avg[("distance", "mean")].to_numpy(),
+        [2.45, 9.95, 27.5],
+    )
+    assert avg[("variogram", "count")].sum() == 6
+
+
+def test_avg_vgm_accepts_variable_temporal_bin_edges():
+    cloud = pd.DataFrame({
+        "distance": np.ones(7),
+        "time_lag": [0.0, 0.25, 0.5, 1.25, 1.5, 5.0, 5.1],
+        "variogram": np.arange(7.0),
+    })
+
+    avg = avg_vgm(
+        cloud,
+        h_width=10.0,
+        t_col="time_lag",
+        t_width=np.array([0.0, 0.5, 1.5, 5.0]),
+    )
+
+    np.testing.assert_array_equal(
+        avg[("variogram", "count")].to_numpy(),
+        [2, 2, 2],
+    )
+    np.testing.assert_allclose(
+        avg[("time_lag", "mean")].to_numpy(),
+        [0.125, 0.875, 3.25],
+    )
+
+
+def test_avg_vgm_rejects_invalid_variable_bin_edges():
+    cloud = pd.DataFrame({
+        "distance": [1.0, 2.0],
+        "variogram": [0.5, 1.0],
+    })
+
+    for edges in ([0.0], [0.0, 2.0, 1.0], [0.0, 1.0, 1.0], [0.0, np.inf]):
+        with np.testing.assert_raises(ValueError):
+            avg_vgm(cloud, h_width=edges)
 
 
 def test_avg_vgm_3d_axis_filter_flips_dip_with_opposite_azimuth():

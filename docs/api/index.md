@@ -10,6 +10,9 @@ The full API is auto-generated from the source docstrings.
 ../autoapi/krigekit/kriging_st/index
 ../autoapi/krigekit/kriging_indicator/index
 ../autoapi/krigekit/variogram/index
+../autoapi/krigekit/variogram_model/index
+../autoapi/krigekit/variogram_st/index
+../autoapi/krigekit/variogram_system/index
 ```
 
 ## Summary
@@ -36,4 +39,5 @@ full control.
 | {py:class}`krigekit.SpaceTimeKriging` | Space-time extension with ST covariance models |
 | {py:class}`krigekit.IndicatorKriging` | Multiple Indicator Kriging (MIK) and Sequential Indicator Simulation (SIS) |
 | {py:class}`krigekit.VariogramModel` | Experimental variograms, fitting, anisotropy plots, and model transfer to kriging |
+| {py:class}`krigekit.SpaceTimeVariogramModel` | Composed spatial/temporal marginals with product-sum or sum-metric coupling fitting |
 | {py:class}`krigekit.VariogramSystem` | Direct/cross variogram workflow for multivariable and cokriging models |

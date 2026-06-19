@@ -2,9 +2,10 @@ r"""
 Variogram fitting for space-time groundwater levels
 ====================================================
 
-This example uses :class:`~krigekit.VariogramModel` to fit the spatial and
-temporal marginal variograms used by a space-time groundwater-level model.
-The observations come from ``obs_gwlevel.csv``.
+This example uses :class:`~krigekit.VariogramModel` for the separate spatial
+and temporal marginals, then composes them in
+:class:`~krigekit.SpaceTimeVariogramModel` to fit the joint sum-metric
+coupling. The observations come from ``obs_gwlevel.csv``.
 
 The two marginals require different observation-pair definitions:
 
@@ -38,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from krigekit import VariogramModel
+from krigekit import SpaceTimeVariogramModel, VariogramModel
 
 
 def _find_data_dir():
@@ -279,7 +280,7 @@ for spec in temporal_specs:
 # There is one ``joint_sill`` per spatial structure. This example has one
 # spherical spatial structure, so only one coupling sill is fitted.
 
-joint = VariogramModel()
+joint = SpaceTimeVariogramModel(spatial=spatial, temporal=temporal)
 joint.set_obs(
     data[["x", "y"]].to_numpy(dtype=float),
     data["depth_to_water"].to_numpy(dtype=float),
@@ -303,8 +304,6 @@ joint_average = joint_average.loc[
 joint.avg_variogram_ = joint_average
 
 joint.fit_spacetime_sum_metric(
-    spatial,
-    temporal,
     transform="lin",
     time_sill=1.0,
     # (spatial scale, temporal scale, joint sill, at)

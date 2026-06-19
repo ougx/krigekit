@@ -1,5 +1,41 @@
 # Fortran architecture
 
+## Python variogram architecture
+
+The Python variogram analysis code follows the same conceptual boundaries as
+the Fortran variogram types, but it uses composition for space-time models:
+
+```text
+_VariogramModelBase
+  +-- VariogramModel                 one spatial or temporal marginal
+  +-- SpaceTimeVariogramModel        full ST cloud and coupling state
+        |-- spatial: VariogramModel
+        +-- temporal: VariogramModel
+
+VariogramSystem                       multivariable direct/cross models
+```
+
+This matches `vgm_struct_st` in `variogram_st.f90`, which contains `cs` and
+`ct` members rather than extending `vgm_struct`.
+
+The implementation is split by responsibility:
+
+| Python module | Responsibility | Fortran analogue |
+|---|---|---|
+| `variogram_kernels.py` | Kernel functions and one structure component | `vgm_component`, `corefunc_fn` |
+| `variogram_geometry.py` | Rotations and anisotropic lag distance | `vgm_aniso`, `rotation.f90` |
+| `variogram_empirical.py` | Pair clouds, averaging, and directional analysis | Python analysis layer |
+| `variogram_fitting.py` | Generic weighted marginal fitting | Python analysis layer |
+| `variogram_plotting.py` | Variogram curves and maps | Python analysis layer |
+| `variogram_base.py` | Observation and empirical-cache workflow | Shared model state |
+| `variogram_model.py` | Marginal nested/product model | `vgm_struct` |
+| `variogram_st.py` | Product-sum and sum-metric coupling | `vgm_struct_st` |
+| `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
+
+`krigekit.variogram` is a compatibility facade, so existing helper and class
+imports remain valid. New code may import the three public classes directly
+from `krigekit`.
+
 The Fortran solver is organized around an abstract base type plus two concrete
 specializations:
 

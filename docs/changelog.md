@@ -2,6 +2,24 @@
 
 ## 0.2.5 (unreleased)
 
+### Changed - Variogram analysis module architecture
+
+Variogram analysis is now separated into kernel, geometry, empirical,
+fitting, plotting, marginal-model, space-time-model, and multivariable-system
+modules. `SpaceTimeVariogramModel` composes spatial and temporal
+`VariogramModel` instances and owns only full space-time clouds and coupling
+fits, mirroring the Fortran `vgm_struct_st` composition.
+
+The existing `krigekit.variogram` import path remains a compatibility facade.
+Legacy space-time calls on `VariogramModel` are forwarded to a lazily created
+`SpaceTimeVariogramModel`; new code should instantiate the space-time class
+directly.
+
+`avg_vgm()` and the model `calc_average()` workflow now accept explicit
+variable-width bin edges through `h_width` and `t_width`, while preserving
+their existing scalar fixed-width behavior. This supports fine short-lag bins
+and progressively wider bins where spatial or temporal pairs are sparse.
+
 ### New - Product structures in space-time marginal variograms
 
 `SpaceTimeKriging.set_vgm()` and `set_vgm_temporal()` now accept
@@ -20,14 +38,14 @@ plus leave-one-well-out reconstructions for sparse wells H0017 and H1477. A
 2008.5 grid snapshot compares contemporaneous-only spatial kriging against
 all-years space-time kriging with a reproducible 20% snapshot holdout.
 
-`VariogramModel.fit_spacetime_sum_metric()` now fits marginal amplitude
+`SpaceTimeVariogramModel.fit_spacetime_sum_metric()` now fits marginal amplitude
 refinements, one joint sill per spatial structure, and the joint temporal scale
 from a full space-time lag surface. `to_sum_metric_kriging_specs()` converts the
 result directly to `SpaceTimeKriging` inputs.
 
 ### New - CCl4 product-sum variogram fitting example
 
-`VariogramModel` now provides `fit_spacetime_product_sum()`,
+`SpaceTimeVariogramModel` provides `fit_spacetime_product_sum()`,
 `calc_spacetime_variogram()`, `set_spacetime_params()`, and
 `to_spacetime_kriging_specs()` for a class-based fitting, adjustment, and
 kriging-transfer workflow.
@@ -35,7 +53,7 @@ kriging-transfer workflow.
 Spatial lag geometry is shared through `calc_lag_vectors()` and
 `calc_anisotropic_lag()`. Empirical variogram functions accept an `anisotropy`
 mapping, preserve physical `distance`, and add `anisotropic_distance` for
-fitting. `VariogramModel.calc_spacetime_variogram_between()` applies the same
+fitting. `SpaceTimeVariogramModel.calc_spacetime_variogram_between()` applies the same
 geometry when evaluating coordinate and time pairs.
 
 Added `st_variogram_fitting_ctet.py`, which uses that workflow to calculate the

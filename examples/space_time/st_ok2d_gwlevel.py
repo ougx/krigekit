@@ -32,9 +32,11 @@ The two marginals need different pair definitions:
 
 .. note::
 
-   For the integrated automatic fitting workflow based on
-   :class:`~krigekit.VariogramModel`, including ``set_obs()``, ``set_vgm()``,
-   and ``fit()``, see ``examples/variogram/st_variogram_fitting_gwlevel.py``.
+   For the integrated automatic fitting workflow, see
+   ``examples/variogram/st_variogram_fitting_gwlevel.py``. It uses
+   :class:`~krigekit.VariogramModel` for each marginal and
+   :class:`~krigekit.SpaceTimeVariogramModel` for the full lag surface and
+   sum-metric coupling.
    This space-time kriging example keeps the marginal calculations and temporal
    parameter fit separate and explicit so the spatial, long-term temporal, and
    annual product-covariance contributions are easier to examine. The companion
@@ -132,10 +134,11 @@ print(
 # A long-term mean is more stable than selecting one survey date, and requiring
 # at least ten observations prevents short records from adding noisy well means.
 #
-# The companion ``st_variogram_fitting_gwlevel.py`` example performs this fit
-# through the complete ``VariogramModel`` workflow.  The calculations remain
-# visible here to keep the focus on how separately estimated spatial and
-# temporal marginals form the later space-time covariance.
+# The companion ``st_variogram_fitting_gwlevel.py`` example performs the
+# marginal fits with ``VariogramModel`` and the joint fit with
+# ``SpaceTimeVariogramModel``. The calculations remain visible here to keep the
+# focus on how separately estimated spatial and temporal components form the
+# later space-time covariance.
 
 well_mean = (
     data.groupby("WellID")

@@ -24,8 +24,9 @@ CCl4 concentrations span three orders of magnitude (0.04–5 900 µg/L).
 A uniform quantile transform is applied before computing the variogram:
 ranks are mapped to percentiles on ``[0, 1]``, suppressing outlier influence
 without assuming a specific parametric distribution such as log-normal.
-The dedicated ``st_variogram_fitting_ctet.py`` example documents the
-product-sum fitting and manual-adjustment workflow.
+The dedicated ``st_variogram_fitting_ctet.py`` example uses
+``SpaceTimeVariogramModel`` for the full spatial-temporal lag surface,
+product-sum fitting, and manual-adjustment workflow.
 """
 import time
 import numpy as np
@@ -383,8 +384,9 @@ print(f"  total sill = {a_ps + b_ps + p_ps:.4f}  (target ≈ 1, p ≤ 0)")
 # Temporal slices (rows of constant h_t) will be used for model fitting
 # in the next step.
 # The variogram parameters are manually adjusted.  See
-# ``st_variogram_fitting_ctet.py`` for the constrained multistart fit,
-# identifiability diagnostics, and automatic-versus-production comparison.
+# ``st_variogram_fitting_ctet.py`` for the ``SpaceTimeVariogramModel``
+# constrained multistart fit, identifiability diagnostics, and
+# automatic-versus-production comparison.
 a_ps = 0.10
 b_ps = 0.06
 p_ps = -0.005

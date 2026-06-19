@@ -353,9 +353,9 @@ three scalar parameters $(a, b, p)$ and marginal ranges $(a_s, a_t)$ by
 weighted least-squares:
 
 ```python
-from krigekit import VariogramModel
+from krigekit import SpaceTimeVariogramModel
 
-model = VariogramModel()
+model = SpaceTimeVariogramModel()
 model.set_obs(spatial_coord, transformed_value, times=observation_time)
 model.calc_experimental(
     cutoff=5500.0,

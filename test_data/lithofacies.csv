@@ -1,101 +1,101 @@
-point_id,x_pixel,y_pixel,y_pixel0,lithologic_code,lithology_interpretation
-1,131,-85,85,C,Cobble
-2,242,-117,117,C,Cobble
-3,346,-35,35,C,Cobble
-4,455,-28,28,C,Cobble
-5,542,-89,89,C,Cobble
-6,655,-50,50,C,Cobble
-7,759,-33,33,C,Cobble
-8,861,-69,69,C,Cobble
-9,973,-61,61,C,Cobble
-10,1098,-57,57,C,Cobble
-11,1250,-105,105,C,Cobble
-12,1380,-49,49,C,Cobble
-13,1495,-28,28,C,Cobble
-14,1622,-47,47,C,Cobble
-48,73,-458,458,C,Cobble
-50,288,-471,471,C,Cobble
-79,82,-644,644,C,Cobble
-81,493,-627,627,C,Cobble
-16,1807,-119,119,Cl,Silt & Clay
-20,381,-167,167,Cl,Silt & Clay
-23,730,-169,169,Cl,Silt & Clay
-24,941,-190,190,Cl,Silt & Clay
-25,1054,-162,162,Cl,Silt & Clay
-27,1352,-158,158,Cl,Silt & Clay
-28,1480,-154,154,Cl,Silt & Clay
-30,1702,-176,176,Cl,Silt & Clay
-31,1972,-147,147,Cl,Silt & Clay
-49,180,-430,430,Cl,Silt & Clay
-54,630,-409,409,Cl,Silt & Clay
-55,726,-412,412,Cl,Silt & Clay
-57,921,-433,433,Cl,Silt & Clay
-58,1026,-427,427,Cl,Silt & Clay
-63,1661,-427,427,Cl,Silt & Clay
-66,1945,-408,408,Cl,Silt & Clay
-68,384,-583,583,Cl,Silt & Clay
-69,653,-596,596,Cl,Silt & Clay
-72,1008,-589,589,Cl,Silt & Clay
-76,1625,-567,567,Cl,Silt & Clay
-80,301,-687,687,Cl,Silt & Clay
-82,584,-691,691,Cl,Silt & Clay
-85,919,-653,653,Cl,Silt & Clay
-18,185,-226,226,FS,Fine Sand
-19,290,-225,225,FS,Fine Sand
-21,465,-194,194,FS,Fine Sand
-22,617,-207,207,FS,Fine Sand
-26,1154,-210,210,FS,Fine Sand
-29,1577,-228,228,FS,Fine Sand
-32,77,-351,351,FS,Fine Sand
-34,208,-343,343,FS,Fine Sand
-37,584,-312,312,FS,Fine Sand
-38,690,-308,308,FS,Fine Sand
-43,1279,-253,253,FS,Fine Sand
-45,1564,-350,350,FS,Fine Sand
-47,1893,-259,259,FS,Fine Sand
-52,443,-377,377,FS,Fine Sand
-56,803,-379,379,FS,Fine Sand
-59,1126,-383,383,FS,Fine Sand
-60,1262,-428,428,FS,Fine Sand
-61,1367,-391,391,FS,Fine Sand
-64,1832,-361,361,FS,Fine Sand
-92,1950,-645,645,FS,Fine Sand
-100,1460,-730,730,FS,Fine Sand
-15,1745,-30,30,G,Sand & Gravel
-17,1932,-45,45,G,Sand & Gravel
-33,79,-240,240,G,Sand & Gravel
-35,336,-330,330,G,Sand & Gravel
-36,473,-273,273,G,Sand & Gravel
-39,790,-256,256,G,Sand & Gravel
-40,970,-309,309,G,Sand & Gravel
-41,1072,-277,277,G,Sand & Gravel
-42,1242,-324,324,G,Sand & Gravel
-44,1447,-286,286,G,Sand & Gravel
-46,1719,-312,312,G,Sand & Gravel
-51,400,-476,476,G,Sand & Gravel
-53,514,-476,476,G,Sand & Gravel
-62,1489,-453,453,G,Sand & Gravel
-65,1863,-476,476,G,Sand & Gravel
-67,196,-568,568,G,Sand & Gravel
-70,746,-531,531,G,Sand & Gravel
-71,870,-581,581,G,Sand & Gravel
-73,1088,-516,516,G,Sand & Gravel
-74,1217,-528,528,G,Sand & Gravel
-75,1383,-520,520,G,Sand & Gravel
-77,1762,-508,508,G,Sand & Gravel
-78,1955,-531,531,G,Sand & Gravel
-83,798,-621,621,G,Sand & Gravel
-84,807,-714,714,G,Sand & Gravel
-86,1107,-635,635,G,Sand & Gravel
-87,1218,-643,643,G,Sand & Gravel
-88,1344,-646,646,G,Sand & Gravel
-89,1490,-618,618,G,Sand & Gravel
-90,1688,-657,657,G,Sand & Gravel
-91,1790,-612,612,G,Sand & Gravel
-93,142,-739,739,G,Sand & Gravel
-94,448,-727,727,G,Sand & Gravel
-95,694,-725,725,G,Sand & Gravel
-96,950,-729,729,G,Sand & Gravel
-97,1056,-736,736,G,Sand & Gravel
-98,1163,-737,737,G,Sand & Gravel
-99,1298,-741,741,G,Sand & Gravel
+point_id,x_pixel,y_pixel,y_pixel0,lithologic_code,lithology_interpretation,loghk
+1,131,-85,85,C,Cobble,3
+2,242,-117,117,C,Cobble,3
+3,346,-35,35,C,Cobble,3
+4,455,-28,28,C,Cobble,3
+5,542,-89,89,C,Cobble,3
+6,655,-50,50,C,Cobble,3
+7,759,-33,33,C,Cobble,3
+8,861,-69,69,C,Cobble,3
+9,973,-61,61,C,Cobble,3
+10,1098,-57,57,C,Cobble,3
+11,1250,-105,105,C,Cobble,3
+12,1380,-49,49,C,Cobble,3
+13,1495,-28,28,C,Cobble,3
+14,1622,-47,47,C,Cobble,3
+48,73,-458,458,C,Cobble,3
+50,288,-471,471,C,Cobble,3
+79,82,-644,644,C,Cobble,3
+81,493,-627,627,C,Cobble,3
+16,1807,-119,119,Cl,Silt & Clay,-1
+20,381,-167,167,Cl,Silt & Clay,-1
+23,730,-169,169,Cl,Silt & Clay,-1
+24,941,-190,190,Cl,Silt & Clay,-1
+25,1054,-162,162,Cl,Silt & Clay,-1
+27,1352,-158,158,Cl,Silt & Clay,-1
+28,1480,-154,154,Cl,Silt & Clay,-1
+30,1702,-176,176,Cl,Silt & Clay,-1
+31,1972,-147,147,Cl,Silt & Clay,-1
+49,180,-430,430,Cl,Silt & Clay,-1
+54,630,-409,409,Cl,Silt & Clay,-1
+55,726,-412,412,Cl,Silt & Clay,-1
+57,921,-433,433,Cl,Silt & Clay,-1
+58,1026,-427,427,Cl,Silt & Clay,-1
+63,1661,-427,427,Cl,Silt & Clay,-1
+66,1945,-408,408,Cl,Silt & Clay,-1
+68,384,-583,583,Cl,Silt & Clay,-1
+69,653,-596,596,Cl,Silt & Clay,-1
+72,1008,-589,589,Cl,Silt & Clay,-1
+76,1625,-567,567,Cl,Silt & Clay,-1
+80,301,-687,687,Cl,Silt & Clay,-1
+82,584,-691,691,Cl,Silt & Clay,-1
+85,919,-653,653,Cl,Silt & Clay,-1
+18,185,-226,226,FS,Fine Sand,0
+19,290,-225,225,FS,Fine Sand,0
+21,465,-194,194,FS,Fine Sand,0
+22,617,-207,207,FS,Fine Sand,0
+26,1154,-210,210,FS,Fine Sand,0
+29,1577,-228,228,FS,Fine Sand,0
+32,77,-351,351,FS,Fine Sand,0
+34,208,-343,343,FS,Fine Sand,0
+37,584,-312,312,FS,Fine Sand,0
+38,690,-308,308,FS,Fine Sand,0
+43,1279,-253,253,FS,Fine Sand,0
+45,1564,-350,350,FS,Fine Sand,0
+47,1893,-259,259,FS,Fine Sand,0
+52,443,-377,377,FS,Fine Sand,0
+56,803,-379,379,FS,Fine Sand,0
+59,1126,-383,383,FS,Fine Sand,0
+60,1262,-428,428,FS,Fine Sand,0
+61,1367,-391,391,FS,Fine Sand,0
+64,1832,-361,361,FS,Fine Sand,0
+92,1950,-645,645,FS,Fine Sand,0
+100,1460,-730,730,FS,Fine Sand,0
+15,1745,-30,30,G,Sand & Gravel,1.5
+17,1932,-45,45,G,Sand & Gravel,1.5
+33,79,-240,240,G,Sand & Gravel,1.5
+35,336,-330,330,G,Sand & Gravel,1.5
+36,473,-273,273,G,Sand & Gravel,1.5
+39,790,-256,256,G,Sand & Gravel,1.5
+40,970,-309,309,G,Sand & Gravel,1.5
+41,1072,-277,277,G,Sand & Gravel,1.5
+42,1242,-324,324,G,Sand & Gravel,1.5
+44,1447,-286,286,G,Sand & Gravel,1.5
+46,1719,-312,312,G,Sand & Gravel,1.5
+51,400,-476,476,G,Sand & Gravel,1.5
+53,514,-476,476,G,Sand & Gravel,1.5
+62,1489,-453,453,G,Sand & Gravel,1.5
+65,1863,-476,476,G,Sand & Gravel,1.5
+67,196,-568,568,G,Sand & Gravel,1.5
+70,746,-531,531,G,Sand & Gravel,1.5
+71,870,-581,581,G,Sand & Gravel,1.5
+73,1088,-516,516,G,Sand & Gravel,1.5
+74,1217,-528,528,G,Sand & Gravel,1.5
+75,1383,-520,520,G,Sand & Gravel,1.5
+77,1762,-508,508,G,Sand & Gravel,1.5
+78,1955,-531,531,G,Sand & Gravel,1.5
+83,798,-621,621,G,Sand & Gravel,1.5
+84,807,-714,714,G,Sand & Gravel,1.5
+86,1107,-635,635,G,Sand & Gravel,1.5
+87,1218,-643,643,G,Sand & Gravel,1.5
+88,1344,-646,646,G,Sand & Gravel,1.5
+89,1490,-618,618,G,Sand & Gravel,1.5
+90,1688,-657,657,G,Sand & Gravel,1.5
+91,1790,-612,612,G,Sand & Gravel,1.5
+93,142,-739,739,G,Sand & Gravel,1.5
+94,448,-727,727,G,Sand & Gravel,1.5
+95,694,-725,725,G,Sand & Gravel,1.5
+96,950,-729,729,G,Sand & Gravel,1.5
+97,1056,-736,736,G,Sand & Gravel,1.5
+98,1163,-737,737,G,Sand & Gravel,1.5
+99,1298,-741,741,G,Sand & Gravel,1.5
