@@ -24,6 +24,156 @@ OpenMP.
 
 ---
 
+## Performance
+
+This benchmark uses 100,000 target cells, all 506,645 primary observations,
+all 1,205,193 secondary observations for cokriging, 30-point moving
+neighborhoods, and equivalent anisotropic exponential models. Runtime includes
+constructor/model/search setup, prediction, and result retrieval; file input
+and output are excluded.
+
+| Package | 3-D OK | 3-D CK | Result |
+|---|---:|---:|---|
+| **KrigeKit, 1 thread** | **1.340 s** | **8.512 s** | Completed |
+| **KrigeKit, default threads** | **0.303 s** | **1.178 s** | Completed |
+| gstat 2.1.6 | 18.06 s | 79.11 s | Completed |
+| [gstlearn 1.10.1](https://gstlearn.org/) | >600 s | >300 s‡ | Censored |
+| GSLIB | >300 s† | >300 s† | Censored after five minutes |
+| PyKrige 1.7.3 | — | — | Full-source setup requires ≥1.91 TiB |
+| TFInterpy 1.1.3 | — | — | Full-source pair vectors require ≈5.74 TiB |
+| GSTools 1.7.0 | — | — | No native moving-neighborhood search |
+
+At one thread, KrigeKit was 13.5× faster than gstat for OK and 9.29× faster
+for CK. With its default OpenMP setting, the advantage increased to 59.5× and
+67.2× respectively. In five minutes, GSLIB completed 5,707 OK targets and
+1,249 CK targets, projecting to approximately 87.6 minutes and 6.67 hours.
+
+† GSLIB combines input, computation, and formatted output, so its wall time is
+not directly comparable to the I/O-excluded runtimes. PyKrige and TFInterpy
+offer neighborhood-count arguments, but still construct global source-pair
+arrays before local prediction; they were guarded rather than allowed to
+exhaust system memory.
+
+‡ gstlearn OK uses the same 30-neighbor 3-D search. Its heterotopic CK
+neighborhood cannot express 30 neighbors per variable plus a secondary-only
+radius; the censored CK run used a non-parity total cap of 200.
+
+On the reduced 512-source workload, TFInterpy's TensorFlow CPU path did scale
+from 22.14 seconds at one thread to 3.83 seconds at 24 threads for 100,000
+targets (5.79×). Its full-source limitation is memory scaling, not the absence
+of target-side CPU parallelism.
+
+For a secondary 10,000-target test, an external anisotropic KD-tree reduced the
+inputs to the union of required neighbors: 2,026 primary and 3,796 secondary
+observations. The clipping/search time is included below:
+
+| Package | 3-D OK workflow | 3-D CK workflow |
+|---|---:|---:|
+| **KrigeKit, 1 thread** | **0.206 s** | **1.121 s** |
+| **KrigeKit, default threads** | **0.112 s** | **0.397 s** |
+| TFInterpy NumPy | 0.647 s | — |
+| gstat | 0.673 s | 1.606 s |
+| TFInterpy TF/CPU, 24 threads | 1.253 s | — |
+| GSLIB | 2.277 s† | 7.784 s† |
+| [gstlearn](https://gstlearn.org/) | 3.297 s | 64.085 s‡ |
+| PyKrige | 192.713 s | — |
+
+PyKrige's prediction itself took 0.48 seconds; 192.14 seconds were spent in
+constructor variogram diagnostics. Clipping is therefore a useful deployment
+workaround for TFInterpy, but it does not remove PyKrige's setup bottleneck.
+Because each package rebuilds its own search tree, dense distance ties can
+select slightly different neighborhoods after clipping.
+
+### How KrigeKit compares
+
+**Runtime.** KrigeKit's main advantage is large local-neighborhood kriging
+without global source-pair allocation or a Python target loop.
+
+- On the 100,000-target full-source benchmark, one-thread KrigeKit was 13.5×
+  faster than gstat for OK and 9.29× faster for CK.
+- With default OpenMP threads, KrigeKit was 59.5× faster than gstat for OK and
+  67.2× faster for CK.
+- GSLIB did not finish either full-source case in five minutes. Observed rates
+  projected to 87.6 minutes for OK and 6.67 hours for CK.
+- gstlearn did not finish full-source OK in ten minutes or its non-parity CK
+  configuration in five minutes. Its clipped OK workflow completed in 3.30 s.
+- PyKrige and TFInterpy could not accept all 506,645 primary observations
+  because their setup creates global source-pair arrays.
+- In the externally clipped test, one-thread KrigeKit remained about 3.1×
+  faster than TFInterpy NumPy and 3.3× faster than gstat for OK. PyKrige's
+  constructor dominated its 192.7-second workflow.
+
+**Capabilities.**
+
+| Capability | KrigeKit | GSLIB | PyKrige | GSTools | gstat | gstlearn | TFInterpy |
+|---|---|---|---|---|---|---|---|
+| 3-D ordinary kriging | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Native moving neighborhood | Yes | Yes | Yes | No | Yes | Yes | `N`, global pair setup |
+| Multivariable cokriging | Yes | Yes | No | No native CK | Yes | Yes | No |
+| Per-variable `nmax` / `maxdist` | Yes | Yes | Limited | No | Yes | Total cap | `N` only |
+| Nested anisotropic variograms | Yes | Yes | Yes | Yes | Yes | Yes | Basic/custom |
+| Automatic variogram fitting | Yes | Separate workflow | Basic | Yes | Yes | Yes | Basic |
+| Space-time covariance models | Yes | Manual/specialized | No | Composable | Yes | Yes | No |
+| Block kriging | Yes | Yes | Limited | Yes | Yes | Yes | No documented support |
+| Sequential simulation | Gaussian/indicator | Gaussian/indicator | No | Gaussian/fields | Conditional | Yes | No |
+| Score transforms/back-transform | Normal/uniform | External | No integrated | External | External | Anamorphosis tools | No |
+| Reusable kriging weights | Yes | Limited | No | No local weights | No direct | Kriging factors | No |
+| Parallel target execution | OpenMP | Generally serial | Python loop | Custom | Typically serial | C++ backend | TensorFlow CPU/GPU |
+| Primary interface | Python | Parameter files | Python | Python | R | Python/R/C++ | Python |
+
+**Practical positioning.**
+
+- **KrigeKit** is strongest when the problem combines large observation sets,
+  millions of targets, local neighborhoods, cokriging, simulation, or reusable
+  weights.
+- **gstat** is the closest broad statistical comparison and remains attractive
+  for R workflows, exploratory variogram analysis, and integration with the R
+  spatial ecosystem.
+- **gstlearn** offers one of the broadest modern geostatistical APIs, backed by
+  C++ and available from Python and R. Its covariance, fitting, simulation,
+  multivariate, and space-time coverage is strong. On this benchmark its
+  moving-neighborhood search scaled poorly with the full source dataset, and
+  its single total heterotopic neighborhood cap could not reproduce the
+  per-variable CK search exactly.
+- **GSLIB** remains valuable as an independent legacy reference and provides a
+  broad geostatistical toolset, but its parameter-file workflow, text I/O, and
+  serial search scale poorly on this benchmark.
+- **GSTools** has an excellent covariance-model and random-field API. It is a
+  strong choice for simulation and model composition, but lacks a native
+  moving-neighborhood kriging engine.
+- **PyKrige** offers a familiar, concise API for small and moderate OK
+  problems. Its global constructor diagnostics and Python moving-window path
+  limit large-source use, and it does not provide geostatistical cokriging.
+- **TFInterpy** provides compact OK APIs and parallel TensorFlow batch solves.
+  It performs well after aggressive source clipping, but its dense all-source
+  pair matrix prevents scaling to the full observation dataset used here.
+
+### OpenMP scaling
+
+For the full 3-D cokriging case (506,645 primary observations, 1,205,193
+secondary observations, and 5,912,940 target cells), KrigeKit scales from
+355.23 seconds on one thread to 27.65 seconds on 24 threads:
+
+| Threads | Runtime | Speedup | Efficiency |
+|---:|---:|---:|---:|
+| 1 | 355.23 s | 1.00× | 100.0% |
+| 2 | 175.93 s | 2.02× | 101.0% |
+| 4 | 92.21 s | 3.85× | 96.3% |
+| 6 | 66.54 s | 5.34× | 89.0% |
+| 8 | 51.51 s | 6.90× | 86.2% |
+| 12 | 40.05 s | 8.87× | 73.9% |
+| 16 | 32.11 s | 11.06× | 69.1% |
+| 24 | 27.65 s | 12.85× | 53.5% |
+
+![KrigeKit full 3-D cokriging thread scaling](docs/_static/ck_thread_scaling.png)
+
+Measured on Windows 11 with an Intel Core i7-13700K (16 cores, 24 logical
+processors). Each point is one fresh run from `Kriging(...)` through
+`get_results()`; CSV input and output are excluded. Absolute times depend on
+hardware, compiler, model, neighborhood, and cache settings.
+
+---
+
 ## Installation
 
 **pip**
