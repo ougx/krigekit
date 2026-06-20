@@ -258,7 +258,7 @@ The implementation is split by responsibility:
 | `variogram_fitting.py` | Generic weighted marginal fitting | Python analysis layer |
 | `variogram_plotting.py` | Variogram curves and maps | Python analysis layer |
 | `variogram_base.py` | Observation and empirical-cache workflow | Shared model state |
-| `variogram_model.py` | Marginal nested/product model | `vgm_struct` |
+| `variogram_model.py` | Marginal analysis workflow (owns a `VgmStructure`) | `vgm_struct` analysis |
 | `variogram_st.py` | Product-sum and sum-metric coupling | `vgm_struct_st` |
 | `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
 
@@ -278,10 +278,14 @@ preceding one in covariance space, and each group is summed.
 The Python side keeps the component **flat** -- the same field layout as
 `Kriging.set_vgm` -- and `VgmComponent.to_flat_dict()` / `from_flat_dict()` are
 the authoritative bridge to the C API; the Fortran engine regroups the
-anisotropy fields into its `vgm_aniso` type after transfer. The analysis
-classes (`VariogramModel`, `SpaceTimeVariogramModel`) are migrating to own a
-`VgmStructure` rather than a private component list; until that migration
-completes, the legacy `_VgmComponent` and the new classes coexist.
+anisotropy fields into its `vgm_aniso` type after transfer.
+
+`VariogramModel` owns a single `VgmStructure` (`model.structure`) and delegates
+all theoretical evaluation (`covariance`, `variogram`, `calc_covariance`,
+`calc_variogram`) and engine transfer to it -- it keeps no parallel component
+list, and the legacy `_VgmComponent` has been removed. `SpaceTimeVariogramModel`
+still composes two `VariogramModel` marginals; folding it onto a
+`VgmStructureST` is a later phase.
 
 Index convention: variable indices in a system (`obs[ivar]`, `vgm[ivar, jvar]`)
 are 1-based labels matching the engine, while component indices within a

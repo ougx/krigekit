@@ -117,6 +117,22 @@ def test_to_kriging_specs_replace_flag():
     assert "product" in specs[0]  # flat engine fields are present
 
 
+def test_variogram_model_owns_structure_and_delegates():
+    model = VariogramModel()
+    model.set_vgm("sph", nugget=0.1, sill=0.6, a_major=300.0, append=False)
+    model.set_vgm("exp", sill=0.3, a_major=900.0)
+
+    assert isinstance(model.structure, VgmStructure)
+    assert model.structure.ncomponent == 2
+    # the legacy parallel list must be gone
+    assert not hasattr(model, "structures")
+
+    # evaluation delegates to the owned structure
+    h = np.linspace(0.0, 1200.0, 25)
+    np.testing.assert_array_equal(model.covariance(h), model.structure.covariance(h))
+    np.testing.assert_array_equal(model.variogram(h), model.structure.variogram(h))
+
+
 def test_apply_to_emits_engine_calls():
     class _Recorder:
         def __init__(self):

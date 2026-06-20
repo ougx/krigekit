@@ -163,7 +163,7 @@ fitted, _ = model.fit_anisotropy(
     inplace=True,
     maxfev=50000,
 )
-comp = model.structures[0]
+comp = model.structure.components[0]
 
 print("Fitted vs true ranges:")
 print(f"  sill   : {comp.sill:5.2f}  (true {TRUE['sill']:.2f})")

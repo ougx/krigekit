@@ -461,8 +461,8 @@ def test_variogram_model_fit_anisotropy_recovers_major_and_minor_ranges():
     )
 
     np.testing.assert_allclose(params, [0.8, 100.0, 25.0], rtol=1e-5, atol=1e-5)
-    np.testing.assert_allclose(fitted.structures[0].a_major, 100.0, rtol=1e-5)
-    np.testing.assert_allclose(fitted.structures[0].a_minor1, 25.0, rtol=1e-5)
+    np.testing.assert_allclose(fitted.structure.components[0].a_major, 100.0, rtol=1e-5)
+    np.testing.assert_allclose(fitted.structure.components[0].a_minor1, 25.0, rtol=1e-5)
 
 
 def test_variogram_model_apply_to_kriging_replays_specs():
@@ -1060,12 +1060,12 @@ def test_set_markov_cross_formula_and_psd():
     system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
     system.set_markov_cross(1, 2, corr=rho)
 
-    cross = system.models[(1, 2)].structures[0].sill
+    cross = system.models[(1, 2)].structure.components[0].sill
     np.testing.assert_allclose(cross, rho * np.sqrt(s_p * s_s), rtol=1e-12)
     B = np.array([[s_p, cross], [cross, s_s]])
     assert np.min(np.linalg.eigvalsh(B)) >= -1e-12          # valid (PSD)
     # cross adopts the secondary's range
-    assert system.models[(1, 2)].structures[0].a_major == 6500.0
+    assert system.models[(1, 2)].structure.components[0].a_major == 6500.0
 
 
 def test_set_markov_cross_estimates_corr_from_collocated_obs():
@@ -1085,7 +1085,7 @@ def test_set_markov_cross_estimates_corr_from_collocated_obs():
 
     np.testing.assert_allclose(system.markov_corr_[(1, 2)], rho, rtol=1e-10)
     expected = rho * np.sqrt(np.var(a) * np.var(b))
-    np.testing.assert_allclose(system.models[(1, 2)].structures[0].sill,
+    np.testing.assert_allclose(system.models[(1, 2)].structure.components[0].sill,
                                expected, rtol=1e-10)
 
 
@@ -1098,7 +1098,7 @@ def test_set_markov_cross_stays_valid_where_strong_correlation():
     system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
     system.set_markov_cross(1, 2, corr=0.95)
 
-    cross = system.models[(1, 2)].structures[0].sill
+    cross = system.models[(1, 2)].structure.components[0].sill
     assert abs(cross) <= np.sqrt(s_p * s_s) + 1e-12      # never exceeds the bound
 
 
@@ -1141,10 +1141,11 @@ def test_anisotropic_hr_matches_fortran_rotation_with_plunge():
             "sph", a_major=a_major, a_minor1=a_minor1, a_minor2=a_minor2,
             azimuth=az, dip=dip, plunge=plunge,
         )
-        comp = model.structures[0]
+        comp = model.structure.components[0]
         rotmat = _fortran_calc_rotmat(az, dip, plunge,
                                       a_minor1 / a_major, a_minor2 / a_major)
-        py = np.array([model._anisotropic_hr(comp, lag) for lag in lags])
+        py = np.array([comp.calc_anisotropic_distance(lag) / comp.a_major
+                       for lag in lags])
         fortran = np.array([np.sqrt(np.sum((rotmat @ lag) ** 2)) / a_major
                             for lag in lags])
         np.testing.assert_allclose(py, fortran, atol=1e-12)

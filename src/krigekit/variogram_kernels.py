@@ -1,25 +1,8 @@
 
 """Engine-compatible variogram kernels and component definitions."""
 
-from dataclasses import dataclass
 
 import numpy as np
-
-
-@dataclass
-class _VgmComponent:
-    """One engine-compatible variogram structure."""
-
-    vtype: str
-    nugget: float = 0.0
-    sill: float = 1.0
-    a_major: float = 1.0
-    a_minor1: float = 1.0
-    a_minor2: float = 1.0
-    azimuth: float = 0.0
-    dip: float = 0.0
-    plunge: float = 0.0
-    product: bool = False
 
 
 # ---------------------------------------------------------------------------

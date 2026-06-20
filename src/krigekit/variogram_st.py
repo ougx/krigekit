@@ -403,7 +403,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         dw = np.where(np.abs(ht) <= np.finfo(float).eps, 0.0, dw)
         for sill, comp in zip(
             joint_sills,
-            self.sum_metric_spatial_model_.structures,
+            self.sum_metric_spatial_model_.structure.components,
         ):
             if comp.vtype == "nug":
                 continue
@@ -444,7 +444,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             raise TypeError("spatial_model must be a VariogramModel")
         if not isinstance(temporal_model, VariogramModel):
             raise TypeError("temporal_model must be a VariogramModel")
-        if not spatial_model.structures or not temporal_model.structures:
+        if not spatial_model.structure.components or not temporal_model.structure.components:
             raise ValueError("spatial_model and temporal_model must contain structures")
         if avgvgm is None:
             if self._avg is None:
@@ -485,7 +485,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             )
         weights = np.sqrt(capped_count / np.max(capped_count))
 
-        nstruct = len(spatial_model.structures)
+        nstruct = len(spatial_model.structure.components)
         max_time = max(float(np.nanmax(ht)), 1.0)
         if p0 is None:
             p0 = np.r_[1.0, 1.0, np.full(nstruct, 0.05), max_time]

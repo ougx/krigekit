@@ -47,7 +47,6 @@ from .variogram_geometry import (
 from .variogram_kernels import (
     _ANALYTIC_TAIL,
     _MODEL_ALIASES,
-    _VgmComponent,
     _covfunc,
     _vgmfunc,
     calc_cov,

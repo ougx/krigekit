@@ -134,7 +134,7 @@ model.set_anisotropic_params([
 
 structure_ratios = [
     comp.a_minor1 / comp.a_major
-    for comp in model.structures
+    for comp in model.structure.components
 ]
 search_anis1 = max(structure_ratios)
 

@@ -1,6 +1,5 @@
 """Marginal variogram model, fitting, anisotropy, plotting, and transfer."""
 
-from dataclasses import asdict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,19 +15,13 @@ from .variogram_empirical import (
     raw_vgm,
 )
 from .variogram_fitting import _fit_sigma, fit_vgm
+from .variogram_component import VgmComponent
+from .variogram_structure import VgmStructure
 from .variogram_geometry import (
     _engine_rotation,
-    calc_anisotropic_lag,
-    calc_lag_vectors,
     rotation_matrix_3d,
 )
-from .variogram_kernels import (
-    _ANALYTIC_TAIL,
-    _VgmComponent,
-    _covfunc,
-    calc_cov,
-    resolve_model,
-)
+from .variogram_kernels import resolve_model
 from .variogram_plotting import plot_vgm_map, plot_vgm_map3d
 
 
@@ -51,7 +44,7 @@ class VariogramModel(_VariogramModelBase):
     def __init__(self, structures=None):
         """Create an empty marginal model or load ``set_vgm`` specifications."""
         super().__init__()
-        self.structures = []
+        self.structure = VgmStructure()
         self._spacetime_compat = None
         if structures is not None:
             for i, spec in enumerate(structures):
@@ -85,11 +78,11 @@ class VariogramModel(_VariogramModelBase):
 
     def _common_orientation(self):
         """Return the shared ``(azimuth, dip, plunge)`` for all structures."""
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before directional fitting")
-        ref = self.structures[0]
+        ref = self.structure.components[0]
         values = (ref.azimuth, ref.dip, ref.plunge)
-        for comp in self.structures[1:]:
+        for comp in self.structure.components[1:]:
             if not np.allclose(values, (comp.azimuth, comp.dip, comp.plunge)):
                 raise ValueError(
                     "directional range fitting requires all structures to share "
@@ -168,13 +161,13 @@ class VariogramModel(_VariogramModelBase):
 
     def _default_fit_p0(self, fit_nugget: bool = True):
         """Build default flat fit parameters from current structure values."""
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before fit() or pass p0")
         params = []
-        for comp in self.structures:
+        for comp in self.structure.components:
             params.extend([comp.sill, comp.a_major])
         if fit_nugget:
-            params.append(self.structures[0].nugget)
+            params.append(self.structure.components[0].nugget)
         return tuple(params)
 
     def calc_params(self, fit_nugget: bool = True):
@@ -213,9 +206,9 @@ class VariogramModel(_VariogramModelBase):
             ``self``, so manual adjustments can be chained before plotting or
             applying to kriging.
         """
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before set_params()")
-        nstruct = len(self.structures)
+        nstruct = len(self.structure.components)
         include_nugget = bool(fit_nugget)
 
         if params is not None:
@@ -225,11 +218,11 @@ class VariogramModel(_VariogramModelBase):
                     "params must contain one (sill, range) pair per structure, "
                     "optionally followed by one trailing nugget"
                 )
-            for i, comp in enumerate(self.structures):
+            for i, comp in enumerate(self.structure.components):
                 comp.sill = float(flat[2 * i])
                 comp.a_major = float(flat[2 * i + 1])
             if len(flat) == 2 * nstruct + 1:
-                self.structures[0].nugget = float(flat[-1])
+                self.structure.components[0].nugget = float(flat[-1])
                 include_nugget = True
             else:
                 include_nugget = False
@@ -238,7 +231,7 @@ class VariogramModel(_VariogramModelBase):
             sills = np.asarray(sills, dtype=float).reshape(-1)
             if len(sills) != nstruct:
                 raise ValueError("sills must have one value per structure")
-            for comp, value in zip(self.structures, sills):
+            for comp, value in zip(self.structure.components, sills):
                 comp.sill = float(value)
 
         if ranges is not None:
@@ -247,13 +240,13 @@ class VariogramModel(_VariogramModelBase):
                 raise ValueError("ranges must have one value per structure")
             if np.any(ranges <= 0.0):
                 raise ValueError("ranges must be positive")
-            for comp, value in zip(self.structures, ranges):
+            for comp, value in zip(self.structure.components, ranges):
                 comp.a_major = float(value)
 
         if sill is not None:
             if nstruct != 1:
                 raise ValueError("use sills=... when the model has multiple structures")
-            self.structures[0].sill = float(sill)
+            self.structure.components[0].sill = float(sill)
 
         new_range = a_major if a_major is not None else range_
         if new_range is not None:
@@ -261,14 +254,14 @@ class VariogramModel(_VariogramModelBase):
                 raise ValueError("use ranges=... when the model has multiple structures")
             if new_range <= 0.0:
                 raise ValueError("a_major/range_ must be positive")
-            self.structures[0].a_major = float(new_range)
+            self.structure.components[0].a_major = float(new_range)
 
-        for comp in self.structures:
+        for comp in self.structure.components:
             if comp.a_major <= 0.0:
                 raise ValueError("ranges must be positive")
 
         if nugget is not None:
-            self.structures[0].nugget = float(nugget)
+            self.structure.components[0].nugget = float(nugget)
             include_nugget = True
 
         self._store_manual_params(fit_nugget=include_nugget)
@@ -339,7 +332,7 @@ class VariogramModel(_VariogramModelBase):
         self._pcov = cov
         self._fitted_model = fitted
         if inplace:
-            self.structures = [_VgmComponent(**asdict(comp)) for comp in fitted.structures]
+            self.structure.components = [comp.copy() for comp in fitted.structure.components]
             fitted = self
             self._fitted_model = self
         else:
@@ -357,15 +350,15 @@ class VariogramModel(_VariogramModelBase):
 
     def _default_anisotropic_fit_p0(self, include_minor2: bool, fit_nugget: bool = True):
         """Build default ``(sill, major, minor1[, minor2], ..., [nugget])`` params."""
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before fit_anisotropy() or pass p0")
         params = []
-        for comp in self.structures:
+        for comp in self.structure.components:
             params.extend([comp.sill, comp.a_major, comp.a_minor1])
             if include_minor2:
                 params.append(comp.a_minor2)
         if fit_nugget:
-            params.append(self.structures[0].nugget)
+            params.append(self.structure.components[0].nugget)
         return tuple(params)
 
     def calc_anisotropic_params(self, include_minor2: bool = False,
@@ -392,7 +385,7 @@ class VariogramModel(_VariogramModelBase):
             include_minor2=include_minor2,
             fit_nugget=fit_nugget,
         )
-        self.structures = [_VgmComponent(**asdict(comp)) for comp in fitted.structures]
+        self.structure.components = [comp.copy() for comp in fitted.structure.components]
         self._params = np.asarray(params, dtype=float)
         self._pcov = None
         self._fitted_model = self
@@ -403,14 +396,14 @@ class VariogramModel(_VariogramModelBase):
         """Build a model from anisotropic flat fit parameters."""
         params = np.asarray(params, dtype=float).reshape(-1)
         nper = 4 if include_minor2 else 3
-        expected = nper * len(self.structures) + (1 if fit_nugget else 0)
+        expected = nper * len(self.structure.components) + (1 if fit_nugget else 0)
         if len(params) != expected:
             raise ValueError("anisotropic parameter vector has the wrong length")
 
         out = VariogramModel()
-        for i, template in enumerate(self.structures):
+        for i, template in enumerate(self.structure.components):
             offset = nper * i
-            spec = asdict(template)
+            spec = template.to_flat_dict()
             spec["sill"] = float(params[offset])
             spec["a_major"] = float(params[offset + 1])
             spec["a_minor1"] = float(params[offset + 2])
@@ -514,7 +507,7 @@ class VariogramModel(_VariogramModelBase):
             bounds = self._default_anisotropic_bounds(
                 p0,
                 include_minor2=include_minor2,
-                nstruct=len(self.structures),
+                nstruct=len(self.structure.components),
                 fit_nugget=fit_nugget,
             )
 
@@ -553,7 +546,7 @@ class VariogramModel(_VariogramModelBase):
         self._pcov = cov
         self._fitted_model = fitted
         if inplace:
-            self.structures = [_VgmComponent(**asdict(comp)) for comp in fitted.structures]
+            self.structure.components = [comp.copy() for comp in fitted.structure.components]
             fitted = self
             self._fitted_model = self
         else:
@@ -623,9 +616,9 @@ class VariogramModel(_VariogramModelBase):
         if a_major <= 0.0 or a_minor1 <= 0.0 or a_minor2 <= 0.0:
             raise ValueError("a_major, a_minor1 and a_minor2 must be positive")
         if not append:
-            self.structures.clear()
+            self.structure.components.clear()
 
-        self.structures.append(_VgmComponent(
+        self.structure.components.append(VgmComponent(
             vtype=resolve_model(vtype),
             nugget=float(nugget),
             sill=float(sill),
@@ -648,20 +641,20 @@ class VariogramModel(_VariogramModelBase):
         index : int, optional
             Zero-based structure index.
         **params
-            Any :class:`_VgmComponent` field except ``append``.  Use this for
+            Any :class:`VgmComponent` field except ``append``.  Use this for
             edits that do not fit in the flat ``set_params`` vector, such as
             ``a_minor1``, ``azimuth``, ``dip`` or ``product``.
         """
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before set_structure_params()")
-        if not 0 <= index < len(self.structures):
+        if not 0 <= index < len(self.structure.components):
             raise IndexError("structure index out of range")
-        allowed = set(_VgmComponent.__dataclass_fields__)
+        allowed = set(VgmComponent.__dataclass_fields__)
         unknown = set(params) - allowed
         if unknown:
             raise TypeError(f"unknown structure parameter(s): {sorted(unknown)}")
 
-        comp = self.structures[index]
+        comp = self.structure.components[index]
         for key, value in params.items():
             if key == "vtype":
                 value = resolve_model(value)
@@ -712,7 +705,7 @@ class VariogramModel(_VariogramModelBase):
         VariogramModel
             ``self``.
         """
-        if not self.structures:
+        if not self.structure.components:
             raise RuntimeError("call set_vgm() before set_anisotropy()")
         if anis1 is not None:
             if ratio_minor1 is not None:
@@ -728,13 +721,13 @@ class VariogramModel(_VariogramModelBase):
             raise ValueError("pass either a_minor2 or ratio_minor2, not both")
 
         if structures is None:
-            indices = list(range(len(self.structures)))
+            indices = list(range(len(self.structure.components)))
         elif np.isscalar(structures):
             indices = [int(structures)]
         else:
             indices = [int(i) for i in structures]
         for index in indices:
-            if not 0 <= index < len(self.structures):
+            if not 0 <= index < len(self.structure.components):
                 raise IndexError("structure index out of range")
 
         def _values(value, name):
@@ -757,7 +750,7 @@ class VariogramModel(_VariogramModelBase):
         }
 
         for k, index in enumerate(indices):
-            comp = self.structures[index]
+            comp = self.structure.components[index]
             if vals["a_minor1"][k] is not None:
                 comp.a_minor1 = vals["a_minor1"][k]
             if vals["ratio_minor1"][k] is not None:
@@ -778,72 +771,22 @@ class VariogramModel(_VariogramModelBase):
         self._store_manual_params(fit_nugget=True)
         return self
 
-    def _component_covariance(self, comp, h):
-        """Evaluate one structure's covariance contribution at lag ``h``."""
-        h = np.asarray(h, dtype=float)
-        base = calc_cov(comp.vtype, h, psill=comp.sill, rng=comp.a_major)
-        return np.where(h <= 0.0, comp.sill + comp.nugget, base)
-
-    @staticmethod
-    def _coordinate_lags(coord0, coord1, pairwise: bool = False):
-        """Return lag vectors ``coord1 - coord0`` for row-wise or pairwise use."""
-        return calc_lag_vectors(coord0, coord1, pairwise=pairwise)
-
-    @staticmethod
-    def _anisotropic_hr(comp, lag):
-        """Return reduced anisotropic lag ``h/a`` for one structure.
-
-        Lags are rotated with the engine-consistent :func:`_engine_rotation`
-        (2D lags are embedded in 3D), then scaled by the per-axis ranges of the
-        model frame ``(x=a_minor1, y=a_major, z=a_minor2)``.
-        """
-        return calc_anisotropic_lag(
-            lag,
-            anis1=comp.a_minor1 / comp.a_major,
-            anis2=comp.a_minor2 / comp.a_major,
-            azimuth=comp.azimuth,
-            dip=comp.dip,
-            plunge=comp.plunge,
-        ) / comp.a_major
-
-    def _component_covariance_between(self, comp, lag):
-        """Evaluate one structure's covariance contribution for lag vectors."""
-        hr = self._anisotropic_hr(comp, lag)
-        base = comp.sill * _covfunc[comp.vtype](
-            np.minimum(1.0, hr) if comp.vtype not in _ANALYTIC_TAIL else hr
-        )
-        return np.where(hr <= 0.0, comp.sill + comp.nugget, base)
-
     def covariance(self, h):
         """Evaluate the nested/product covariance model at lag distance ``h``.
 
-        Product groups are evaluated exactly like the Fortran engine: start
-        with one structure, multiply by each immediately following structure
-        whose ``product`` flag is true, then add the group to the total.
+        Delegates to :meth:`VgmStructure.covariance`; product groups are
+        evaluated exactly like the Fortran engine.
         """
-        if not self.structures:
-            return np.zeros_like(np.asarray(h, dtype=float))
-
-        h = np.asarray(h, dtype=float)
-        total = np.zeros_like(h, dtype=float)
-        i = 0
-        while i < len(self.structures):
-            group = self._component_covariance(self.structures[i], h)
-            i += 1
-            while i < len(self.structures) and self.structures[i].product:
-                group = group * self._component_covariance(self.structures[i], h)
-                i += 1
-            total = total + group
-        return total
+        return self.structure.covariance(h)
 
     @property
     def cov0(self):
         """Covariance at zero lag, including nugget and product groups."""
-        return self.covariance(0.0)
+        return self.structure.cov0
 
     def variogram(self, h):
         """Evaluate the semivariogram ``gamma(h) = C(0) - C(h)``."""
-        return self.cov0 - self.covariance(h)
+        return self.structure.variogram(h)
 
     def calc_covariance(self, coord0, coord1, pairwise: bool = False):
         """Evaluate covariance between coordinates, applying anisotropy.
@@ -862,27 +805,11 @@ class VariogramModel(_VariogramModelBase):
         numpy.ndarray or scalar-like
             Covariance value(s) from the nested/product model.
         """
-        lag = self._coordinate_lags(coord0, coord1, pairwise=pairwise)
-        if not self.structures:
-            return np.zeros(lag.shape[:-1], dtype=float)
-
-        total = np.zeros(lag.shape[:-1], dtype=float)
-        i = 0
-        while i < len(self.structures):
-            group = self._component_covariance_between(self.structures[i], lag)
-            i += 1
-            while i < len(self.structures) and self.structures[i].product:
-                group = group * self._component_covariance_between(self.structures[i], lag)
-                i += 1
-            total = total + group
-        total = np.asarray(total)
-        return total if pairwise else total.squeeze()
+        return self.structure.calc_covariance(coord0, coord1, pairwise=pairwise)
 
     def calc_variogram(self, coord0, coord1, pairwise: bool = False):
         """Evaluate semivariogram values between coordinates with anisotropy."""
-        gamma = np.asarray(self.cov0 - self.calc_covariance(
-            coord0, coord1, pairwise=pairwise))
-        return gamma if pairwise else gamma.squeeze()
+        return self.structure.calc_variogram(coord0, coord1, pairwise=pairwise)
 
     def plot(
         self,
@@ -924,17 +851,17 @@ class VariogramModel(_VariogramModelBase):
         if plot_model:
             if h is None:
                 if xmax is None:
-                    if self.structures:
-                        xmax = max(comp.a_major for comp in self.structures)
+                    if self.structure.components:
+                        xmax = max(comp.a_major for comp in self.structure.components)
                     else:
                         xmax = 1.0
                 h = np.linspace(0.0, xmax * 1.1, 200)
             ax.plot(h, self.variogram(h), **plotkws_model)
-        if annotate and self.structures:
-            ms = "Model: " + "\t".join(comp.vtype.capitalize() for comp in self.structures)
-            ss = "\nSill : " + "\t".join(f"{comp.sill:.5g}" for comp in self.structures)
-            rr = "\nRange: " + "\t".join(f"{comp.a_major:.6g}" for comp in self.structures)
-            nn = f"\nNugget: {self.structures[0].nugget:.5g}"
+        if annotate and self.structure.components:
+            ms = "Model: " + "\t".join(comp.vtype.capitalize() for comp in self.structure.components)
+            ss = "\nSill : " + "\t".join(f"{comp.sill:.5g}" for comp in self.structure.components)
+            rr = "\nRange: " + "\t".join(f"{comp.a_major:.6g}" for comp in self.structure.components)
+            nn = f"\nNugget: {self.structure.components[0].nugget:.5g}"
             ax.text(0.95, 0.05, ms + ss + rr + nn, ha="right", va="bottom",
                     transform=ax.transAxes)
         ax.set(xlabel=xlabel, ylabel=ylabel)
@@ -988,15 +915,15 @@ class VariogramModel(_VariogramModelBase):
         if estimate:
             angle_aniso = "estimate"
         if angle_aniso == "model":
-            angle = self.structures[0].azimuth if self.structures else None
+            angle = self.structure.components[0].azimuth if self.structure.components else None
         elif angle_aniso == "estimate":
             angle = estimate_aniso_angle(rawvgm, dim3d=False)[0][0]
         else:
             angle = angle_aniso
 
         if ellipse_aniso == "model":
-            if self.structures:
-                comp = self.structures[0]
+            if self.structure.components:
+                comp = self.structure.components[0]
                 ellipse = (2.0 * comp.a_major, 2.0 * comp.a_minor1)
             else:
                 ellipse = None
@@ -1070,8 +997,8 @@ class VariogramModel(_VariogramModelBase):
         if estimate:
             angle_aniso = "estimate"
         if angle_aniso == "model":
-            if self.structures:
-                comp = self.structures[0]
+            if self.structure.components:
+                comp = self.structure.components[0]
                 angle = (comp.azimuth, comp.dip, comp.plunge)
             else:
                 angle = None
@@ -1098,8 +1025,8 @@ class VariogramModel(_VariogramModelBase):
             complete model to a reused :class:`krigekit.Kriging` object.
         """
         specs = []
-        for i, comp in enumerate(self.structures):
-            spec = asdict(comp)
+        for i, comp in enumerate(self.structure.components):
+            spec = comp.to_flat_dict()
             spec["append"] = not (replace and i == 0)
             specs.append(spec)
         return specs
@@ -1130,7 +1057,7 @@ class VariogramModel(_VariogramModelBase):
                 "at_k": comp.a_major,
                 "product": comp.product,
             }
-            for comp in self.structures
+            for comp in self.structure.components
         ]
 
     def apply_temporal_to(self, kriging, ivar: int, jvar: int):
@@ -1194,10 +1121,10 @@ class VariogramModel(_VariogramModelBase):
 
     def __len__(self):
         """Return the number of stored structures."""
-        return len(self.structures)
+        return len(self.structure.components)
 
     def __repr__(self):
         """Return a compact debugging representation."""
-        return f"VariogramModel(nstruct={len(self.structures)})"
+        return f"VariogramModel(nstruct={len(self.structure.components)})"
 
 

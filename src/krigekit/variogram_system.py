@@ -1,12 +1,12 @@
 """Multivariable variogram systems and LMC fitting."""
 
-from dataclasses import asdict
 
 import numpy as np
 from scipy.optimize import least_squares
 
 from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
-from .variogram_kernels import _VgmComponent, calc_vgm
+from .variogram_component import VgmComponent
+from .variogram_kernels import calc_vgm
 from .variogram_model import VariogramModel
 
 
@@ -247,16 +247,16 @@ class VariogramSystem:
             template_model = next((m for m in self.models.values() if len(m)), None)
         if template_model is None:
             raise RuntimeError("call set_vgm() before fit_lmc()")
-        if any(comp.product for comp in template_model.structures):
+        if any(comp.product for comp in template_model.structure.components):
             raise NotImplementedError("fit_lmc() currently supports additive LMC structures only")
-        return [_VgmComponent(**asdict(comp)) for comp in template_model.structures]
+        return [comp.copy() for comp in template_model.structure.components]
 
     def _validate_lmc_templates(self, template):
         """Check pair models are compatible with the shared LMC template."""
         for key, model in self.models.items():
-            if len(model.structures) != len(template):
+            if len(model.structure.components) != len(template):
                 raise ValueError(f"pair {key} does not match the LMC structure count")
-            for comp, tmpl in zip(model.structures, template):
+            for comp, tmpl in zip(model.structure.components, template):
                 if comp.product or comp.vtype != tmpl.vtype:
                     raise ValueError(
                         f"pair {key} must use the same additive model types "
@@ -284,10 +284,10 @@ class VariogramSystem:
                 model = self.models.get((i, j))
                 if model is None:
                     continue
-                for k, comp in enumerate(model.structures):
+                for k, comp in enumerate(model.structure.components):
                     mats[k][i - 1, j - 1] = mats[k][j - 1, i - 1] = comp.sill
-                if fit_nugget and model.structures:
-                    nugget[i - 1, j - 1] = nugget[j - 1, i - 1] = model.structures[0].nugget
+                if fit_nugget and model.structure.components:
+                    nugget[i - 1, j - 1] = nugget[j - 1, i - 1] = model.structure.components[0].nugget
         return nugget, mats
 
     def _default_lmc_pairs(self):
@@ -428,7 +428,7 @@ class VariogramSystem:
             for j in range(i, nvar + 1):
                 model = VariogramModel()
                 for k, comp in enumerate(template):
-                    spec = asdict(comp)
+                    spec = comp.to_flat_dict()
                     ratio = ranges[k] / comp.a_major
                     spec["sill"] = mats[k][i - 1, j - 1]
                     spec["a_major"] = ranges[k]
@@ -489,8 +489,8 @@ class VariogramSystem:
             raise ValueError("primary and secondary must be different variables")
         model_p = self._get_model(pi, pi, create=False)
         model_s = self._get_model(si, si, create=False)
-        s_p = [comp.sill for comp in model_p.structures]
-        s_s = [comp.sill for comp in model_s.structures]
+        s_p = [comp.sill for comp in model_p.structure.components]
+        s_s = [comp.sill for comp in model_s.structure.components]
         if not s_p or not s_s:
             raise RuntimeError("set auto-models for both variables before set_markov_cross()")
         if len(s_p) != len(s_s):
@@ -510,7 +510,7 @@ class VariogramSystem:
 
         base = model_s if structure == "secondary" else model_p
         cross = VariogramModel()
-        for k, comp in enumerate(base.structures):
+        for k, comp in enumerate(base.structure.components):
             cross.set_vgm(
                 vtype=comp.vtype,
                 nugget=cross_nugget if k == 0 else 0.0,
