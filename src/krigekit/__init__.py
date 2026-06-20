@@ -50,6 +50,8 @@ from krigekit.kriging_indicator import (   # noqa: F401
 
 from krigekit.variogram import (   # noqa: F401
     SpaceTimeVariogramModel,
+    VgmComponent,
+    VgmStructure,
     VariogramModel,
     VariogramSystem,
     calc_anisotropic_lag,
@@ -66,6 +68,8 @@ __all__ = [
     "Kriging",
     "SpaceTimeKriging",
     "IndicatorKriging",
+    "VgmComponent",
+    "VgmStructure",
     "VariogramModel",
     "SpaceTimeVariogramModel",
     "VariogramSystem",

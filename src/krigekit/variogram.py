@@ -34,6 +34,8 @@ from .variogram_empirical import (
     raw_vgm,
 )
 from .variogram_fitting import fit_vgm
+from .variogram_component import VgmComponent
+from .variogram_structure import VgmStructure
 from .variogram_geometry import (
     _engine_rotation,
     _great_circle_dist,
@@ -67,6 +69,8 @@ from .variogram_st import SpaceTimeVariogramModel
 from .variogram_system import VariogramSystem
 
 __all__ = [
+    "VgmComponent",
+    "VgmStructure",
     "VariogramModel",
     "SpaceTimeVariogramModel",
     "VariogramSystem",

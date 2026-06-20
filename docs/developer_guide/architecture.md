@@ -250,7 +250,9 @@ The implementation is split by responsibility:
 
 | Python module | Responsibility | Fortran analogue |
 |---|---|---|
-| `variogram_kernels.py` | Kernel functions and one structure component | `vgm_component`, `corefunc_fn` |
+| `variogram_kernels.py` | Kernel correlation/variogram functions | `corefunc_fn` |
+| `variogram_component.py` | One flat theoretical component (`VgmComponent`) | `vgm_component` |
+| `variogram_structure.py` | Nested/product theoretical model for one pair (`VgmStructure`) | `vgm_struct` |
 | `variogram_geometry.py` | Rotations and anisotropic lag distance | `vgm_aniso`, `rotation.f90` |
 | `variogram_empirical.py` | Pair clouds, averaging, and directional analysis | Python analysis layer |
 | `variogram_fitting.py` | Generic weighted marginal fitting | Python analysis layer |
@@ -261,5 +263,26 @@ The implementation is split by responsibility:
 | `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
 
 `krigekit.variogram` is a compatibility facade, so existing helper and class
-imports remain valid. New code may import the three public classes directly
+imports remain valid. New code may import the public classes directly
 from `krigekit`.
+
+### Theoretical model layer (`VgmComponent`, `VgmStructure`)
+
+`VgmComponent` and `VgmStructure` are the *purely theoretical* model objects:
+they own model type, sills, nugget, and anisotropy and evaluate covariance and
+variogram values, but hold no observations, empirical clouds, or fit state.
+`VgmStructure` owns an ordered list of `VgmComponent`s and applies the same
+product-group rule as the engine -- a `product=True` component multiplies the
+preceding one in covariance space, and each group is summed.
+
+The Python side keeps the component **flat** -- the same field layout as
+`Kriging.set_vgm` -- and `VgmComponent.to_flat_dict()` / `from_flat_dict()` are
+the authoritative bridge to the C API; the Fortran engine regroups the
+anisotropy fields into its `vgm_aniso` type after transfer. The analysis
+classes (`VariogramModel`, `SpaceTimeVariogramModel`) are migrating to own a
+`VgmStructure` rather than a private component list; until that migration
+completes, the legacy `_VgmComponent` and the new classes coexist.
+
+Index convention: variable indices in a system (`obs[ivar]`, `vgm[ivar, jvar]`)
+are 1-based labels matching the engine, while component indices within a
+structure (`set_anisotropy(index=...)`) are 0-based Python positions.
