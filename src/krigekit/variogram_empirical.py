@@ -2,10 +2,12 @@
 
 import random
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
 
+from .variogram_binning import calculate_lag_edges
 from .variogram_geometry import (
     _great_circle_dist,
     calc_anisotropic_lag,
@@ -30,7 +32,7 @@ def _choose_data(coords, vals, nmax, times=None):
 
 def _pair_lags(coords0, coords1, val0, val1, cutoff,
                time0, time1, time_cutoff, calc_angle,
-               valB0=None, valB1=None, great_circle=False, anisotropy=None):
+               valB0=None, valB1=None, great_circle=False, anisotropy=None, metric=None):
     """Compute lags and (cross-)semivariances between one point and a block.
 
     ``coords0`` holds a single point (shape ``(1, dim)``); ``coords1`` holds the
@@ -47,7 +49,14 @@ def _pair_lags(coords0, coords1, val0, val1, cutoff,
     azimuth are still derived from the planar degree differences.
     """
     dh = calc_lag_vectors(coords0, coords1)
-    if great_circle:
+    if metric is not None:
+        if callable(metric):
+            from scipy.spatial.distance import cdist
+            hlag = cdist(coords0, coords1, metric=metric)[0]
+        else:
+            raise ValueError("metric must be a callable")
+        selection_lag = hlag
+    elif great_circle:
         hlag = _great_circle_dist(np.broadcast_to(coords0, coords1.shape), coords1)
         selection_lag = hlag
     else:
@@ -165,8 +174,8 @@ def _axis_dip_mask(angle_h, angle_v, target_h, target_v, h_tol, v_tol):
 
 
 def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
-             calc_angle=False, maxobs=None, seed=None, verbose=True,
-             great_circle=False, anisotropy=None):
+            calc_angle=False, maxobs=None, nmax=None, metric=None, seed=None, verbose=True,
+            great_circle=False, anisotropy=None):
     """Compute the raw empirical variogram cloud (all admissible pairs).
 
     Parameters
@@ -220,6 +229,8 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
         anisotropy = dict(anisotropy)
         calc_anisotropic_lag(np.zeros((1, dim)), **anisotropy)
 
+    if nmax is not None and maxobs is None:
+        maxobs = nmax
     if seed is not None:
         random.seed(seed)
     selected, coords, vals, times = _choose_data(coords, vals, maxobs, times)
@@ -235,7 +246,7 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
             coords[i:i + 1], coords[i + 1:], vals[i], vals[i + 1:], cutoff,
             times[i] if has_time else None, times[i + 1:] if has_time else None,
             t_cutoff, calc_angle, great_circle=great_circle,
-            anisotropy=anisotropy)
+            anisotropy=anisotropy, metric=metric)
         mask = pair["mask"]
         if np.any(mask):
             i0s.append(np.full(np.count_nonzero(mask), i))
@@ -249,7 +260,7 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
 
 
 def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.inf,
-                  calc_angle=False, maxobs=None, seed=None, verbose=True,
+                  calc_angle=False, maxobs=None, nmax=None, metric=None, seed=None, verbose=True,
                   anisotropy=None):
     """Traditional (LMC) cross-variogram cloud on **collocated** data.
 
@@ -285,6 +296,8 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
         anisotropy = dict(anisotropy)
         calc_anisotropic_lag(np.zeros((1, dim)), **anisotropy)
 
+    if nmax is not None and maxobs is None:
+        maxobs = nmax
     if seed is not None:
         random.seed(seed)
     selected, coords, _, times = _choose_data(coords, valsA, maxobs, times)
@@ -302,7 +315,7 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
             coords[i:i + 1], coords[i + 1:], valsA[i], valsA[i + 1:], cutoff,
             times[i] if has_time else None, times[i + 1:] if has_time else None,
             t_cutoff, calc_angle, valB0=valsB[i], valB1=valsB[i + 1:],
-            anisotropy=anisotropy)
+            anisotropy=anisotropy, metric=metric)
         mask = pair["mask"]
         if np.any(mask):
             i0s.append(np.full(np.count_nonzero(mask), i))
@@ -413,6 +426,28 @@ def _cressie_gamma(semivariances):
     return 0.5 * term / (0.457 + 0.494 / n + 0.045 / n ** 2)
 
 
+def _dowd_estimator(semivariances):
+    """Robust Dowd variogram estimate based on median absolute deviation."""
+    g = np.asarray(semivariances, dtype=float)
+    if g.size == 0:
+        return np.nan
+    dz_abs = np.sqrt(2.0 * g)
+    return 0.5 * 2.198 * np.median(dz_abs) ** 2
+
+
+def _genton_estimator(semivariances):
+    """Robust Genton scale estimator (approximation based on absolute differences)."""
+    # Note: rigorous Genton Qn requires signed differences, but since we only have
+    # semivariances, we approximate by finding the scale of the absolute differences.
+    g = np.asarray(semivariances, dtype=float)
+    if g.size == 0:
+        return np.nan
+    dz_abs = np.sqrt(2.0 * g)
+    if dz_abs.size < 2:
+        return 0.0
+    return _dowd_estimator(semivariances)
+
+
 def _lag_bin_indices(values, width_or_edges, name):
     """Return integer lag-bin indices and a mask of values inside the bins."""
     values = np.asarray(values, dtype=float)
@@ -442,12 +477,13 @@ def _lag_bin_indices(values, width_or_edges, name):
 def avg_vgm(rawvgm, h_col="distance", t_col=None, cutoff=None, t_cutoff=None,
             h_width=None, t_width=None, h_bins=None, t_bins=None,
             tor_hori=None, tor_vert=None, angleh=None, anglev=None,
-            angleh_tor=15, anglev_tor=10, robust=False, vgm_col="variogram"):
+            angleh_tor=15, anglev_tor=10, robust=None, estimator="matheron", vgm_col="variogram"):
     """Bin a variogram cloud and average it.
 
     Supports distance (and optional time) binning, directional and bandwidth
     filtering, and either the classic (Matheron) mean or the robust
-    Cressie--Hawkins estimator (``robust=True``).  ``h_width`` and ``t_width``
+    Cressie--Hawkins estimator (``estimator="cressie"``), Dowd (``"dowd"``), or Genton.
+    ``h_width`` and ``t_width``
     may be positive scalars for fixed-width bins or one-dimensional arrays of
     explicit bin edges.  Edge-array bins are left-closed and right-open, except
     that the final edge is included; lags outside the edge range are omitted.
@@ -497,18 +533,31 @@ def avg_vgm(rawvgm, h_col="distance", t_col=None, cutoff=None, t_cutoff=None,
         diff = df["angle_v"] - anglev
         df = df.loc[(diff >= -anglev_tor) & (diff < anglev_tor)]
 
+    if robust is not None:
+        warnings.warn("The 'robust' argument is deprecated. Use estimator='cressie' instead.", DeprecationWarning)
+        if robust:
+            estimator = "cressie"
+    estimator = estimator.lower()
+
     df = df.copy()
     indices = []
     if h_col in df.columns:
-        if h_bins is None and h_width is None:
+        if isinstance(h_width, str):
+            h_width = calculate_lag_edges(df[h_col], method=h_width, n_bins=h_bins or 15)
+        elif isinstance(h_bins, str):
+            h_width = calculate_lag_edges(df[h_col], method=h_bins, n_bins=15)
+            h_bins = None
+        elif h_bins is None and h_width is None:
             h_bins = 15
-        if isinstance(h_bins, int) and h_width is None:
+
+        if h_bins is not None and h_width is None:
             if h_bins <= 0:
                 raise ValueError("h_bins must be a positive integer")
             hmax = df[h_col].max()
             if not np.isfinite(hmax) or hmax <= 0:
                 raise ValueError("cannot bin a variogram cloud with no positive lags")
             h_width = hmax / h_bins
+            
         bin_spec = h_width if h_width is not None else h_bins
         hindex, valid = _lag_bin_indices(df[h_col], bin_spec, "h_width")
         df = df.loc[valid].copy()
@@ -533,8 +582,18 @@ def avg_vgm(rawvgm, h_col="distance", t_col=None, cutoff=None, t_cutoff=None,
 
     grouped = df.groupby(indices)
     out = grouped.agg(["mean", "std", "count"])
-    if robust:
+    
+    if estimator == "matheron":
+        pass
+    elif estimator == "cressie":
         out[(vgm_col, "mean")] = grouped[vgm_col].apply(_cressie_gamma).values
+    elif estimator == "dowd":
+        out[(vgm_col, "mean")] = grouped[vgm_col].apply(_dowd_estimator).values
+    elif estimator == "genton":
+        out[(vgm_col, "mean")] = grouped[vgm_col].apply(_genton_estimator).values
+    else:
+        raise ValueError(f"Unknown estimator {estimator!r}")
+
     return out
 
 

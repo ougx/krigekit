@@ -94,7 +94,7 @@ def fit_vgm(avgvgm, x_col=("distance", "mean"), y_col=("variogram", "mean"),
             sigma_col=None, weight_col=None, weights=None,
             models=("exponential",), p0=(), makeplot=False,
             maxfev=9999, ax=None, xlabel="Lag", ylabel="Semivariogram",
-            bounds=None, return_model=False):
+            bounds=None, return_model=False, return_metrics=False):
     """Least-squares fit of a (nested) variogram model to averaged data.
 
     ``models`` may be a sequence of model names, a sequence of
@@ -128,8 +128,12 @@ def fit_vgm(avgvgm, x_col=("distance", "mean"), y_col=("variogram", "mean"),
     p, cov = curve_fit(model, xdata=avgvgm[x_col], ydata=avgvgm[y_col], **kwargs)
 
     result = [p, cov]
+    if return_model or return_metrics:
+        fitted_model = _model_from_params(models, p)
     if return_model:
-        result.append(_model_from_params(models, p))
+        result.append(fitted_model)
+    if return_metrics:
+        result.append(calc_fit_metrics(avgvgm, fitted_model, x_col, y_col))
     if makeplot:
         from .variogram_plotting import plot_vgm
 
@@ -137,4 +141,30 @@ def fit_vgm(avgvgm, x_col=("distance", "mean"), y_col=("variogram", "mean"),
                       xlabel=xlabel, ylabel=ylabel)
         result.append(ax)
     return tuple(result)
+
+def calc_fit_metrics(avgvgm, model, x_col=("distance", "mean"), y_col=("variogram", "mean")):
+    """Calculate goodness-of-fit metrics for a VariogramModel against empirical data."""
+    import numpy as np
+    xdata = np.asarray(avgvgm[x_col], dtype=float)
+    ydata = np.asarray(avgvgm[y_col], dtype=float)
+    
+    ypred = model.variogram(xdata)
+    
+    mse = np.mean((ydata - ypred) ** 2)
+    rmse = np.sqrt(mse)
+    mae = np.mean(np.abs(ydata - ypred))
+    
+    ss_tot = np.sum((ydata - np.mean(ydata)) ** 2)
+    if ss_tot > 0:
+        r2 = 1.0 - (np.sum((ydata - ypred) ** 2) / ss_tot)
+    else:
+        r2 = np.nan
+        
+    return {
+        "MSE": mse,
+        "RMSE": rmse,
+        "MAE": mae,
+        "R2": r2
+    }
+
 # ---------------------------------------------------------------------------

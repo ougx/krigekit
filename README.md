@@ -207,8 +207,7 @@ Requires **Python 3.10, 3.11, or 3.12**.
 
 **conda / mamba**
 
-conda-forge packaging is planned. In the meantime, install via pip inside a
-conda environment:
+Install via pip inside a conda environment:
 
 ```bash
 conda create -n krigekit python=3.12

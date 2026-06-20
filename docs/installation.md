@@ -49,8 +49,7 @@ del k
 
 ## Install in a conda environment
 
-conda-forge packaging is not currently required. Create an environment and
-install the precompiled PyPI wheel with pip:
+Create an environment and install the precompiled PyPI wheel with pip:
 
 ```bash
 conda create -n krigekit python=3.12

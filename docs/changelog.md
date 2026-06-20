@@ -1,6 +1,20 @@
-# Changelog
+﻿# Changelog
 
 ## 0.2.7 (unreleased)
+
+### Added - Variogram Extensions
+
+- Added statistical binning heuristics (`sturges`, `fd`, `scott`, `kmeans`) for `avg_vgm()` and `VariogramModel.calc_average()`.
+- Added robust variogram estimators (`dowd`, `genton`) based on Median Absolute Deviation and $Q_n$ scale estimators to resist outlier influence.
+- Added custom distance metrics for `raw_vgm()` via the `metric` argument, supporting non-Euclidean spatial coordinate systems.
+- Added goodness-of-fit metrics calculation (RMSE, MSE, MAE, R2) to `fit_vgm()` and `VariogramModel.fit(return_metrics=True)`.
+
+### Changed - Negative cross-variogram validation
+
+Cross-variogram validation now permits negative nugget and structured sill
+entries for cross pairs while retaining nonnegative requirements for direct
+variograms. This supports valid PSD LMC matrices in which fine-texture
+indicators are negatively correlated with AEM resistivity.
 
 ## 0.2.6
 

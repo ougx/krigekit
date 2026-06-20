@@ -137,3 +137,142 @@ class TestSIS:
         ik = _build_ik(nsim=NSIM)
         ik.solve()
         del ik
+
+
+def test_secondary_covariate_is_excluded_from_indicator_results():
+    ik = IndicatorKriging(
+        ncat=2, nvar=3, ndim=2, nsim=2, seed=7,
+        neglect_error=True, std_ck=True,
+    )
+    categories = np.where(np.arange(NOBS) % 2 == 0, 1, 2)
+    ik.set_categorical_obs(
+        OBS_COORD, categories, category_labels=[1, 2], nmax=NMAX,
+    )
+    ik.set_obs(
+        ivar=3,
+        coord=OBS_COORD,
+        value=np.linspace(-1.0, 1.0, NOBS),
+        nmax=NMAX,
+    )
+    for ivar in range(1, 4):
+        for jvar in range(ivar, 4):
+            ik.set_vgm(ivar, jvar, **VGM)
+    ik.set_grid(GRID_COORD)
+    ik.set_sim()
+    for ivar in range(1, 4):
+        ik.set_search(ivar)
+    ik.solve()
+
+    sims, variance = ik.get_results()
+    assert sims.shape == (NGRID, 2, 2)
+    assert variance.shape == (NGRID, 2, 2)
+    np.testing.assert_allclose(sims.sum(axis=1), 1.0)
+
+
+def _build_secondary_coik_1d(cross_sill, nsim=0, weight_file=""):
+    """Build a small valid indicator/AEM cokriging system."""
+    obs_coord = np.array([[0.0], [10.0], [20.0]])
+    categories = np.array([1, 2, 1])
+    secondary_coord = np.array([[0.0], [5.0], [10.0], [15.0], [20.0]])
+    secondary_value = np.array([-1.0, 2.0, 1.0, -2.0, 0.5])
+    grid_coord = np.array([[2.0], [8.0], [14.0]])
+
+    ik = IndicatorKriging(
+        ncat=2, nvar=3, ndim=1, nsim=nsim, seed=3,
+        std_ck=True, store_weight=bool(weight_file),
+        weight_file=str(weight_file),
+    )
+    ik.set_categorical_obs(
+        obs_coord, categories, category_labels=[1, 2], nmax=5,
+    )
+    ik.set_obs(3, secondary_coord, secondary_value, nmax=5)
+
+    # Positive-semidefinite coregionalization matrix.  The two indicators are
+    # complementary; the secondary variable is negatively correlated with
+    # category 1 and positively correlated with category 2.
+    sill = np.array([
+        [0.25, -0.25, -cross_sill],
+        [-0.25, 0.25, cross_sill],
+        [-cross_sill, cross_sill, 1.0],
+    ])
+    for ivar in range(3):
+        for jvar in range(ivar, 3):
+            ik.set_vgm(
+                ivar + 1, jvar + 1, vtype="sph", nugget=0.0,
+                sill=float(sill[ivar, jvar]),
+                a_major=15.0, a_minor1=15.0, a_minor2=15.0,
+            )
+
+    ik.set_grid(grid_coord)
+    if nsim:
+        sample = np.full((len(grid_coord), 3, nsim), 0.6)
+        ik.set_sim(
+            randpath=np.arange(1, len(grid_coord) + 1, dtype=np.int32),
+            sample=sample,
+        )
+    for ivar in range(1, 4):
+        ik.set_search(ivar)
+    return ik
+
+
+def test_secondary_cross_covariance_changes_indicator_probabilities():
+    independent = _build_secondary_coik_1d(cross_sill=0.0)
+    correlated = _build_secondary_coik_1d(cross_sill=0.2)
+    independent.solve()
+    correlated.solve()
+
+    prob_independent, _ = independent.get_results()
+    prob_correlated, variance = correlated.get_results()
+
+    assert np.max(np.abs(prob_correlated - prob_independent)) > 0.1
+    np.testing.assert_allclose(variance, variance.swapaxes(1, 2), atol=1e-10)
+    assert np.all(variance[:, 0, 1] < 0.0)
+
+
+def test_secondary_covariate_has_no_simulated_neighbor_group(tmp_path):
+    ik = _build_secondary_coik_1d(
+        cross_sill=0.2,
+        nsim=1,
+        weight_file=tmp_path / "indicator_aem_weights.txt",
+    )
+    ik.solve()
+    weights = ik.get_weights()
+
+    # SGSIM group layout is obs(1:nvar), sim(1:nvar).  The indicators acquire
+    # prior simulated nodes, while the AEM variable remains observation-only.
+    assert np.any(weights["nnear"][1:, 3:5] > 0)
+    np.testing.assert_array_equal(weights["nnear"][:, 5], 0)
+
+
+def test_multivariate_sis_uses_variable_specific_simulation_constraints():
+    """Prior simulated categories must not duplicate variable-1 constraints."""
+    ngrid = 25
+    grid = np.arange(ngrid, dtype=float)[:, None]
+    empty_coord = np.empty((0, 1))
+    empty_value = np.empty(0)
+
+    ik = IndicatorKriging(
+        ncat=2, ndim=1, nsim=4, seed=11,
+        std_ck=True, neglect_error=False,
+    )
+    for ivar in (1, 2):
+        ik.set_obs(
+            ivar, empty_coord, empty_value,
+            nmax=8, sk_mean=0.5,
+        )
+    ik.set_vgm(1, 1, "sph", nugget=0.0, sill=0.25, a_major=10.0)
+    ik.set_vgm(1, 2, "sph", nugget=0.0, sill=0.0, a_major=10.0)
+    ik.set_vgm(2, 2, "sph", nugget=0.0, sill=0.25, a_major=10.0)
+    ik.set_grid(grid)
+    ik.set_sim(randpath=np.arange(1, ngrid + 1, dtype=np.int32))
+    ik.set_search(1)
+    ik.set_search(2)
+
+    # Before the regression fix, block 2 was singular because both simulated
+    # groups used block%drift(:, 1, :) and therefore duplicated category 1's
+    # unbiasedness row.
+    ik.solve()
+    simulations, variance = ik.get_results()
+    assert np.all(np.isfinite(simulations))
+    assert np.all(np.isfinite(variance))
+    np.testing.assert_allclose(simulations.sum(axis=1), 1.0)

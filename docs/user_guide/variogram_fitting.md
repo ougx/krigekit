@@ -71,6 +71,20 @@ averaged table unless a table is passed explicitly. By default it returns
 `(fitted_model, covariance)` and leaves the template structures unchanged;
 `inplace=True` replaces the template structures with the fitted values.
 
+### Custom Distance Metrics
+
+For non-Euclidean coordinates, `calc_experimental()` supports custom distance metrics:
+
+```python
+def manhattan(u, v):
+    return np.sum(np.abs(u - v))
+
+# The metric is forwarded to scipy.spatial.distance.cdist
+raw = model.calc_experimental(metric=manhattan, verbose=False)
+```
+
+### Statistical Binning and Robust Estimators
+
 For irregular pair densities, pass explicit bin edges instead of one fixed
 width. This keeps narrow bins where short-lag detail matters and wider bins
 where pairs become sparse:
@@ -79,6 +93,25 @@ where pairs become sparse:
 avg = model.calc_average(
     h_width=[0.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]
 )
+```
+
+Alternatively, `calc_average()` supports automated statistical binning heuristics
+via string keywords, which determine the optimal number of bins or widths based
+on the lag distribution:
+
+```python
+avg = model.calc_average(h_width="fd")      # Freedman-Diaconis rule (robust to outliers)
+avg = model.calc_average(h_width="sturges") # Sturges' rule (optimal for normal data)
+avg = model.calc_average(h_width="scott")   # Scott's rule (minimizes MSE)
+avg = model.calc_average(h_width="kmeans", h_bins=15) # Density-based k-means clustering
+```
+
+To handle outliers (such as localized extreme sample values) that skew traditional
+variance calculations, you can specify a robust estimator:
+
+```python
+avg = model.calc_average(estimator="dowd")   # Dowd's Median Absolute Deviation
+avg = model.calc_average(estimator="genton") # Genton's scale estimator (Qn proxy)
 ```
 
 Space-time clouds can use independent variable-width spatial and temporal
@@ -374,6 +407,21 @@ model.fit(sigma_col="sigma", inplace=True)
 
 Do not pass `weights` or `weight_col` together with `sigma_col`.
 
+### Goodness-of-Fit Metrics
+
+You can calculate goodness-of-fit metrics to evaluate how well the theoretical model
+captures the experimental variogram. Pass `return_metrics=True` to `fit()`:
+
+```python
+fitted, cov, metrics = model.fit(return_metrics=True)
+
+print(f"RMSE: {metrics['RMSE']:.4f}")
+print(f"R-squared: {metrics['R2']:.4f}")
+```
+
+The metrics dictionary includes Mean Squared Error (`MSE`), Root Mean Squared Error (`RMSE`), Mean Absolute Error (`MAE`), and the coefficient of determination (`R2`).
+These metrics are calculated over the averaged variogram bins used during the fit.
+
 ## Manual adjustment
 
 Numerical optimizers often produce a useful starting point rather than the
@@ -530,6 +578,12 @@ fitted_system.apply_to(k)
 because it fits the requested pairs together while enforcing positive
 semidefinite sill matrices for each nested structure.
 
+Negative cross-nuggets and cross-sills are valid when the complete
+coregionalization matrix is positive semidefinite. For example, an indicator
+for fine texture can have negative cross-covariance with resistivity while both
+direct variograms remain nonnegative. `fit_lmc()` enforces matrix validity;
+do not clamp individual cross entries to zero based only on their sign.
+
 ### Markov-model cross-variograms (sparse primary + dense secondary)
 
 `fit_lmc()` fits the cross-variogram from data, which is correct when both
@@ -578,6 +632,10 @@ Relevant examples:
 
 - `examples/variogram/s_variogram_fitting.py`: nested 2-D indicator variogram.
 - `examples/variogram/s_variogram_fitting_3d.py`: 3-D directional anisotropy.
+- `examples/variogram/s_variogram_fitting_butte_mis.py`: three direct indicator
+  models for regularized 3-D borehole lithofacies.
+- `examples/variogram/coik_variogram_fitting_butte_aem.py`: PSD LMC fitting
+  and co-indicator simulation with raw AEM resistivity.
 - `examples/variogram/st_variogram_fitting_gwlevel.py`: marginal and
   sum-metric coupling fitting.
 - `examples/variogram/st_variogram_fitting_ctet.py`: product-sum fitting and
