@@ -119,6 +119,12 @@ class _VariogramModelBase:
         Extra keyword arguments are forwarded to :func:`raw_vgm`.  If
         ``times`` is not supplied explicitly, the time vector passed to
         :meth:`set_obs` is used.
+
+        Model structures configured by ``set_vgm`` do not implicitly transform
+        the empirical cloud.  Pass ``anisotropy=dict(anis1=..., anis2=...,
+        azimuth=..., dip=..., plunge=...)`` explicitly when pair selection
+        should use equivalent major-axis distance.  The cloud then contains
+        both physical ``distance`` and ``anisotropic_distance`` columns.
         """
         if self.obs_coord is None or self.obs_value is None:
             raise RuntimeError("call set_obs() before experimental()")

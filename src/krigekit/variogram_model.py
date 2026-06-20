@@ -60,7 +60,13 @@ class VariogramModel(_VariogramModelBase):
                 self.set_vgm(**spec)
 
     def experimental(self, store: bool = True, **kwargs):
-        """Compute the raw empirical variogram cloud, forwarding stored spatial anisotropy."""
+        """Compute the raw empirical cloud.
+
+        Spatial anisotropy stored on ordinary ``set_vgm`` structures is not
+        applied implicitly; pass the empirical ``anisotropy`` keyword
+        explicitly.  The legacy space-time compatibility layer forwards its
+        separately stored space-time anisotropy.
+        """
         if self._spacetime_compat is not None:
             _default = {
                 "anis1": 1.0, "anis2": 1.0, "azimuth": 0.0, "dip": 0.0, "plunge": 0.0,
@@ -597,6 +603,13 @@ class VariogramModel(_VariogramModelBase):
         model.  Pass ``append=False`` to clear existing structures before
         adding the new one.  Pass ``product=True`` to multiply this structure
         with the immediately preceding structure in covariance space.
+
+        The stored ranges and rotation angles define theoretical-model
+        evaluation, directional axes, fitting, plotting overlays, and transfer
+        to kriging.  They do not implicitly transform a raw empirical cloud;
+        pass ``anisotropy=...`` to :meth:`calc_experimental` when desired.
+        This separation is necessary because nested structures may have
+        different anisotropy parameters.
 
         Returns
         -------

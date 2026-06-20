@@ -71,6 +71,163 @@ averaged table unless a table is passed explicitly. By default it returns
 `(fitted_model, covariance)` and leaves the template structures unchanged;
 `inplace=True` replaces the template structures with the fitted values.
 
+### When anisotropy is applied
+
+`VariogramModel.set_vgm()` stores theoretical-model anisotropy, but it does
+**not** automatically transform `calc_experimental()`.  These operations use
+anisotropy differently:
+
+| Operation | Uses anisotropy from `set_vgm()`? | Effect |
+|---|---:|---|
+| `calc_experimental()` | No | Physical pair distances and an isotropic cutoff unless `anisotropy=...` is passed explicitly |
+| `calc_average()` | No automatic choice | Bins the selected `h_col`; default is physical `distance` |
+| `calc_directional_average()` | Yes, orientation only | Uses stored azimuth/dip/plunge to define major and minor directions |
+| `calc_covariance()` / `calc_variogram()` | Yes | Evaluates coordinate pairs with each structure's stored ranges and rotation |
+| `plot_map()` / `plot_map3d()` | Yes, for overlays/rotated views | The empirical values remain data-derived |
+| `apply_to()` / `to_kriging_specs()` | Yes | Transfers stored anisotropy to the kriging engine |
+
+The raw empirical semivariance `0.5 * (z_i - z_j)²` is data-derived and does
+not itself depend on a variogram model.  To apply one geometric transform
+during empirical pair selection, pass ratios and angles explicitly:
+
+```python
+raw = model.calc_experimental(
+    cutoff=2000.0,
+    anisotropy={
+        "anis1": 0.30,    # minor1 / major range
+        "anis2": 0.15,    # minor2 / major range; relevant in 3-D
+        "azimuth": 75.0,
+        "dip": 10.0,
+        "plunge": 0.0,
+    },
+    verbose=False,
+)
+```
+
+This produces two lag columns:
+
+- `distance`: physical Euclidean distance, unchanged.
+- `anisotropic_distance`: equivalent major-axis distance after rotation and
+  minor/major scaling.
+
+The `cutoff` is applied to `anisotropic_distance`, but ordinary averaging still
+uses physical distance by default.  Select the transformed lag explicitly:
+
+```python
+avg_physical = model.calc_average(h_width=100.0)
+avg_transformed = model.calc_average(
+    h_col="anisotropic_distance",
+    h_width=100.0,
+)
+```
+
+The separation is intentional.  A nested model can contain multiple structures
+with different ranges or rotations, so there may be no single stored
+anisotropy that can unambiguously define empirical pair selection or binning.
+`VariogramSystem.set_vgm()` follows the same rule for direct and cross clouds:
+its stored pair-model anisotropy is not implicitly passed to
+`VariogramSystem.calc_experimental()`.
+For anisotropy discovery, the usual workflow is to calculate the physical
+cloud with `calc_angle=True`, inspect directional maps/averages, and only then
+store the selected orientation and ranges with `set_vgm()` or
+`set_anisotropy()`.
+
+`SpaceTimeVariogramModel` is the exception: spatial anisotropy configured with
+`set_spacetime_anisotropy()` is part of its joint space-time distance
+definition and is forwarded to its empirical calculation unless explicitly
+overridden.
+
+### Parallel empirical calculation
+
+Pair generation is O(n²) and is usually the dominant cost for a large
+empirical variogram cloud.  `calc_experimental()` and the lower-level
+`raw_vgm()`, `raw_cross_vgm()`, and `cross_vgm()` functions accept `n_jobs`:
+
+```python
+raw = model.calc_experimental(
+    cutoff=2000.0,
+    n_jobs=None,     # adaptive default: 1 to 4 worker threads
+    verbose=False,
+)
+
+# Or choose an explicit limit:
+raw = model.calc_experimental(cutoff=2000.0, n_jobs=4, verbose=False)
+```
+
+For a finite Cartesian cutoff, a SciPy `cKDTree` first produces only spatial
+candidate pairs.  This avoids scanning the complete O(n²) triangle when the
+cutoff is small relative to the study area.  An anisotropic cutoff uses a
+conservative Euclidean search radius, followed by the exact anisotropic test,
+so no valid pair is lost.
+
+The candidate indices are divided into bounded vectorized chunks (about
+32,000 pairs each).  Without a usable KD-tree cutoff, upper-triangle index
+chunks are generated incrementally instead; the complete `np.triu_indices`
+arrays are never materialized.  Worker threads calculate lag vectors,
+distances, semivariances, time filters, and angles for separate chunks.
+Results are collected in row-major pair order, so `n_jobs=1` and `n_jobs>1`
+produce the same rows and values.
+
+`n_jobs=None` is the adaptive default.  The decision is made after `maxobs`
+subsampling and, where applicable, KD-tree cutoff candidate generation:
+
+- Up to 262,144 candidate pairs: one worker.
+- Above that threshold: approximately one worker per 262,144 candidate pairs,
+  capped at four and at the usable physical-core count.
+
+Thus a large `nobs` with a tight cutoff can remain single-threaded when the
+KD-tree finds few candidate pairs, while a smaller dense cloud can use several
+workers.  Set `n_jobs=1` to force sequential execution, a positive integer for
+an explicit limit, or `n_jobs=-1` to use all usable physical cores.  Explicit
+values are also capped at that physical-core limit.  Physical cores are
+detected with `psutil.cpu_count(logical=False)` and constrained by the current
+process CPU affinity, which respects container and job-scheduler restrictions.
+
+Threading helps most when the retained or unfiltered cloud contains enough
+pairs to fill several chunks.  With a tight finite cutoff, KD-tree candidate
+generation can make the sequential path so fast that extra threads add little.
+For small clouds, scheduling and allocation overhead can outweigh the gain.
+A custom Python distance callback may also scale poorly because callback code
+can remain limited by the Python GIL.
+
+Parallelism reduces elapsed time but not the O(n²) output size.  Use `maxobs`
+when the complete pair cloud would exceed available memory:
+
+```python
+raw = model.calc_experimental(
+    cutoff=2000.0,
+    maxobs=10_000,
+    seed=1234,
+    n_jobs=-1,
+    verbose=False,
+)
+```
+
+Before allocating pair results, the empirical functions estimate the final
+numeric DataFrame size from the effective pair count and requested columns.
+For finite Cartesian cutoffs this uses the exact KD-tree candidate count;
+otherwise it uses the full triangular or rectangular pair count after
+`maxobs` sampling.  The calculation raises `MemoryError` when the estimate
+exceeds 80% of currently available RAM:
+
+```python
+raw = model.calc_experimental(
+    cutoff=2000.0,
+    max_memory_fraction=0.6,  # use a stricter 60% limit
+)
+```
+
+Pass `max_memory_fraction=None` to override the guard for a deliberately large
+calculation.  The estimate is an upper bound when a time cutoff or exact
+anisotropic cutoff will remove some spatial candidates.
+
+Preallocating the pandas DataFrame would not remove the fundamental memory
+cost: each retained pair still needs indices, lag components, distance,
+semivariance, and optional time/angle columns.  The implementation instead
+builds bounded calculation chunks and allocates the final columns only after
+filtering.  `maxobs` and a finite spatial cutoff remain the effective ways to
+control memory.
+
 ### Custom Distance Metrics
 
 For non-Euclidean coordinates, `calc_experimental()` supports custom distance metrics:
@@ -200,6 +357,166 @@ standard sequence is:
 2. Inspect a variogram map or run `estimate_aniso_angle()`.
 3. Lock `azimuth` (and `dip` for 3-D) in the model template.
 4. Proceed to directional range fitting.
+
+### Recommended anisotropy workflow
+
+The plotting methods do not update the model automatically.  By default,
+`plot_map()` and `plot_map3d()` show the orientation already stored on the
+first model structure (`angle_aniso="model"`).  Pass
+`angle_aniso="estimate"` or `estimate=True` to estimate an orientation from
+the empirical cloud and display it.  Then extract the numeric estimate,
+inspect it, and store it explicitly.
+
+The corresponding Python functions for each step are:
+
+| Step | Purpose | Python function |
+|---|---|---|
+| 1 | Store observations | `model.set_obs()` |
+| 2 | Create an initial model template | `model.set_vgm()` |
+| 3 | Calculate the physical empirical cloud | `model.calc_experimental(calc_angle=True)` |
+| 4 | Inspect the empirical map | `model.plot_map()` or `model.plot_map3d()` |
+| 5 | Display an estimated orientation | `model.plot_map(angle_aniso="estimate")` or `model.plot_map3d(angle_aniso="estimate")` |
+| 6 | Obtain the numeric estimate | `estimate_aniso_angle()` |
+| 7 | Store the selected orientation | `model.set_anisotropy()` or `model.set_vgm()` |
+| 8 | Calculate major/minor directional curves | `model.calc_directional_average()` |
+| 9 | Fit directional ranges | `model.fit_anisotropy()` |
+| 10 | Validate the fitted orientation and ranges | `model.plot_map(angle_aniso="model", ellipse_aniso="model")` or `model.plot_map3d(angle_aniso="model")` |
+| 11 | Transfer the final model to kriging | `model.apply_to()` |
+
+#### Two-dimensional example
+
+```python
+from krigekit import Kriging, VariogramModel
+from krigekit.variogram import estimate_aniso_angle
+
+model = VariogramModel()
+model.set_obs(obs_coord, obs_value)
+
+# Initial template.  At this stage the angle and minor range are provisional.
+model.set_vgm(
+    vtype="sph",
+    nugget=0.05,
+    sill=0.95,
+    a_major=1000.0,
+    a_minor1=1000.0,
+    azimuth=0.0,
+)
+
+# Build the physical lag cloud.  Stored set_vgm anisotropy is intentionally
+# not applied to this exploratory calculation.
+raw = model.calc_experimental(
+    cutoff=3000.0,
+    calc_angle=True,
+    verbose=False,
+)
+
+# Inspect the world-coordinate map.  This displays the stored model angle
+# (currently 0 degrees) but does not estimate or modify anything.
+model.plot_map(angle_aniso="model", cutoff=2500.0)
+
+# Ask the plotting helper to estimate and display the empirical major axis.
+# This is visual only: the model remains unchanged.
+model.plot_map(angle_aniso="estimate", cutoff=2500.0)
+
+# Obtain the numeric estimate so it can be inspected and stored explicitly.
+(azimuth,), axis_lengths = estimate_aniso_angle(raw)
+ratio_guess = axis_lengths[1] / axis_lengths[0]
+print(f"estimated azimuth={azimuth:.1f}, ratio={ratio_guess:.3f}")
+
+# Lock the selected orientation into the model.  You may use the estimated
+# ratio as a starting value or replace it with a geologically informed value.
+model.set_anisotropy(
+    azimuth=azimuth,
+    ratio_minor1=ratio_guess,
+)
+
+# Build empirical curves along the stored major and minor axes.
+directional = model.calc_directional_average(
+    h_bins=15,
+    cutoff=2500.0,
+    angle_tol=15.0,
+)
+
+# Fit sill, major range, minor range, and nugget while keeping azimuth fixed.
+model.fit_anisotropy(
+    directional,
+    p0=(0.95, 1000.0, 300.0, 0.05),
+    weight_col="count",
+    inplace=True,
+)
+
+# Validate the final model against the unchanged empirical cloud.
+model.plot_map(
+    angle_aniso="model",
+    ellipse_aniso="model",
+    cutoff=2500.0,
+)
+
+# Transfer the fitted structures, including anisotropy, to kriging.
+k = Kriging(ndim=2, nvar=1)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
+k.set_grid(coord=grid_coord)
+model.apply_to(k, ivar=1, jvar=1)
+k.set_search(ivar=1)
+k.solve()
+```
+
+#### Three-dimensional differences
+
+For 3-D data, use `plot_map3d()` and request `dim3d=True` from
+`estimate_aniso_angle()`:
+
+```python
+raw = model.calc_experimental(
+    cutoff=3000.0,
+    calc_angle=True,
+    verbose=False,
+)
+
+# Visual estimate only; does not modify model.structures.
+model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
+
+# Numeric azimuth and dip estimate.
+(azimuth, dip), axis_lengths = estimate_aniso_angle(raw, dim3d=True)
+ratio_minor1 = axis_lengths[1] / axis_lengths[0]
+ratio_minor2 = axis_lengths[2] / axis_lengths[0]
+
+model.set_anisotropy(
+    azimuth=azimuth,
+    dip=dip,
+    ratio_minor1=ratio_minor1,
+    ratio_minor2=ratio_minor2,
+)
+
+directional = model.calc_directional_average(
+    h_bins=15,
+    cutoff=2500.0,
+    angle_tol=15.0,
+    include_minor2=True,
+)
+
+model.fit_anisotropy(
+    directional,
+    p0=(0.95, 1000.0, 400.0, 200.0, 0.05),
+    include_minor2=True,
+    weight_col="count",
+    inplace=True,
+)
+
+# World-axis fences with the fitted orientation overlaid.
+model.plot_map3d(angle_aniso="model", cutoff=2500.0)
+
+# Or rotate the fences into the fitted model's principal planes.
+model.plot_map3d(
+    angle_aniso="model",
+    rotate_fences=True,
+    cutoff=2500.0,
+)
+```
+
+The automated angle estimate is a starting point, not an automatic model
+decision.  Check the map for sparse bins, short-lag noise, multiple continuity
+directions, and geological plausibility before calling `set_anisotropy()`.
 
 ### Variogram map (2-D)
 

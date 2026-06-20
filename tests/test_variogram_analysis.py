@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import pytest
 
 from krigekit import Kriging, SpaceTimeVariogramModel
+import krigekit.variogram_empirical as empirical
 from krigekit.variogram import (
     _great_circle_dist,
     _fill_nan_nearest,
@@ -20,6 +22,151 @@ from krigekit.variogram import (
     raw_vgm,
     raw_cross_vgm,
 )
+from krigekit.variogram_empirical import (
+    _PAIR_PARALLEL_GRAIN,
+    _physical_cpu_limit,
+    _resolve_n_jobs,
+)
+
+
+def test_parallel_empirical_clouds_match_sequential_order_and_values():
+    rng = np.random.default_rng(2468)
+    coords = rng.uniform(-10.0, 10.0, size=(24, 3))
+    values_a = rng.normal(size=24)
+    values_b = rng.normal(size=24)
+    times = rng.uniform(0.0, 5.0, size=24)
+    common = dict(
+        cutoff=12.0,
+        times=times,
+        t_cutoff=3.0,
+        calc_angle=True,
+        anisotropy=dict(anis1=0.5, anis2=0.25, azimuth=25.0, dip=10.0),
+        verbose=False,
+    )
+
+    direct_seq = raw_vgm(coords, values_a, n_jobs=1, **common)
+    direct_par = raw_vgm(coords, values_a, n_jobs=3, **common)
+    pd.testing.assert_frame_equal(direct_par, direct_seq)
+
+    cross_seq = raw_cross_vgm(coords, values_a, values_b, n_jobs=1, **common)
+    cross_par = raw_cross_vgm(coords, values_a, values_b, n_jobs=3, **common)
+    pd.testing.assert_frame_equal(cross_par, cross_seq)
+
+    pseudo_seq = cross_vgm(
+        coords[:13], values_a[:13], coords[13:], values_b[13:],
+        cutoff=12.0, calc_angle=True, anisotropy=common["anisotropy"],
+        verbose=False, n_jobs=1,
+    )
+    pseudo_par = cross_vgm(
+        coords[:13], values_a[:13], coords[13:], values_b[13:],
+        cutoff=12.0, calc_angle=True, anisotropy=common["anisotropy"],
+        verbose=False, n_jobs=3,
+    )
+    pd.testing.assert_frame_equal(pseudo_par, pseudo_seq)
+
+
+def test_empirical_n_jobs_validation():
+    coords = np.array([[0.0], [1.0]])
+    values = np.array([0.0, 1.0])
+
+    with np.testing.assert_raises(ValueError):
+        raw_vgm(coords, values, n_jobs=0, verbose=False)
+    with np.testing.assert_raises(TypeError):
+        raw_vgm(coords, values, n_jobs=1.5, verbose=False)
+
+
+def test_empirical_adaptive_n_jobs_uses_candidate_pair_count():
+    assert _resolve_n_jobs(None, _PAIR_PARALLEL_GRAIN) == 1
+    assert _resolve_n_jobs(None, _PAIR_PARALLEL_GRAIN + 1) == min(
+        2, _physical_cpu_limit()
+    )
+    assert _resolve_n_jobs(None, 10 * _PAIR_PARALLEL_GRAIN) <= 4
+    assert _resolve_n_jobs(1, 10 * _PAIR_PARALLEL_GRAIN) == 1
+    assert _resolve_n_jobs(-1, 10 * _PAIR_PARALLEL_GRAIN) == _physical_cpu_limit()
+    assert _resolve_n_jobs(10_000, 10 * _PAIR_PARALLEL_GRAIN) == _physical_cpu_limit()
+
+
+def test_empirical_memory_guard_uses_effective_maxobs(monkeypatch):
+    coords = np.column_stack([np.arange(100.0), np.zeros(100)])
+    values = np.arange(100.0)
+    monkeypatch.setattr(empirical, "_available_memory", lambda: 100_000)
+
+    with pytest.raises(MemoryError, match="Reduce maxobs/cutoff"):
+        raw_vgm(coords, values, cutoff=np.inf, verbose=False)
+
+    cloud = raw_vgm(
+        coords, values, cutoff=np.inf, maxobs=20, seed=1, verbose=False
+    )
+    assert len(cloud) == 190
+
+
+def test_empirical_memory_guard_uses_kdtree_candidate_count(monkeypatch):
+    coords = np.column_stack([np.arange(100.0), np.zeros(100)])
+    values = np.arange(100.0)
+    monkeypatch.setattr(empirical, "_available_memory", lambda: 100_000)
+
+    cloud = raw_vgm(coords, values, cutoff=0.1, verbose=False)
+    assert cloud.empty
+
+
+def test_empirical_memory_guard_can_be_disabled(monkeypatch):
+    coords = np.column_stack([np.arange(30.0), np.zeros(30)])
+    values = np.arange(30.0)
+    monkeypatch.setattr(empirical, "_available_memory", lambda: 1)
+
+    cloud = raw_vgm(
+        coords, values, cutoff=np.inf, verbose=False,
+        max_memory_fraction=None,
+    )
+    assert len(cloud) == 435
+
+
+def test_kdtree_cutoff_candidates_match_full_pair_filter():
+    rng = np.random.default_rng(97531)
+    coords = rng.uniform(-20.0, 20.0, size=(80, 3))
+    values = rng.normal(size=80)
+    times = rng.uniform(0.0, 10.0, size=80)
+    anisotropy = dict(anis1=0.4, anis2=1.5, azimuth=35.0, dip=-12.0)
+    cutoff = 8.0
+    t_cutoff = 4.0
+
+    full = raw_vgm(
+        coords, values, cutoff=np.inf, times=times, t_cutoff=t_cutoff,
+        anisotropy=anisotropy, calc_angle=True, verbose=False,
+    )
+    expected = full.loc[full["anisotropic_distance"] <= cutoff].reset_index(drop=True)
+    actual = raw_vgm(
+        coords, values, cutoff=cutoff, times=times, t_cutoff=t_cutoff,
+        anisotropy=anisotropy, calc_angle=True, verbose=False, n_jobs=3,
+    )
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_set_vgm_anisotropy_is_not_implicitly_applied_to_empirical_cloud():
+    coords = np.array([
+        [0.0, 0.0],
+        [4.0, 0.0],
+        [0.0, 4.0],
+    ])
+    values = np.array([0.0, 1.0, 2.0])
+    model = VariogramModel()
+    model.set_obs(coords, values)
+    model.set_vgm(
+        "sph", sill=1.0, a_major=10.0, a_minor1=2.0, azimuth=90.0
+    )
+
+    implicit = model.calc_experimental(cutoff=5.0, verbose=False)
+    expected = raw_vgm(coords, values, cutoff=5.0, verbose=False)
+    pd.testing.assert_frame_equal(implicit, expected)
+    assert "anisotropic_distance" not in implicit.columns
+
+    explicit = model.calc_experimental(
+        cutoff=5.0,
+        anisotropy=dict(anis1=0.2, azimuth=90.0),
+        verbose=False,
+    )
+    assert "anisotropic_distance" in explicit.columns
+    assert len(explicit) < len(implicit)
 
 
 def test_theoretical_models_match_engine_core_shapes():

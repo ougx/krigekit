@@ -1,11 +1,15 @@
 """Empirical variogram clouds, binning, directions, and anisotropy estimates."""
 
+from concurrent.futures import ThreadPoolExecutor
+from itertools import islice
+import os
 import random
 import sys
 import warnings
 
 import numpy as np
 import pandas as pd
+from scipy.spatial import cKDTree
 
 from .variogram_binning import calculate_lag_edges
 from .variogram_geometry import (
@@ -143,6 +147,275 @@ def _progress(i, total, verbose):
         sys.stdout.flush()
 
 
+def _physical_cpu_limit():
+    """Return usable physical cores, constrained by process CPU affinity."""
+    logical = max(1, os.cpu_count() or 1)
+    physical = logical
+    affinity = logical
+    try:
+        import psutil
+        detected = psutil.cpu_count(logical=False)
+        if detected:
+            physical = max(1, int(detected))
+        try:
+            allowed = psutil.Process().cpu_affinity()
+            if allowed:
+                affinity = len(allowed)
+        except (AttributeError, NotImplementedError, OSError):
+            pass
+    except ImportError:
+        # psutil is a runtime dependency, but retain a functional fallback for
+        # source-tree use in partially provisioned development environments.
+        if hasattr(os, "sched_getaffinity"):
+            try:
+                affinity = len(os.sched_getaffinity(0))
+            except OSError:
+                pass
+    return max(1, min(physical, affinity, logical))
+
+
+def _available_memory():
+    """Return currently available system memory in bytes."""
+    try:
+        import psutil
+        return max(1, int(psutil.virtual_memory().available))
+    except ImportError:
+        return None
+
+
+def _cloud_row_bytes(dim, has_time, calc_angle, anisotropy):
+    """Estimate final DataFrame numeric storage per retained pair."""
+    n_numeric = 4 + dim  # two indices, distance, variogram, d0..d{dim-1}
+    if anisotropy is not None:
+        n_numeric += 1
+    if has_time:
+        n_numeric += 1
+    if dim >= 2:
+        n_numeric += 1  # dh_hori
+        if calc_angle:
+            n_numeric += 1  # angle_h
+            if dim == 3:
+                n_numeric += 1  # angle_v
+    return 8 * n_numeric
+
+
+def _check_cloud_memory(npair, dim, has_time, calc_angle, anisotropy,
+                        max_memory_fraction):
+    """Reject a candidate cloud whose final columns exceed the RAM budget."""
+    if max_memory_fraction is None:
+        return
+    if not np.isscalar(max_memory_fraction):
+        raise TypeError("max_memory_fraction must be a scalar or None")
+    fraction = float(max_memory_fraction)
+    if not np.isfinite(fraction) or fraction <= 0.0 or fraction > 1.0:
+        raise ValueError("max_memory_fraction must be in (0, 1] or None")
+    available = _available_memory()
+    if available is None:
+        return
+    estimated = int(npair) * _cloud_row_bytes(
+        dim, has_time, calc_angle, anisotropy
+    )
+    budget = int(available * fraction)
+    if estimated > budget:
+        raise MemoryError(
+            "empirical variogram cloud may require approximately "
+            f"{estimated / 1024**3:.2f} GiB for {int(npair):,} candidate "
+            f"pairs, exceeding {fraction:.0%} of currently available memory "
+            f"({available / 1024**3:.2f} GiB). Reduce maxobs/cutoff, or pass "
+            "max_memory_fraction=None to override this safety check."
+        )
+
+
+def _resolve_n_jobs(n_jobs, npair=None):
+    """Resolve ``n_jobs``, using pair count for the adaptive default."""
+    cpu_limit = _physical_cpu_limit()
+    if n_jobs is None:
+        if npair is None or npair <= _PAIR_PARALLEL_GRAIN:
+            return 1
+        useful_workers = (
+            npair + _PAIR_PARALLEL_GRAIN - 1
+        ) // _PAIR_PARALLEL_GRAIN
+        return min(4, cpu_limit, useful_workers)
+    if isinstance(n_jobs, (bool, np.bool_)) or not isinstance(n_jobs, (int, np.integer)):
+        raise TypeError("n_jobs must be an integer, None, or -1")
+    n_jobs = int(n_jobs)
+    if n_jobs == -1:
+        return cpu_limit
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be -1 or a positive integer")
+    return min(n_jobs, cpu_limit)
+
+
+_PAIR_CHUNK_SIZE = 32_768
+_PAIR_PARALLEL_GRAIN = 262_144
+
+
+def _triangular_pair_chunks(n, chunk_size=_PAIR_CHUNK_SIZE):
+    """Yield upper-triangle index arrays without allocating the full triangle."""
+    start = 0
+    while start < n - 1:
+        stop = start + 1
+        npair = n - start - 1
+        while stop < n - 1 and npair < chunk_size:
+            npair += n - stop - 1
+            stop += 1
+        anchors = np.arange(start, stop, dtype=np.intp)
+        counts = n - anchors - 1
+        i0 = np.repeat(anchors, counts)
+        i1 = np.concatenate([np.arange(i + 1, n, dtype=np.intp) for i in anchors])
+        yield i0, i1
+        start = stop
+
+
+def _rectangular_pair_chunks(n0, n1, chunk_size=_PAIR_CHUNK_SIZE):
+    """Yield row-major index chunks for every pair in an n0 × n1 rectangle."""
+    total = n0 * n1
+    for start in range(0, total, chunk_size):
+        flat = np.arange(start, min(start + chunk_size, total), dtype=np.intp)
+        yield flat // n1, flat % n1
+
+
+def _candidate_radius(cutoff, anisotropy):
+    """Euclidean KD-tree radius guaranteed to contain anisotropic-cutoff pairs."""
+    if anisotropy is None:
+        return cutoff
+    return cutoff * max(
+        1.0,
+        float(anisotropy.get("anis1", 1.0)),
+        float(anisotropy.get("anis2", 1.0)),
+    )
+
+
+def _same_set_pair_chunks(coords, cutoff, anisotropy, great_circle, metric):
+    """Return ``(chunks, npair)`` using KD-tree candidates when possible."""
+    if (metric is None and not great_circle and np.isfinite(cutoff)
+            and cutoff >= 0 and np.all(np.isfinite(coords))):
+        tree = cKDTree(coords)
+        radius = _candidate_radius(cutoff, anisotropy)
+        npair = (int(tree.count_neighbors(tree, radius)) - len(coords)) // 2
+        def chunks():
+            pairs = tree.query_pairs(radius, output_type="ndarray")
+            if len(pairs):
+                pairs = pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+            for start in range(0, len(pairs), _PAIR_CHUNK_SIZE):
+                chunk = pairs[start:start + _PAIR_CHUNK_SIZE]
+                yield chunk[:, 0], chunk[:, 1]
+        return chunks(), npair
+    n = len(coords)
+    return _triangular_pair_chunks(n), n * (n - 1) // 2
+
+
+def _cross_set_pair_chunks(coords0, coords1, cutoff, anisotropy, metric):
+    """Return ``(chunks, npair)`` for cross-set candidates."""
+    if (metric is None and np.isfinite(cutoff) and cutoff >= 0
+            and np.all(np.isfinite(coords0)) and np.all(np.isfinite(coords1))):
+        tree0 = cKDTree(coords0)
+        tree1 = cKDTree(coords1)
+        radius = _candidate_radius(cutoff, anisotropy)
+        npair = int(tree0.count_neighbors(tree1, radius))
+        def chunks():
+            neighbours = tree0.query_ball_tree(tree1, radius)
+            counts = np.fromiter((len(row) for row in neighbours), dtype=np.intp)
+            if counts.sum():
+                i0 = np.repeat(np.arange(len(coords0), dtype=np.intp), counts)
+                i1 = np.concatenate([
+                    np.sort(np.asarray(row, dtype=np.intp))
+                    for row in neighbours if row
+                ])
+            else:
+                i0 = np.empty(0, dtype=np.intp)
+                i1 = np.empty(0, dtype=np.intp)
+            for start in range(0, len(i0), _PAIR_CHUNK_SIZE):
+                stop = start + _PAIR_CHUNK_SIZE
+                yield i0[start:stop], i1[start:stop]
+        return chunks(), npair
+    npair = len(coords0) * len(coords1)
+    return _rectangular_pair_chunks(len(coords0), len(coords1)), npair
+
+
+def _iter_pair_results(index_chunks, worker, n_jobs, npair):
+    """Calculate pair chunks in order while bounding queued result memory."""
+    nchunk = max(1, (npair + _PAIR_CHUNK_SIZE - 1) // _PAIR_CHUNK_SIZE)
+    nworker = min(_resolve_n_jobs(n_jobs, npair), nchunk)
+    if nworker == 1:
+        for chunk in index_chunks:
+            yield worker(chunk)
+        return
+
+    with ThreadPoolExecutor(max_workers=nworker) as executor:
+        while True:
+            batch = list(islice(index_chunks, 2 * nworker))
+            if not batch:
+                break
+            yield from executor.map(worker, batch)
+
+
+def _indexed_pair_lags(coords0, coords1, val0, val1, i0, i1, cutoff,
+                       time0, time1, time_cutoff, calc_angle,
+                       valB0=None, valB1=None, great_circle=False,
+                       anisotropy=None, metric=None):
+    """Vectorized pair calculation for aligned index arrays."""
+    point0 = coords0[i0]
+    point1 = coords1[i1]
+    dh = point1 - point0
+
+    if metric is not None:
+        if not callable(metric):
+            raise ValueError("metric must be a callable")
+        hlag = np.fromiter(
+            (metric(a, b) for a, b in zip(point0, point1)),
+            dtype=float,
+            count=len(i0),
+        )
+        selection_lag = hlag
+    elif great_circle:
+        hlag = _great_circle_dist(point0, point1)
+        selection_lag = hlag
+    else:
+        hlag = calc_anisotropic_lag(dh)
+        selection_lag = (
+            calc_anisotropic_lag(dh, **anisotropy)
+            if anisotropy is not None else hlag
+        )
+
+    mask = selection_lag <= cutoff
+    if time0 is not None:
+        tlag = np.abs(time1[i1] - time0[i0])
+        mask &= tlag <= time_cutoff
+
+    if not np.any(mask):
+        return None
+
+    i0 = i0[mask]
+    i1 = i1[mask]
+    dh = dh[mask]
+    out = {
+        "distance": hlag[mask],
+        "dh": dh,
+    }
+    if anisotropy is not None:
+        out["anisotropic_distance"] = selection_lag[mask]
+    dA = val1[i1] - val0[i0]
+    if valB0 is None:
+        out["variogram"] = 0.5 * dA ** 2
+    else:
+        out["variogram"] = 0.5 * dA * (valB1[i1] - valB0[i0])
+    if time0 is not None:
+        out["time_lag"] = tlag[mask]
+
+    dim = coords1.shape[1]
+    if dim >= 2:
+        dx, dy = dh[:, 0], dh[:, 1]
+        out["dh_hori"] = np.hypot(dx, dy)
+        if calc_angle:
+            out["angle_h"] = np.degrees(np.arctan2(dx, dy)) % 360.0
+            if dim == 3:
+                out["angle_v"] = np.degrees(
+                    np.arctan2(-dh[:, 2], out["dh_hori"])
+                )
+    return i0, i1, out
+
+
 def _axis_angle_diff(angle, target):
     """Smallest angular difference in degrees between two undirected axes."""
     return np.abs((np.asarray(angle) - target + 90.0) % 180.0 - 90.0)
@@ -175,7 +448,8 @@ def _axis_dip_mask(angle_h, angle_v, target_h, target_v, h_tol, v_tol):
 
 def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
             calc_angle=False, maxobs=None, nmax=None, metric=None, seed=None, verbose=True,
-            great_circle=False, anisotropy=None):
+            great_circle=False, anisotropy=None, n_jobs=None,
+            max_memory_fraction=0.8):
     """Compute the raw empirical variogram cloud (all admissible pairs).
 
     Parameters
@@ -206,6 +480,15 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
         ``cutoff`` is applied to the equivalent major-axis lag and the cloud
         includes an ``anisotropic_distance`` column. The physical Euclidean
         lag remains available as ``distance``.
+    n_jobs : int, optional
+        Number of worker threads for vectorized pair chunks.  ``None``
+        (default) chooses adaptively from the post-``maxobs`` candidate-pair
+        count, up to four workers. ``1`` is sequential and ``-1`` uses all
+        available CPUs.
+    max_memory_fraction : float or None, optional
+        Refuse clouds whose estimated final numeric columns exceed this
+        fraction of currently available RAM (default 0.8). ``None`` disables
+        the safety check.
 
     Returns
     -------
@@ -241,18 +524,31 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
 
     records = _empty_records()
     i0s, i1s = [], []
-    for i in range(n - 1):
-        pair = _pair_lags(
-            coords[i:i + 1], coords[i + 1:], vals[i], vals[i + 1:], cutoff,
-            times[i] if has_time else None, times[i + 1:] if has_time else None,
+    chunks, npair = _same_set_pair_chunks(
+        coords, cutoff, anisotropy, great_circle, metric
+    )
+    _check_cloud_memory(
+        npair, dim, has_time, calc_angle, anisotropy, max_memory_fraction
+    )
+
+    def calculate_chunk(indices):
+        i0, i1 = indices
+        return _indexed_pair_lags(
+            coords, coords, vals, vals, i0, i1, cutoff,
+            times if has_time else None, times if has_time else None,
             t_cutoff, calc_angle, great_circle=great_circle,
-            anisotropy=anisotropy, metric=metric)
-        mask = pair["mask"]
-        if np.any(mask):
-            i0s.append(np.full(np.count_nonzero(mask), i))
-            i1s.append(np.arange(i + 1, n)[mask])
+            anisotropy=anisotropy, metric=metric,
+        )
+
+    for done, result in enumerate(
+            _iter_pair_results(chunks, calculate_chunk, n_jobs, npair), start=1):
+        if result is not None:
+            i0, i1, pair = result
+            i0s.append(i0)
+            i1s.append(i1)
             _accumulate(records, pair)
-        _progress(i, n - 2, verbose)
+        _progress(done, max(1, (n * (n - 1) // 2 + _PAIR_CHUNK_SIZE - 1)
+                            // _PAIR_CHUNK_SIZE), verbose)
 
     if verbose:
         print("\rProgress: 100%")
@@ -261,7 +557,7 @@ def raw_vgm(coords, vals, cutoff=np.inf, times=None, t_cutoff=np.inf,
 
 def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.inf,
                   calc_angle=False, maxobs=None, nmax=None, metric=None, seed=None, verbose=True,
-                  anisotropy=None):
+                  anisotropy=None, n_jobs=None, max_memory_fraction=0.8):
     """Traditional (LMC) cross-variogram cloud on **collocated** data.
 
     Both variables are measured at the same ``coords`` (isotopic data).  Pairs
@@ -281,6 +577,14 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
     For *heterotopic* data (A and B at different locations) the true
     cross-variogram is not computable; use :func:`cross_vgm` (pseudo estimator)
     or restrict to a collocated subset before calling this function.
+
+    ``n_jobs=None`` adaptively selects up to four pair-chunk workers after
+    ``maxobs`` and cutoff candidate generation.  ``1`` is sequential and
+    ``-1`` uses all available CPUs.
+
+    ``max_memory_fraction`` defaults to 0.8 and raises ``MemoryError`` when
+    the estimated final cloud exceeds that fraction of available RAM.  Pass
+    ``None`` to disable the guard.
     """
     coords = np.asarray(coords, dtype=float)
     valsA = np.asarray(valsA, dtype=float).reshape(-1)
@@ -310,18 +614,31 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
 
     records = _empty_records()
     i0s, i1s = [], []
-    for i in range(n - 1):
-        pair = _pair_lags(
-            coords[i:i + 1], coords[i + 1:], valsA[i], valsA[i + 1:], cutoff,
-            times[i] if has_time else None, times[i + 1:] if has_time else None,
-            t_cutoff, calc_angle, valB0=valsB[i], valB1=valsB[i + 1:],
-            anisotropy=anisotropy, metric=metric)
-        mask = pair["mask"]
-        if np.any(mask):
-            i0s.append(np.full(np.count_nonzero(mask), i))
-            i1s.append(np.arange(i + 1, n)[mask])
+    chunks, npair = _same_set_pair_chunks(
+        coords, cutoff, anisotropy, False, metric
+    )
+    _check_cloud_memory(
+        npair, dim, has_time, calc_angle, anisotropy, max_memory_fraction
+    )
+
+    def calculate_chunk(indices):
+        i0, i1 = indices
+        return _indexed_pair_lags(
+            coords, coords, valsA, valsA, i0, i1, cutoff,
+            times if has_time else None, times if has_time else None,
+            t_cutoff, calc_angle, valB0=valsB, valB1=valsB,
+            anisotropy=anisotropy, metric=metric,
+        )
+
+    for done, result in enumerate(
+            _iter_pair_results(chunks, calculate_chunk, n_jobs, npair), start=1):
+        if result is not None:
+            i0, i1, pair = result
+            i0s.append(i0)
+            i1s.append(i1)
             _accumulate(records, pair)
-        _progress(i, n - 2, verbose)
+        _progress(done, max(1, (n * (n - 1) // 2 + _PAIR_CHUNK_SIZE - 1)
+                            // _PAIR_CHUNK_SIZE), verbose)
 
     if verbose:
         print("\rProgress: 100%")
@@ -331,7 +648,7 @@ def raw_cross_vgm(coords, valsA, valsB, cutoff=np.inf, times=None, t_cutoff=np.i
 def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
               timesA=None, timesB=None, t_cutoff=np.inf, calc_angle=False,
               maxobs=None, maxobsA=None, maxobsB=None, seed=None, verbose=True,
-              anisotropy=None):
+              anisotropy=None, n_jobs=None, max_memory_fraction=0.8):
     """Cross-variogram cloud between two co-located variables A and B.
 
     Pairs are formed across the two data sets (every A vs every B).  When
@@ -347,6 +664,14 @@ def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
         the true cross-variogram is not computable and this pseudo form is a
         reasonable substitute; for a cokriging cross-sill, derive
         ``cov(A, B)`` from collocated hard-data pairs instead.
+
+    ``n_jobs=None`` adaptively selects up to four pair-chunk workers after
+    subsampling and cutoff candidate generation.  ``1`` is sequential and
+    ``-1`` uses all available CPUs.
+
+    ``max_memory_fraction`` defaults to 0.8 and raises ``MemoryError`` when
+    the estimated final cloud exceeds that fraction of available RAM.  Pass
+    ``None`` to disable the guard.
     """
     coordsA = np.asarray(coordsA, dtype=float)
     coordsB = np.asarray(coordsB, dtype=float)
@@ -390,17 +715,30 @@ def cross_vgm(coordsA, valsA, coordsB, valsB, cutoff=np.inf, residual=True,
 
     records = _empty_records()
     i0s, i1s = [], []
-    for i in range(nA):
-        pair = _pair_lags(
-            coordsA[i:i + 1], coordsB, valsA[i], valsB, cutoff,
-            timesA[i] if has_time else None, timesB if has_time else None,
-            t_cutoff, calc_angle, anisotropy=anisotropy)
-        mask = pair["mask"]
-        if np.any(mask):
-            i0s.append(np.full(np.count_nonzero(mask), i))
-            i1s.append(np.arange(len(selB))[mask])
+    chunks, npair = _cross_set_pair_chunks(
+        coordsA, coordsB, cutoff, anisotropy, None
+    )
+    _check_cloud_memory(
+        npair, dim, has_time, calc_angle, anisotropy, max_memory_fraction
+    )
+
+    def calculate_chunk(indices):
+        i0, i1 = indices
+        return _indexed_pair_lags(
+            coordsA, coordsB, valsA, valsB, i0, i1, cutoff,
+            timesA if has_time else None, timesB if has_time else None,
+            t_cutoff, calc_angle, anisotropy=anisotropy,
+        )
+
+    for done, result in enumerate(
+            _iter_pair_results(chunks, calculate_chunk, n_jobs, npair), start=1):
+        if result is not None:
+            i0, i1, pair = result
+            i0s.append(i0)
+            i1s.append(i1)
             _accumulate(records, pair)
-        _progress(i, nA - 1, verbose)
+        _progress(done, max(1, (nA * len(selB) + _PAIR_CHUNK_SIZE - 1)
+                            // _PAIR_CHUNK_SIZE), verbose)
 
     if verbose:
         print("\rProgress: 100%")
