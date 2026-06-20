@@ -602,3 +602,18 @@ class TestNcache:
                 err_msg=f"ncache={ncache} changed estimates")
             np.testing.assert_allclose(var, var_default, rtol=1e-6, atol=1e-10,
                 err_msg=f"ncache={ncache} changed variances")
+
+    @pytest.mark.parametrize("ncache", [1, 2, 3])
+    def test_positive_undersized_cache_enables_minimum_pool(self, ncache):
+        """Positive values below one bucket are promoted to caching enabled."""
+        k = Kriging(ndim=2, nvar=1, verbose=0)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_vgm(ivar=1, jvar=1, **_VGM)
+        k.set_grid(coord=np.vstack([_SMALL_GRID, [[0.5, 0.5]]]))
+        k.set_search(ivar=1)
+        k.solve(nthread=1, ncache=ncache)
+
+        stats = k.solver_stats
+        assert stats["chol_fact"] == 1
+        assert stats["chol_reuse"] == 2
+        assert stats["ssytrf_reuse"] == 0

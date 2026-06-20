@@ -13,8 +13,8 @@ Usage
     python build_lib.py --compiler ifort
     python build_lib.py --opt debug       # no optimisation, add -g
     python build_lib.py --no-openmp       # disable OpenMP parallelisation
-    python build_lib.py --hcache 0        # disable multi-slot factor cache
-    python build_lib.py --hcache 1        # single-slot cache (overhead test)
+    python build_lib.py --hcache 0        # disable shared factor cache
+    python build_lib.py --hcache 4        # minimal pool (1 bucket, overhead test)
     python build_lib.py --no-cov-table    # analytic covariance (debug table accuracy)
 
 Preprocessor feature flags
@@ -179,7 +179,7 @@ def _build_define_flags(family: str, hcache: int, use_cov_table: bool) -> list:
     Parameters
     ----------
     compiler      : 'gfortran', 'ifx', or 'ifort'
-    hcache        : number of multi-slot factor-cache entries (0 = disabled)
+    hcache        : total shared factor-cache pool size in slots (0 = disabled)
     use_cov_table : True → -DUSE_COV_TABLE (lookup-table covariance)
     """
     # Intel on Windows uses /D; everything else uses -D
@@ -328,8 +328,8 @@ def main():
         help="Disable OpenMP parallelisation",
     )
     parser.add_argument(
-        "--hcache", type=int, default=64, metavar="N",
-        help="Multi-slot factor cache size per thread (default 64; 0 = disabled)",
+        "--hcache", type=int, default=256, metavar="N",
+        help="Total shared factor cache pool size in slots (default 256; 0 = disabled)",
     )
     parser.add_argument(
         "--no-cov-table", action="store_true",

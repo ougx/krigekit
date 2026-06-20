@@ -1477,15 +1477,16 @@ class Kriging:
             results or when calling :meth:`solve` from inside another
             parallel region).
         ncache : int, optional
-            Number of per-thread multi-slot hcache entries to use for this
-            solve call.  ``None`` keeps the compiled/object default.  ``0``
-            disables factorization reuse entirely — both the multi-slot hcache
-            and the single-entry ``ctx%cache`` adjacency cache are switched off,
-            so every block is factorized afresh (``chol_reuse``/``ssytrf_reuse``
-            stay zero); use this for a clean no-cache baseline.  ``1`` gives a
-            one-slot hcache for cache-overhead comparisons.  The optional
-            persistent factor cache (``pf_cache``, set on the object) is
-            controlled separately.
+            Total size of the shared factor cache pool (slots across all
+            threads).  ``None`` keeps the compiled/object default.  ``0``
+            disables factorization reuse entirely — both the shared hcache and
+            the single-entry ``ctx%cache`` adjacency cache are switched off, so
+            every block is factorized afresh (``chol_reuse``/``ssytrf_reuse``
+            stay zero); use this for a clean no-cache baseline.  Positive
+            values below 4 are promoted to 4 (the minimum meaningful pool is
+            4 slots = 1 bucket).
+            The optional persistent factor cache (``pf_cache``, set on the
+            object) is controlled separately.
         """
         ncache_c = -1 if ncache is None else int(ncache)
         # Python and the Fortran runtime buffer output independently. Flush
@@ -2183,7 +2184,7 @@ def ordinary_kriging(
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
     ncache : int, optional
-        Per-thread hcache slots for this solve. None uses the default.
+        Total shared hcache pool slots for this solve. None uses the default.
 
     Returns
     -------
@@ -2249,7 +2250,7 @@ def cokriging(
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
     ncache : int, optional
-        Per-thread hcache slots for this solve. None uses the default.
+        Total shared hcache pool slots for this solve. None uses the default.
     std_ck: bool
         Use standard Ordinary Kriging.
 
@@ -2331,7 +2332,7 @@ def sequential_gaussian_simulation(
     nthread: int
         max OMP threads for this call (0 or absent = OMP default)
     ncache : int, optional
-        Per-thread hcache slots for this solve. None uses the default.
+        Total shared hcache pool slots for this solve. None uses the default.
 
     Returns
     -------

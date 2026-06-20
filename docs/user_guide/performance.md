@@ -23,10 +23,47 @@ factorization of that covariance matrix has been computed (O(nmax³)), it can
 be reused for any later block that has the **same** neighbour set, reducing
 the per-block cost to a triangular solve (O(nmax²)).
 
-Each OpenMP thread keeps its own independent hash cache of up to `ncache`
-factorizations (default 64, set at compile time).  There is **no cross-thread
-sharing**: two threads that happen to encounter the same neighbourhood pattern
-each compute and store the factorization independently.
+All OpenMP threads share one bounded, set-associative hash cache containing up
+to `ncache` factorizations (default 256 total slots, set at compile time).
+Per-bucket locks let one thread reuse a factorization produced by another
+without serializing accesses to unrelated neighbourhoods.
+
+### How the four-way shared cache works
+
+The shared pool is divided into buckets, with exactly four slots (or **ways**)
+in each bucket.  For example, `ncache=256` creates 64 buckets × 4 ways.
+Each neighbourhood system follows this path:
+
+1. The solver first checks the worker's single-entry `ctx%cache`.  This is the
+   cheapest path and catches immediately repeated systems without touching a
+   shared lock.
+2. On a local miss, the neighbour indices, neighbour counts, system size, and
+   local range/nugget modifiers are mixed into a hash.
+3. The hash selects exactly one bucket.  The solver locks that bucket and
+   examines its four ways.
+4. A matching hash is only a candidate: the complete cache key is compared
+   before reuse, so a hash collision cannot select the wrong factorization.
+5. On a hit, the prepared factors are copied into the worker's `ctx%cache`,
+   the bucket's local recency counter is updated, and the lock is released.
+
+After a cache miss, the worker factorizes the system normally.  It then tries
+to insert the result into the selected bucket.  An empty way is used first; if
+all four ways are occupied, the least-recently-used way **within that bucket**
+is replaced.  Eviction is local rather than global, so insertion and lookup
+scan at most four entries.
+
+Lookups wait briefly for their selected bucket because an existing factor can
+avoid an expensive O(nmax³) factorization.  Inserts use a non-blocking lock:
+if another worker currently owns that bucket, the new factor is simply not
+inserted.  Skipping a contended insert affects only future hit rate, never the
+current result or numerical correctness.  Different buckets have independent
+locks and remain fully concurrent.
+
+Because the cache is set-associative, capacity and collision pressure are
+related but distinct.  A bucket can retain at most four keys that map to it,
+even when other buckets are empty.  Increasing `ncache` adds more buckets,
+which both increases total capacity and spreads hashes across more lock and
+eviction domains.
 
 ### Measuring cache effectiveness
 
@@ -55,29 +92,20 @@ k.solve(nthread=1)   # force single-threaded
 k.solve(nthread=4)   # use exactly 4 threads
 ```
 
-The block loop is split across threads using OpenMP's default (static
-chunked) schedule, so contiguous blocks go to the same thread.  Nearby
-blocks share nearby observations and therefore tend to share the same
-neighbour sets — this locality means per-thread cache hit rates are already
-reasonably high regardless of thread count.
+The block loop uses dynamic scheduling.  The shared cache preserves
+factorization reuse even when matching neighbourhoods are processed by
+different workers.
 
 ### When to reduce `nthread`
 
-The main reason to reduce threads is **cross-thread redundancy**: because
-each thread has its own independent cache, two threads that encounter
-identical neighbourhood patterns each factorize independently, doubling the
-wasted O(nmax³) work.  This matters when:
+The main reasons to reduce threads are scheduling overhead and memory-bandwidth
+contention.  This matters when:
 
-- **The observation dataset is small** — with few observations, `nmax` is
-  effectively limited by the total observation count, and large portions of
-  the grid share *exactly* the same K nearest neighbours.  In the extreme
-  case (all blocks pull the same neighbours), 1 thread factorizes once while
-  N threads each factorize once — N× more total work, all redundant.
-- **`nmax` is large** — each O(nmax³) factorization is expensive, so
-  avoiding even a handful of redundant ones can save seconds.
+- **`nmax` is large** — factorization and solve traffic can saturate available
+  memory bandwidth.
 - **The grid is small** — when the total number of blocks is close to the
-  thread count, the overhead of spawning threads and the loss of cache warmup
-  time outweigh the parallelism benefit.
+  thread count, the overhead of spawning threads can outweigh the parallelism
+  benefit.
 
 **Example** — small obs dataset, large grid:
 
@@ -87,12 +115,12 @@ wasted O(nmax³) work.  This matters when:
 k.solve(nthread=2)          # try fewer threads
 stats = k.solver_stats
 print(stats["chol_fact"], stats["chol_reuse"])
-# Tune nthread until chol_fact is minimised relative to chol_reuse.
+# Tune nthread for elapsed time; the shared cache avoids cross-thread duplicates.
 ```
 
 ### When to keep `nthread` high
 
-More threads always helps when:
+More threads usually help when:
 
 - The observation dataset is large and varied — each block has a largely
   unique neighbourhood, so the cache barely fires anyway.
@@ -101,26 +129,30 @@ More threads always helps when:
 
 ---
 
-## `ncache` — per-thread cache size
+## `ncache` — total shared cache size
 
 ```python
-k.solve(ncache=None)   # None (default): use compiled-in value (64)
-k.solve(ncache=0)      # disable the multi-slot cache entirely
-k.solve(ncache=128)    # give each thread 128 slots
+k.solve(ncache=None)   # None (default): use compiled-in value (256)
+k.solve(ncache=0)      # disable all factorization reuse
+k.solve(ncache=4)      # smallest pool: one bucket with four ways
+k.solve(ncache=128)    # 128 slots shared by all threads
 ```
 
-`ncache` sets the number of factorization slots in each thread's hash cache.
+`ncache` sets the total number of factorization slots in the shared hash cache.
+Positive values from 1 through 3 are promoted to 4 because a bucket has four
+ways.  Other values are rounded down to a complete bucket, so `ncache=5`,
+`6`, or `7` currently allocates the same four-slot pool as `ncache=4`.
 Increase it when:
 
-- The unique neighbourhood count per thread exceeds the default 64 — visible
-  as `chol_fact` ≫ 64 per thread.
+- The working set of recurring neighbourhoods exceeds the default 256 slots.
 - `nmax` is large (large factorizations worth caching) and memory allows.
 
-Memory cost per thread is roughly
-`ncache × nmax² × 4 bytes` (single-precision L factor) plus bookkeeping.
-With `ncache=64` and `nmax=50`, that is about 640 KB per thread —
-negligible.  At `nmax=500` it becomes 32 MB per thread, so reduce `ncache`
-if memory is tight.
+The pool has a 64 MB total cap.  Slot sizing includes the normal Cholesky
+storage, neighbour keys, and the worst-case lazy SSYTRF fallback factors, so
+the runtime may allocate fewer slots than requested when `nmax` is large.  The
+final allocation is also rounded down to a complete four-way bucket.  The pool
+exists only for the duration of one `solve()` call; the optional persistent
+factor cache is a separate one-entry cache used across solves.
 
 ### Automatic shrinking
 
@@ -148,10 +180,10 @@ spawning more workers than there is work.
 
 | Situation | Recommendation |
 |---|---|
-| Small obs (< ~100), large grid, high `nmax` | Reduce `nthread`; check `solver_stats` |
+| Small obs (< ~100), large grid, high `nmax` | Benchmark `nthread`; shared-cache reuse is preserved |
 | Large obs, large grid | Keep `nthread` high; `ncache` at default |
 | All obs fit `nmax`, uniform variogram | `ncache` auto-shrinks to 1 (one system reused) |
 | Hit rate low despite high `ncache` | Neighbourhoods are all unique; cache cannot help |
-| Hit rate high but `chol_fact` still large | Increase `ncache` or reduce `nthread` |
+| Hit rate high but `chol_fact` still large | Increase `ncache` |
 | Memory-constrained with large `nmax` | Reduce `ncache` |
 | SGSIM | `nthread` is forced to 1 (sequential simulation); tuning does not apply |

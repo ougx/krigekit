@@ -355,9 +355,10 @@ int krige_solve(int64_t handle, int nthread, int ncache)
 Runs the kriging or SGSIM block loop.  `nthread = 0` uses the OpenMP runtime
 default; `nthread > 0` caps the thread count for this call only.  `ncache = -1`
 keeps the object's current hcache slot default, `ncache = 0` disables the
-multi-slot hcache for this solve, and `ncache > 0` sets the per-thread hcache
-slot count for this solve only.  Results are available via the getters
-immediately after this returns.
+factor caches for this solve, and positive `ncache` sets the total shared
+hcache pool size for this solve only.  Values from 1 through 3 are promoted to
+4 because one set-associative bucket requires four slots.  Results are
+available via the getters immediately after this returns.
 
 ---
 
@@ -458,15 +459,28 @@ Internally there are three cache layers:
 
 - `ctx%cache`: one single-entry cache per worker thread.  It handles immediate
   repeated systems and is pre-warmed from the persistent cache when available.
-- `ctx%hcache`: one bounded multi-slot cache per worker thread for repeated
-  systems within a single solve.  It stores only recent prepared factor
-  matrices (`L`, `K^{-1}F`, and the Schur factor) in LRU slots and indexes them
-  with a bucket table (`hash -> bucket -> linked slot list`), so lookup scans
-  only the matching bucket.  Every hash candidate is verified against the full
-  neighbour key with `fcache_matches`, so collisions are safe.
+- `self%hcache`: one bounded, shared, four-way set-associative cache for
+  repeated systems within a single solve.  Each bucket has its own lock and
+  local LRU order, so unrelated neighbourhoods remain concurrent.  Every hash
+  candidate is verified against the full neighbour key with `fcache_matches`,
+  so collisions are safe.
 - `self%pf`: the optional persistent cache shared by the kriging object across
   solves when `pf_cache=1`.  This cache also stores the assembled `matA`/`rhsB`
   snapshot exposed by `krige_get_factor_system`.
+
+For `self%hcache`, the effective pool is divided into `floor(ncache / 4)`
+buckets of four ways.  Positive values below four are promoted to four; other
+non-multiples are rounded down to a complete bucket.  A hash selects one
+bucket, and only its four entries are scanned.  Empty ways are filled first;
+otherwise the bucket-local least-recently-used entry is replaced.
+
+Lookup takes the selected bucket's lock and copies a verified hit into the
+worker's single-entry `ctx%cache`.  Insertion uses `omp_test_lock` and skips
+publication if that bucket is contended.  This avoids making completed
+factorizations wait merely to improve future cache hit rate.  Skipped inserts
+and duplicate concurrent factorizations do not affect numerical results.
+See the [architecture guide](architecture.md) for the data layout, key
+construction, and synchronization details.
 
 `self%pf` is saved after the parallel block loop from a thread whose current
 `ctx%matA`/`ctx%rhsB` still match its thread-local factors.  hcache hits do not
@@ -474,19 +488,19 @@ update the assembled system, so they are not used to populate `matA`/`rhsB` for
 inspection.
 
 The multi-slot cache size is controlled in Fortran by `factor_cache_size`
-(default 64 slots per thread) and by a per-thread byte cap
-(`MAX_HCACHE_BYTES`).  The byte cap limits `L`, `kinv_drift`, and `schur`
-storage for each OpenMP worker context.
+(default 256 total shared slots) and by a total shared-pool byte cap
+(`MAX_HCACHE_BYTES`).  The byte cap accounts for the Cholesky factors,
+neighbour keys, and worst-case lazy SSYTRF fallback storage.
 
 For cache-path testing, the Python `solve(ncache=...)` argument and C API
 `krige_solve(..., ncache)` argument override this slot count for one solve
-call.  Use `ncache=0` to disable the multi-slot hcache, `ncache=1` for a
-one-slot hcache, or `ncache=None` in Python / `ncache=-1` in C to keep the
+call.  Use `ncache=0` to disable all factorization reuse, `ncache=4` for the
+smallest shared pool, or `ncache=None` in Python / `ncache=-1` in C to keep the
 compiled default.  The Makefile `HCACHE` variable sets that compiled default:
-`make HCACHE=0` disables the multi-slot hcache by default, `make HCACHE=1`
-builds a one-slot default, and bare `make` uses the normal 64-slot default.
-These controls do not disable the single-entry `ctx%cache` or the optional
-persistent `self%pf` cache.
+`make HCACHE=0` disables factorization reuse by default, `make HCACHE=4`
+builds the smallest shared pool, and bare `make` uses the normal 256-slot
+default.  Positive values from 1 through 3 are promoted to 4.  The optional
+persistent `self%pf` cache is configured separately.
 
 ### `krige_get_factor_info`
 

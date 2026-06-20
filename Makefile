@@ -14,7 +14,7 @@
 #   make FC=ifort                 # force Intel ifort (classic)
 #   make OPT=debug                # debug build
 #   make HCACHE=0                 # disable multi-slot factor cache for testing
-#   make HCACHE=1                 # one-slot hcache for cache-overhead comparison
+#   make HCACHE=4                 # minimal pool (1 bucket × 4 ways) for cache-overhead comparison
 #   make USE_COV_TABLE=0          # use analytic covariance instead of lookup table (debug)
 #   make libkriging               # shared library only
 #   make sparks                   # executable only
@@ -112,10 +112,11 @@ OPT ?= release
 # ---------------------------------------------------------------------------
 # OPENMP        — enable OpenMP shared-memory parallelism (0 to disable)
 OPENMP ?= 1
-# HCACHE        — multi-slot per-thread factor cache size
-#                 0 = disabled entirely; 1 = single slot (overhead comparison);
-#                 64 (default) = normal production cache.
-HCACHE ?= 64
+# HCACHE        — total shared factor cache pool size (slots across all threads)
+#                 0 = disabled entirely; positive values < 4 are promoted to
+#                 4 (minimum pool = 1 bucket × 4 ways);
+#                 256 (default) = normal production cache.
+HCACHE ?= 256
 # USE_COV_TABLE — use lookup-table covariance evaluation (faster)
 #                 0 = fall back to analytic evaluation (useful for debugging
 #                     table accuracy or when tables cannot be built).

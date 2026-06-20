@@ -281,7 +281,7 @@ contains
 
   !-- Run the kriging block loop.
   !   nthread : max OMP threads (0 = OMP runtime default).
-  !   ncache  : hcache slots (-1 = object default; 0 = disabled).
+  !   ncache  : total shared hcache pool slots (-1 = object default; 0 = disabled).
   !
   !   Note: nthread is always passed as a concrete value so present(nthread)
   !   is .true. inside solve().  Intel ifx can mishandle absent optional

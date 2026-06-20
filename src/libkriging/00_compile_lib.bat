@@ -4,13 +4,13 @@ rem -fdefault-real-8 must match your module compilation.
 rem -fopenmp is needed because solve() uses OpenMP internally — omitting it will link but crash at runtime when the OpenMP runtime symbols are missing.
 rem
 rem Preprocessor feature flags (set before calling this script to override):
-rem   HCACHE          — multi-slot factor cache size (default 64; 0 = disabled)
+rem   HCACHE          — total shared factor cache slots (default 256; 0 = disabled)
 rem   USE_COV_TABLE   — use lookup-table covariance evaluation (default 1 = on;
 rem                     set to 0 to use analytic path for debugging)
 
 del *.exe *.obj *.o *.mod *.pdb
 rem -fopenmp
-if "%HCACHE%"=="" set HCACHE=64
+if "%HCACHE%"=="" set HCACHE=256
 if "%KRIGEKIT_DISABLE_HCACHE%"=="1" set HCACHE=0
 set CACHE_FLAGS=-DKRIGEKIT_HCACHE_SLOTS=%HCACHE%
 if "%HCACHE%"=="0" set CACHE_FLAGS=%CACHE_FLAGS% -DKRIGEKIT_DISABLE_HCACHE

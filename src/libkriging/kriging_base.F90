@@ -72,6 +72,11 @@ module kriging_base
   use gaussian_quadrature
   use kdtree2_module
   use normal_score,  only: t_nscore
+#ifdef _OPENMP
+  use omp_lib, only: omp_lock_kind, omp_init_lock, omp_destroy_lock, &
+                     omp_set_lock, omp_unset_lock, omp_test_lock, &
+                     omp_get_num_threads
+#endif
   implicit none
   private
 
@@ -107,9 +112,10 @@ module kriging_base
   !============================================================================
   ! t_factor_cache — Cholesky factorization cache
   !
-  ! Used in two roles:
-  !   ctx%cache  (t_kriging_ctx): intra-solve, one slot per thread.
-  !   self%pf    (t_kriging_base): inter-solve, shared across threads (pf_cache).
+  ! Used in three roles:
+  !   ctx%cache   (t_kriging_ctx):   intra-solve, one slot per thread (free; hot path).
+  !   self%hcache (t_kriging_base):  intra-solve, shared set-associative pool (hcache).
+  !   self%pf     (t_kriging_base):  inter-solve, shared across threads (pf_cache).
   !============================================================================
   type :: t_factor_cache
     logical  :: valid        = .false.
@@ -140,10 +146,10 @@ module kriging_base
   end type t_factor_cache
 
   !============================================================================
-  ! t_factor_hash_cache — fixed-size per-thread multi-entry factor cache
+  ! t_factor_hash_cache — fixed-size shared multi-entry factor cache (set-associative)
   !
-  ! This is intentionally bounded: memory scales with factor_cache_size and
-  ! OpenMP thread count, not with the number of grid blocks.  Each entry stores
+  ! This is intentionally bounded: memory scales with factor_cache_size, not
+  ! with the OpenMP thread count or number of grid blocks.  Each entry stores
   ! one prepared factorization keyed by the exact neighbour indices and local
   ! block modifiers.  Hash matches are always verified with fcache_matches(), so
   ! collisions cannot produce an incorrect factorization reuse.
@@ -156,15 +162,16 @@ module kriging_base
   end type t_factor_entry
 
   type :: t_factor_hash_cache
-    integer :: nslot = 0
     integer :: nbucket = 0
-    integer :: clock = 0
-    type(t_factor_entry), allocatable :: slot(:)
-    integer, allocatable :: bucket(:)
-    integer, allocatable :: next(:)
+    integer :: ways    = 0
+    integer, allocatable :: clock(:)               ! [nbucket] per-bucket LRU clock
+    type(t_factor_entry), allocatable :: slot(:,:) ! [ways, nbucket]
+#ifdef _OPENMP
+    integer(kind=omp_lock_kind), allocatable :: lock(:)  ! [nbucket]
+#endif
   contains
-    procedure :: alloc  => fhcache_alloc
-    procedure :: free   => fhcache_free
+    procedure :: alloc => fhcache_alloc
+    procedure :: free  => fhcache_free
   end type t_factor_hash_cache
 
   !============================================================================
@@ -193,7 +200,6 @@ module kriging_base
     real,    allocatable :: rhsB  (:,:)    ! [nvar, matsize]
     type(kdtree2_result), allocatable :: results(:) ! [ncand_limit] candidate query buffer
     type(t_factor_cache) :: cache
-    type(t_factor_hash_cache) :: hcache
   contains
     procedure :: free_core => kriging_ctx_free_core
   end type t_kriging_ctx
@@ -319,7 +325,7 @@ module kriging_base
 #ifdef KRIGEKIT_HCACHE_SLOTS
     integer :: factor_cache_size  = KRIGEKIT_HCACHE_SLOTS
 #else
-    integer :: factor_cache_size  = 64      ! per-thread multi-entry factor cache; <=0 disables
+    integer :: factor_cache_size  = 256     ! total shared hcache pool slots; <=0 disables
 #endif
     character(len=1024) :: weight_file = ""
     integer :: ifile              = 0
@@ -354,6 +360,7 @@ module kriging_base
     type(t_grid),      pointer :: grid  => null()
     type(t_blockgrid), pointer :: block => null()
     type(t_factor_cache) :: pf
+    type(t_factor_hash_cache) :: hcache
     type(t_weight_store), allocatable :: wstore
     type(t_grad), pointer :: grad(:) => null()
   contains
@@ -1943,55 +1950,66 @@ contains
   ! t_factor_hash_cache methods
   !============================================================================
 
-  subroutine fhcache_alloc(self, nslot, npp, p, nvar, ngroups, mmax)
+  subroutine fhcache_alloc(self, total_slots, npp, p, nvar, ngroups, mmax, ways)
     class(t_factor_hash_cache), intent(inout) :: self
-    integer, intent(in) :: nslot, npp, p, nvar, ngroups, mmax
-    integer :: i
+    integer, intent(in) :: total_slots, npp, p, nvar, ngroups, mmax
+    integer, intent(in), optional :: ways
+    integer :: ib, w
 
     call self%free()
-    self%nslot = max(0, nslot)
-    self%clock = 0
-    if (self%nslot <= 0) then
-      self%nbucket = 0
-      return
-    end if
-    self%nbucket = max(1, (self%nslot + 3) / 4)
+    self%ways = 4
+    if (present(ways)) self%ways = max(1, ways)
+    self%nbucket = max(0, total_slots) / self%ways
+    if (self%nbucket <= 0) return
 
-    allocate(self%slot(self%nslot))
-    allocate(self%bucket(self%nbucket))
-    allocate(self%next(self%nslot))
-    self%bucket = 0
-    self%next = 0
-    do i = 1, self%nslot
-      call self%slot(i)%fac%alloc(npp, p, nvar, ngroups, mmax, with_system=.false.)
-      self%slot(i)%valid = .false.
-      self%slot(i)%hash = 0
-      self%slot(i)%last_used = 0
+    allocate(self%clock(self%nbucket));  self%clock = 0
+    allocate(self%slot(self%ways, self%nbucket))
+#ifdef _OPENMP
+    allocate(self%lock(self%nbucket))
+#endif
+    do ib = 1, self%nbucket
+#ifdef _OPENMP
+      call omp_init_lock(self%lock(ib))
+#endif
+      do w = 1, self%ways
+        call self%slot(w, ib)%fac%alloc(npp, p, nvar, ngroups, mmax, with_system=.false.)
+        self%slot(w, ib)%valid    = .false.
+        self%slot(w, ib)%hash     = 0
+        self%slot(w, ib)%last_used = 0
+      end do
     end do
   end subroutine fhcache_alloc
 
 
   subroutine fhcache_free(self)
     class(t_factor_hash_cache), intent(inout) :: self
-    integer :: i
+    integer :: ib, w
 
     if (allocated(self%slot)) then
-      do i = 1, size(self%slot)
-        if (allocated(self%slot(i)%fac%nnear))      deallocate(self%slot(i)%fac%nnear)
-        if (allocated(self%slot(i)%fac%inear))      deallocate(self%slot(i)%fac%inear)
-        if (allocated(self%slot(i)%fac%matA))       deallocate(self%slot(i)%fac%matA)
-        if (allocated(self%slot(i)%fac%rhsB))       deallocate(self%slot(i)%fac%rhsB)
-        if (allocated(self%slot(i)%fac%L))          deallocate(self%slot(i)%fac%L)
-        if (allocated(self%slot(i)%fac%kinv_drift)) deallocate(self%slot(i)%fac%kinv_drift)
-        if (allocated(self%slot(i)%fac%schur))      deallocate(self%slot(i)%fac%schur)
+#ifdef _OPENMP
+      if (allocated(self%lock)) then
+        do ib = 1, self%nbucket
+          call omp_destroy_lock(self%lock(ib))
+        end do
+        deallocate(self%lock)
+      end if
+#endif
+      do ib = 1, size(self%slot, 2)
+        do w = 1, size(self%slot, 1)
+          if (allocated(self%slot(w,ib)%fac%nnear))      deallocate(self%slot(w,ib)%fac%nnear)
+          if (allocated(self%slot(w,ib)%fac%inear))      deallocate(self%slot(w,ib)%fac%inear)
+          if (allocated(self%slot(w,ib)%fac%matA))       deallocate(self%slot(w,ib)%fac%matA)
+          if (allocated(self%slot(w,ib)%fac%rhsB))       deallocate(self%slot(w,ib)%fac%rhsB)
+          if (allocated(self%slot(w,ib)%fac%L))          deallocate(self%slot(w,ib)%fac%L)
+          if (allocated(self%slot(w,ib)%fac%kinv_drift)) deallocate(self%slot(w,ib)%fac%kinv_drift)
+          if (allocated(self%slot(w,ib)%fac%schur))      deallocate(self%slot(w,ib)%fac%schur)
+        end do
       end do
       deallocate(self%slot)
     end if
-    if (allocated(self%bucket)) deallocate(self%bucket)
-    if (allocated(self%next)) deallocate(self%next)
-    self%nslot = 0
+    if (allocated(self%clock)) deallocate(self%clock)
     self%nbucket = 0
-    self%clock = 0
+    self%ways    = 0
   end subroutine fhcache_free
 
 
@@ -2025,147 +2043,121 @@ contains
   end function fhcache_hash_key
 
 
-  integer function fhcache_bucket_index(cache, h) result(ibucket)
-    type(t_factor_hash_cache), intent(in) :: cache
-    integer, intent(in) :: h
-
-    if (cache%nbucket <= 0) then
-      ibucket = 0
-    else
-      ibucket = 1 + modulo(h, cache%nbucket)
-    end if
-  end function fhcache_bucket_index
-
-
-  subroutine fhcache_unlink_slot(cache, islot)
-    type(t_factor_hash_cache), intent(inout) :: cache
-    integer, intent(in) :: islot
-    integer :: ibucket, iprev, icur
-
-    if (islot < 1 .or. islot > cache%nslot) return
-    if (.not. allocated(cache%bucket)) return
-    if (.not. allocated(cache%next)) return
-    if (.not. cache%slot(islot)%valid) return
-
-    ibucket = fhcache_bucket_index(cache, cache%slot(islot)%hash)
-    if (ibucket <= 0) return
-
-    iprev = 0
-    icur = cache%bucket(ibucket)
-    do while (icur > 0)
-      if (icur < 1 .or. icur > cache%nslot) exit
-      if (icur == islot) then
-        if (iprev == 0) then
-          cache%bucket(ibucket) = cache%next(icur)
-        else
-          cache%next(iprev) = cache%next(icur)
-        end if
-        cache%next(icur) = 0
-        return
-      end if
-      iprev = icur
-      icur = cache%next(icur)
-    end do
-  end subroutine fhcache_unlink_slot
-
-
   !-- fhcache_lookup / fhcache_insert are standalone procedures (not bound to
-  !   t_factor_hash_cache) so that ctx%hcache, ctx%cache, and ctx itself are
+  !   t_factor_hash_cache) so that krige%hcache, ctx%cache, and ctx itself are
   !   never passed as separate dummy arguments that alias the same storage.
   !   Fortran §15.5.2.13 forbids multiple dummies associated with overlapping
-  !   actual arguments when any dummy is defined.
+  !   actual arguments when any dummy is defined; ctx and krige never overlap.
 
   logical function fhcache_lookup(ctx, krige) result(found)
-    type(t_kriging_ctx),   intent(inout) :: ctx    ! single object — no aliasing
-    class(t_kriging_base), intent(in)    :: krige
-    integer :: h, ibucket, i
+    type(t_kriging_ctx),   intent(inout) :: ctx
+    class(t_kriging_base), intent(inout) :: krige
+    integer :: h, ib, w
+#ifdef _OPENMP
+    logical :: need_lock
+#endif
 
     found = .false.
-    if (ctx%hcache%nslot <= 0) return
-    if (.not. allocated(ctx%hcache%slot)) return
-    if (.not. allocated(ctx%hcache%bucket)) return
-    if (.not. allocated(ctx%hcache%next)) return
+    if (krige%hcache%nbucket <= 0) return
     if (krige%varying_vgm) return
 
-    h = fhcache_hash_key(ctx)
-    ibucket = fhcache_bucket_index(ctx%hcache, h)
-    if (ibucket <= 0) return
+    h  = fhcache_hash_key(ctx)
+    ib = 1 + modulo(h, krige%hcache%nbucket)
 
-    i = ctx%hcache%bucket(ibucket)
-    do while (i > 0)
-      if (i < 1 .or. i > ctx%hcache%nslot) exit
-      if (ctx%hcache%slot(i)%valid .and. ctx%hcache%slot(i)%hash == h) then
-        if (fcache_matches(ctx%hcache%slot(i)%fac, ctx, krige%varying_vgm)) then
-          call ctx%hcache%slot(i)%fac%copy_to(ctx%cache, &
-                                              ctx%hcache%slot(i)%fac%npp, &
-                                              ctx%hcache%slot(i)%fac%p)
-          call fcache_save_key(ctx%cache, ctx)
-          ctx%hcache%clock = ctx%hcache%clock + 1
-          ctx%hcache%slot(i)%last_used = ctx%hcache%clock
-          found = .true.
-          return
+#ifdef _OPENMP
+    need_lock = omp_get_num_threads() > 1
+    if (need_lock) call omp_set_lock(krige%hcache%lock(ib))
+#endif
+    do w = 1, krige%hcache%ways
+      associate(e => krige%hcache%slot(w, ib))
+        if (e%valid .and. e%hash == h) then
+          if (fcache_matches(e%fac, ctx, krige%varying_vgm)) then
+            call e%fac%copy_to(ctx%cache, e%fac%npp, e%fac%p)
+            call fcache_save_key(ctx%cache, ctx)
+            krige%hcache%clock(ib) = krige%hcache%clock(ib) + 1
+            e%last_used = krige%hcache%clock(ib)
+            found = .true.
+#ifdef _OPENMP
+            if (need_lock) call omp_unset_lock(krige%hcache%lock(ib))
+#endif
+            return
+          end if
         end if
-      end if
-      i = ctx%hcache%next(i)
+      end associate
     end do
+#ifdef _OPENMP
+    if (need_lock) call omp_unset_lock(krige%hcache%lock(ib))
+#endif
   end function fhcache_lookup
 
 
   subroutine fhcache_insert(ctx, krige)
-    type(t_kriging_ctx),   intent(inout) :: ctx    ! single object — no aliasing
-    class(t_kriging_base), intent(in)    :: krige
-    integer :: h, ibucket, i, victim, oldest
+    type(t_kriging_ctx),   intent(inout) :: ctx
+    class(t_kriging_base), intent(inout) :: krige
+    integer :: h, ib, w, victim, oldest
+#ifdef _OPENMP
+    logical :: need_lock, got_lock
+#endif
 
-    if (ctx%hcache%nslot <= 0) return
-    if (.not. allocated(ctx%hcache%slot)) return
-    if (.not. allocated(ctx%hcache%bucket)) return
-    if (.not. allocated(ctx%hcache%next)) return
+    if (krige%hcache%nbucket <= 0) return
     if (.not. ctx%cache%valid) return
     if (krige%varying_vgm) return
 
-    h = fhcache_hash_key(ctx)
-    ibucket = fhcache_bucket_index(ctx%hcache, h)
-    if (ibucket <= 0) return
+    h  = fhcache_hash_key(ctx)
+    ib = 1 + modulo(h, krige%hcache%nbucket)
 
-    ! If the same key already exists, refresh it in place.
-    i = ctx%hcache%bucket(ibucket)
-    do while (i > 0)
-      if (i < 1 .or. i > ctx%hcache%nslot) exit
-      if (ctx%hcache%slot(i)%valid .and. ctx%hcache%slot(i)%hash == h) then
-        if (fcache_matches(ctx%hcache%slot(i)%fac, ctx, krige%varying_vgm)) then
-          call ctx%cache%copy_to(ctx%hcache%slot(i)%fac, ctx%cache%npp, ctx%cache%p)
-          call fcache_save_key(ctx%hcache%slot(i)%fac, ctx)
-          ctx%hcache%clock = ctx%hcache%clock + 1
-          ctx%hcache%slot(i)%last_used = ctx%hcache%clock
-          return
+#ifdef _OPENMP
+    need_lock = omp_get_num_threads() > 1
+    if (need_lock) then
+      got_lock = omp_test_lock(krige%hcache%lock(ib))
+      if (.not. got_lock) return
+    end if
+#endif
+
+    ! refresh in place if this exact key is already resident
+    do w = 1, krige%hcache%ways
+      associate(e => krige%hcache%slot(w, ib))
+        if (e%valid .and. e%hash == h) then
+          if (fcache_matches(e%fac, ctx, krige%varying_vgm)) then
+            call ctx%cache%copy_to(e%fac, ctx%cache%npp, ctx%cache%p)
+            call fcache_save_key(e%fac, ctx)
+            krige%hcache%clock(ib) = krige%hcache%clock(ib) + 1
+            e%last_used = krige%hcache%clock(ib)
+#ifdef _OPENMP
+            if (need_lock) call omp_unset_lock(krige%hcache%lock(ib))
+#endif
+            return
+          end if
         end if
-      end if
-      i = ctx%hcache%next(i)
+      end associate
     end do
 
+    ! evict: first free slot, else this bucket's locally-oldest slot
     victim = 1
     oldest = huge(oldest)
-    do i = 1, ctx%hcache%nslot
-      if (.not. ctx%hcache%slot(i)%valid) then
-        victim = i
+    do w = 1, krige%hcache%ways
+      if (.not. krige%hcache%slot(w, ib)%valid) then
+        victim = w
+        oldest = -1
         exit
       end if
-      if (ctx%hcache%slot(i)%last_used < oldest) then
-        oldest = ctx%hcache%slot(i)%last_used
-        victim = i
+      if (krige%hcache%slot(w, ib)%last_used < oldest) then
+        oldest = krige%hcache%slot(w, ib)%last_used
+        victim = w
       end if
     end do
 
-    if (ctx%hcache%slot(victim)%valid) call fhcache_unlink_slot(ctx%hcache, victim)
-
-    call ctx%cache%copy_to(ctx%hcache%slot(victim)%fac, ctx%cache%npp, ctx%cache%p)
-    call fcache_save_key(ctx%hcache%slot(victim)%fac, ctx)
-    ctx%hcache%clock = ctx%hcache%clock + 1
-    ctx%hcache%slot(victim)%valid = .true.
-    ctx%hcache%slot(victim)%hash = h
-    ctx%hcache%slot(victim)%last_used = ctx%hcache%clock
-    ctx%hcache%next(victim) = ctx%hcache%bucket(ibucket)
-    ctx%hcache%bucket(ibucket) = victim
+    associate(e => krige%hcache%slot(victim, ib))
+      call ctx%cache%copy_to(e%fac, ctx%cache%npp, ctx%cache%p)
+      call fcache_save_key(e%fac, ctx)
+      krige%hcache%clock(ib) = krige%hcache%clock(ib) + 1
+      e%valid     = .true.
+      e%hash      = h
+      e%last_used = krige%hcache%clock(ib)
+    end associate
+#ifdef _OPENMP
+    if (need_lock) call omp_unset_lock(krige%hcache%lock(ib))
+#endif
   end subroutine fhcache_insert
 
 
@@ -2193,7 +2185,6 @@ contains
     if (allocated(self%cache%schur))      deallocate(self%cache%schur)
     if (allocated(self%cache%Afac))       deallocate(self%cache%Afac)
     if (allocated(self%cache%ipiv))       deallocate(self%cache%ipiv)
-    call self%hcache%free()
     self%iblock       = 0
     self%npp          = 0
     self%matsize      = 0
@@ -2401,6 +2392,14 @@ contains
     nthread_local = 0
     prev_ncache   = self%factor_cache_size
     if (present(ncache) .and. ncache >= 0) self%factor_cache_size = ncache
+    ! A positive cache request means caching is enabled.  A shared
+    ! set-associative hcache needs at least one complete 4-way bucket, so clamp
+    ! undersized defaults and explicit overrides up to that minimum before
+    ! auto-tuning.  auto_factor_cache_size may still return 1 later for a fixed
+    ! system; that internal value keeps the cheap thread-local adjacency cache
+    ! enabled without allocating an hcache.
+    if (self%factor_cache_size > 0 .and. self%factor_cache_size < 4) &
+      self%factor_cache_size = 4
 #ifdef _OPENMP
     !-- Always snapshot the global thread count so the nthread<=nblock cap
     !   applied below can be restored at 900, even when no nthread was passed.
@@ -2433,6 +2432,43 @@ contains
     !   are known.  Both adjustments only ever shrink the requested value, so
     !   they can never change results or lower the achievable cache-hit rate.
     self%factor_cache_size = auto_factor_cache_size(self)
+
+    ! Allocate the shared factor hash cache (one pool for all threads).
+    ! MAX_HCACHE_BYTES is the total budget for the shared pool.
+    if (self%factor_cache_size > 0) then
+      block
+#ifdef KRIGEKIT_DISABLE_HCACHE
+        integer(int64), parameter :: MAX_HCACHE_BYTES = 0_int64
+#else
+        integer(int64), parameter :: MAX_HCACHE_BYTES = 64_int64 * 1024_int64 * 1024_int64
+#endif
+        integer(int64) :: bytes_per_real, bytes_per_int, p_cache, m_cache
+        integer(int64) :: slot_reals, slot_ints, slot_bytes, slot_limit
+        integer :: safe_nslot
+        bytes_per_real = max(1_int64, int(storage_size(0.0) / 8, int64))
+        bytes_per_int  = max(1_int64, int(storage_size(0) / 8, int64))
+        p_cache    = int(max(1, self%ndrift + self%naug), int64)
+        m_cache    = int(self%nppmax, int64) + int(self%ndrift + self%naug, int64)
+        ! Count the worst case for each resident slot.  L/kinv_drift/schur are
+        ! always allocated; Afac/ipiv are added lazily when Cholesky falls back
+        ! to SSYTRF but must still fit inside the total shared-pool budget.
+        slot_reals = int(self%nppmax, int64) * int(self%nppmax, int64) + &
+                     int(self%nppmax, int64) * p_cache + &
+                     p_cache * p_cache + m_cache * m_cache
+        slot_ints  = int(self%ngroups_base, int64) + &
+                     int(self%mmax, int64) * int(self%ngroups_base, int64) + &
+                     m_cache
+        slot_bytes = max(1_int64, slot_reals * bytes_per_real + &
+                                  slot_ints * bytes_per_int)
+        slot_limit = MAX_HCACHE_BYTES / slot_bytes
+        safe_nslot = max(0, min(self%factor_cache_size, &
+                                int(min(slot_limit, int(huge(safe_nslot), int64)))))
+        if (safe_nslot > 0) &
+          call self%hcache%alloc(safe_nslot, self%nppmax, self%ndrift + self%naug, &
+                                 self%nvar, self%ngroups_base, self%mmax)
+      end block
+    end if
+
 #ifdef _OPENMP
     !   Never spawn more OpenMP workers than there are blocks to krige.
     if (nb > 0 .and. nthread_local > nb) then
@@ -2574,6 +2610,7 @@ contains
     self%solved = .true.
 
 900 continue
+    call self%hcache%free()
     self%factor_cache_size = prev_ncache
 #ifdef _OPENMP
     if (prev_nthread > 0) call omp_set_num_threads(prev_nthread)
@@ -2733,14 +2770,6 @@ contains
     type(t_kriging_ctx),   intent(out) :: ctx
     class(t_kriging_base), intent(in)  :: krige
     integer :: ivar, kvar, kgrad
-    ! Per-thread upper bound for the multi-entry factor cache.
-#ifdef KRIGEKIT_DISABLE_HCACHE
-    integer(int64), parameter :: MAX_HCACHE_BYTES = 0_int64
-#else
-    integer(int64), parameter :: MAX_HCACHE_BYTES = 64_int64 * 1024_int64 * 1024_int64 ! 64 MB/thread
-#endif
-    integer(int64) :: bytes_per_real, p_cache, slot_reals, slot_bytes, slot_limit
-    integer :: safe_nslot
 
     associate( &
       npp     => krige%nppmax, &
@@ -2750,24 +2779,11 @@ contains
       nv      => krige%nvar, &
       mmax    => krige%mmax)
 
-      bytes_per_real = max(1_int64, int(storage_size(0.0) / 8, int64))
-      p_cache = int(max(1, krige%ndrift + krige%naug), int64)
-      slot_reals = int(npp, int64) * int(npp, int64) + &          ! L
-                   int(npp, int64) * p_cache + &                  ! kinv_drift
-                   p_cache * p_cache                              ! schur
-      slot_bytes = max(1_int64, slot_reals * bytes_per_real)
-      slot_limit = MAX_HCACHE_BYTES / slot_bytes
-      safe_nslot = max(0, min(krige%factor_cache_size, &
-                              int(min(slot_limit, int(huge(safe_nslot), int64)))))
-
-
       if (.not. krige%use_old_weight) then
         allocate(ctx%istart(ng));         ctx%istart = 0
         allocate(ctx%matA  (matsize, matsize))
         allocate(ctx%rhsB  (nv,      matsize))
         call ctx%cache%alloc(npp, krige%ndrift + krige%naug, nv, nb, mmax)
-        if (safe_nslot > 0) &
-          call ctx%hcache%alloc(safe_nslot, npp, krige%ndrift + krige%naug, nv, nb, mmax)
         block
           integer :: ncand_limit, ivar
           ncand_limit = 0

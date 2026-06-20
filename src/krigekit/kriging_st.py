@@ -866,14 +866,14 @@ class SpaceTimeKriging:
             Maximum number of OpenMP threads.  0 (default) lets the OpenMP
             runtime choose (respects ``OMP_NUM_THREADS``).
         ncache : int, optional
-            Number of per-thread multi-slot hcache entries for this solve.
-            ``None`` keeps the compiled/object default.  ``0`` disables
-            factorization reuse entirely — both the multi-slot hcache and the
-            single-slot adjacency cache are switched off, so every block is
+            Total size of the shared factor cache pool (slots across all
+            threads).  ``None`` keeps the compiled/object default.  ``0``
+            disables factorization reuse entirely — both the shared hcache and
+            the single-slot adjacency cache are switched off, so every block is
             factorized afresh (``chol_reuse``/``ssytrf_reuse`` stay zero); use
-            this for a clean no-cache baseline.  ``1`` builds a one-slot hcache
-            for overhead comparisons.  The persistent factor cache (``pf_cache``,
-            set on the object) is controlled separately.
+            this for a clean no-cache baseline.  Positive values below 4 are
+            promoted to the four-slot minimum pool.  The persistent factor
+            cache (``pf_cache``, set on the object) is controlled separately.
         """
         ncache_c = -1 if ncache is None else int(ncache)
         # Preserve output ordering across Python and Fortran runtime buffers.
@@ -1078,7 +1078,7 @@ def spacetime_kriging(
     nmax         : max neighbours
     maxdist      : max search radius in km-equivalent space (h_ST units)
     nthread      : max OMP threads for this call (0 = OMP default)
-    ncache       : per-thread hcache slots for this solve; None uses default
+    ncache       : total shared hcache pool slots for this solve; None uses default
 
     Returns
     -------
@@ -1134,7 +1134,7 @@ def spacetime_cokriging(
     temporal_specs: dict (ivar,jvar) -> dict or list[dict]
     joint_sills  : dict (ivar,jvar) -> list[float]
     nthread      : max OMP threads for this call (0 = OMP default)
-    ncache       : per-thread hcache slots for this solve; None uses default
+    ncache       : total shared hcache pool slots for this solve; None uses default
 
     Returns
     -------
