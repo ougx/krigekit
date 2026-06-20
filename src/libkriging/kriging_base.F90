@@ -2393,6 +2393,8 @@ contains
     integer, intent(in), optional :: ncache
     type(t_kriging_ctx), allocatable :: ctx
     integer :: ib, nb, prev_nthread, nthread_local, prev_ncache
+    integer :: progress_done, progress_batch, progress_last
+    integer :: progress_local, completed_now
     character(len=*), parameter :: subname = "t_kriging_base%solve_base"
 
     prev_nthread  = 0
@@ -2423,6 +2425,9 @@ contains
     if (kriging_failed()) goto 900
 
     nb = self%block%n
+    progress_done  = 0
+    progress_last  = 0
+    progress_batch = max(1, (nb + 99) / 100)
 
     !-- Auto-tune resources now that the block count and neighbour structure
     !   are known.  Both adjustments only ever shrink the requested value, so
@@ -2442,32 +2447,30 @@ contains
 #ifdef __INTEL_COMPILER
     if (self%verbose) open(unit=6, carriagecontrol='fortran')
 #endif
+    if (self%verbose .and. nb > 0) call progress(0, nb)
 
-    !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ctx) IF(self%nsim==0 .and. nthread_local>1)
+    !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ctx, progress_local, completed_now) &
+    !$OMP& IF(self%nsim==0 .and. nthread_local>1)
     allocate(ctx)
     call initialize_ctx(ctx, self)
+    progress_local = 0
     !-- Pre-warm this thread's intra-solve cache from the persistent factor so
     !   that matching blocks get a ctx%cache hit in assemble_linear_system
     !   without ever entering the pf CRITICAL section.  self%pf is read-only
     !   here (set in a prior solve()); ctx%cache is thread-private.
     !-- Pre-warm only when ctx%cache was allocated (use_old_weight=.false. path).
-    if (self%pf_cache .and. self%pf%valid .and. allocated(ctx%cache%L)) &
+    if (self%pf_cache .and. self%factor_cache_size > 0 .and. &
+        self%pf%valid .and. allocated(ctx%cache%L)) &
         call ctx%cache%copy_all(self%pf)
 
     !$OMP DO SCHEDULE(DYNAMIC,1)
     do ib = 1, nb
-#ifdef _OPENMP
-      if (self%verbose .and. omp_get_thread_num() == omp_get_num_threads()-1) &
-        call progress(ib, nb)
-#else
-      if (self%verbose) call progress(ib, nb)
-#endif
       ctx%iblock = ib
       if (self%use_old_weight) then
         call self%load_block_weights(ctx)
       else
         call self%assemble_linear_system(ctx)
-        if (kriging_failed()) cycle
+        if (kriging_failed()) goto 800
         if (ctx%npp > 0) then
           ! Solve whenever there is at least one neighbour.  npp == 1 must be
           ! solved too (single-neighbour kriging, and the second node of an
@@ -2479,19 +2482,53 @@ contains
           ! var = C(0) so the prior draw in estimate_block uses the full sill.
           call self%calc_variance(ctx)
         end if
-        if (kriging_failed()) cycle
+        if (kriging_failed()) goto 800
         call assign_weight_ctx(ctx, self)
       end if
       if (self%store_weight) call self%save_block_weights(ctx)
-      if (kriging_failed()) cycle
+      if (kriging_failed()) goto 800
       call self%estimate_block(ctx)
       if (self%write_mat) then
         !$OMP CRITICAL(write_matrix_io)
         call self%write_matrix(ctx)
         !$OMP END CRITICAL(write_matrix_io)
       end if
+
+800   continue
+      if (self%verbose) then
+        progress_local = progress_local + 1
+        if (progress_local >= progress_batch) then
+          !$OMP ATOMIC CAPTURE
+          progress_done = progress_done + progress_local
+          completed_now = progress_done
+          !$OMP END ATOMIC
+          progress_local = 0
+          !$OMP CRITICAL(progress_io)
+          if (completed_now > progress_last .and. completed_now < nb) then
+            progress_last = completed_now
+            call progress(completed_now, nb)
+          end if
+          !$OMP END CRITICAL(progress_io)
+        end if
+      end if
     end do
     !$OMP END DO
+
+    ! Publish each worker's final partial batch. At most one such update is
+    ! needed per thread, and no progress synchronization occurs when quiet.
+    if (self%verbose .and. progress_local > 0) then
+      !$OMP ATOMIC CAPTURE
+      progress_done = progress_done + progress_local
+      completed_now = progress_done
+      !$OMP END ATOMIC
+      progress_local = 0
+      !$OMP CRITICAL(progress_io)
+      if (completed_now > progress_last .and. completed_now < nb) then
+        progress_last = completed_now
+        call progress(completed_now, nb)
+      end if
+      !$OMP END CRITICAL(progress_io)
+    end if
 
     if (self%pf_cache .and. ctx%cache%valid .and. ctx%cache%system_valid) then
       !$OMP CRITICAL(pf_save)
@@ -2508,6 +2545,8 @@ contains
     end if
     deallocate(ctx)
     !$OMP END PARALLEL
+
+    if (self%verbose .and. nb > 0) call progress(nb, nb)
 
     if (self%store_weight .and. trim(self%weight_file) /= "") &
       call self%write_weight_store()
@@ -3572,16 +3611,23 @@ contains
 
       ctx%matsize = npp + self%ndrift + self%naug
 
-      if (fcache_matches(ctx%cache, ctx, self%varying_vgm)) then
-        ctx%cache%hit = .true.
-        call self%assemble_rhs(ctx)
-        return
-      end if
+      ! ncache=0 (factor_cache_size<=0) disables ALL factorization reuse:
+      ! both the single-slot ctx%cache adjacency check and the multi-slot
+      ! hcache below are skipped, forcing a fresh factorization at every block
+      ! (chol_reuse/ssytrf_reuse stay zero).  ctx%cache is still used as the
+      ! per-block working store; only its reuse across blocks is suppressed.
+      if (self%factor_cache_size > 0) then
+        if (fcache_matches(ctx%cache, ctx, self%varying_vgm)) then
+          ctx%cache%hit = .true.
+          call self%assemble_rhs(ctx)
+          return
+        end if
 
-      if (fhcache_lookup(ctx, self)) then
-        ctx%cache%hit = .true.
-        call self%assemble_rhs(ctx)
-        return
+        if (fhcache_lookup(ctx, self)) then
+          ctx%cache%hit = .true.
+          call self%assemble_rhs(ctx)
+          return
+        end if
       end if
 
       ctx%cache%valid = .false.

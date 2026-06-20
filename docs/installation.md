@@ -19,8 +19,8 @@ Precompiled wheels are available for supported Python versions on:
 | macOS | arm64 (Apple Silicon) and x86_64 |
 | Windows | x86_64 |
 
-Precompiled wheels are currently published for Python 3.10, 3.11, and 3.12.
-pip installs the required NumPy, pandas, SciPy, matplotlib, and scikit-learn
+Precompiled wheels support Python 3.10 through 3.14.
+pip installs the required NumPy, pandas, SciPy, and matplotlib
 dependencies automatically.
 
 :::{tip}

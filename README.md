@@ -47,7 +47,7 @@ Pre-built binary wheels are available for:
 | macOS | x86\_64 (Intel) | macOS 15 Sequoia |
 | Windows | x86\_64 | Windows 10 / Server 2019 |
 
-Requires **Python 3.10, 3.11, or 3.12**.
+Requires **Python 3.10 through 3.14**.
 
 **conda / mamba**
 

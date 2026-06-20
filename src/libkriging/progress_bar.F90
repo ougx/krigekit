@@ -1,21 +1,29 @@
 module progress_bar
 contains
-subroutine progress(i, n)
+subroutine progress(done, total)
   implicit none
-  integer        ::i, n
-  integer        ::j,k
-  character(len=17)::bar="???% |          |"
-  j = int(real(i)/real(n) * 100)
-  write(unit=bar(1:3),fmt="(i3)") j
-  do k=1, int(j/10)
-    bar(6+k:6+k)="*"
-  enddo
-  ! print the progress bar.
+  integer, intent(in) :: done, total
+  integer, parameter :: width = 30
+  integer :: percent, nfill
+  character(len=7 + width) :: bar
+
+  if (total <= 0) then
+    percent = 100
+  else
+    percent = max(0, min(100, int(100.0 * real(done) / real(total))))
+  end if
+
+  bar = "   % |"
+  write(unit=bar(1:3), fmt="(i3)") percent
+  nfill = min(width, percent * width / 100)
+  if (nfill > 0) bar(7:6+nfill) = repeat("*", nfill)
+  bar(7+width:7+width) = "|"
+
 #ifdef __INTEL_COMPILER
-  write(unit=6,fmt="(a1,a1,x,a17)") '+',char(13), bar
+  write(unit=6, fmt="(a1,a1,x,a)") '+', char(13), bar
 #else
-  write(unit=6,fmt="(a1,x,a17)",advance="no") char(13), bar
+  write(unit=6, fmt="(a1,x,a)", advance="no") char(13), bar
 #endif
-  return
+  flush(unit=6)
 end subroutine progress
 end module progress_bar

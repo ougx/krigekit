@@ -867,10 +867,17 @@ class SpaceTimeKriging:
             runtime choose (respects ``OMP_NUM_THREADS``).
         ncache : int, optional
             Number of per-thread multi-slot hcache entries for this solve.
-            ``None`` keeps the compiled/object default, ``0`` disables hcache,
-            and ``1`` builds a one-slot hcache for overhead comparisons.
+            ``None`` keeps the compiled/object default.  ``0`` disables
+            factorization reuse entirely — both the multi-slot hcache and the
+            single-slot adjacency cache are switched off, so every block is
+            factorized afresh (``chol_reuse``/``ssytrf_reuse`` stay zero); use
+            this for a clean no-cache baseline.  ``1`` builds a one-slot hcache
+            for overhead comparisons.  The persistent factor cache (``pf_cache``,
+            set on the object) is controlled separately.
         """
         ncache_c = -1 if ncache is None else int(ncache)
+        # Preserve output ordering across Python and Fortran runtime buffers.
+        sys.stdout.flush()
         _st_solve(_h(self._handle), _c_int(nthread), _c_int(ncache_c))
 
     # ------------------------------------------------------------------

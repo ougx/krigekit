@@ -1,7 +1,7 @@
 """Statistical binning algorithms for variogram lags."""
 
 import numpy as np
-from sklearn.cluster import KMeans
+from scipy.cluster.vq import kmeans2
 
 def _sturges_rule(distances):
     """Calculate lag edges using Sturges' rule."""
@@ -48,14 +48,15 @@ def _kmeans_bins(distances, n_bins=15):
         if n_bins == 0:
             return np.array([0.0, 1.0])
     
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        kmeans = KMeans(n_clusters=n_bins, random_state=42, n_init=10)
-        kmeans.fit(distances)
-    
-    # Sort cluster centers
-    centers = np.sort(kmeans.cluster_centers_.flatten())
+    centers, _ = kmeans2(
+        distances,
+        n_bins,
+        iter=100,
+        minit="++",
+        missing="raise",
+        seed=42,
+    )
+    centers = np.sort(centers.ravel())
     
     # Calculate edges as midpoints between centers
     edges = np.zeros(n_bins + 1)

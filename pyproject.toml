@@ -32,12 +32,12 @@ dependencies = [
     "pandas>=1.5",
     "scipy>=1.10",
     "matplotlib>=3.6",
-    "scikit-learn>=1.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "scikit-learn>=1.2",
 ]
 docs = [
     "sphinx>=7.0",
@@ -49,6 +49,7 @@ docs = [
     "sphinx-gallery>=0.15",
     "Pillow>=9.0",
     "scikit-image>=0.20",
+    "scikit-learn>=1.2",
 ]
 
 [project.urls]

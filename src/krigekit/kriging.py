@@ -34,6 +34,7 @@ SpaceTimeKriging instance depending on the ``st`` keyword.
 
 import ctypes
 import os
+import sys
 import numpy as np
 from typing import Optional
 import random
@@ -1477,14 +1478,19 @@ class Kriging:
             parallel region).
         ncache : int, optional
             Number of per-thread multi-slot hcache entries to use for this
-            solve call.  ``None`` keeps the compiled/object default, ``0``
-            disables the hcache, and ``1`` gives a one-slot hcache for
-            cache-overhead comparisons.  The single-entry ``ctx%cache`` and
-            optional persistent factor cache are unaffected.
+            solve call.  ``None`` keeps the compiled/object default.  ``0``
+            disables factorization reuse entirely — both the multi-slot hcache
+            and the single-entry ``ctx%cache`` adjacency cache are switched off,
+            so every block is factorized afresh (``chol_reuse``/``ssytrf_reuse``
+            stay zero); use this for a clean no-cache baseline.  ``1`` gives a
+            one-slot hcache for cache-overhead comparisons.  The optional
+            persistent factor cache (``pf_cache``, set on the object) is
+            controlled separately.
         """
-        if self.verbose:
-            get_omp_info()
         ncache_c = -1 if ncache is None else int(ncache)
+        # Python and the Fortran runtime buffer output independently. Flush
+        # Python first so caller messages are displayed before solver output.
+        sys.stdout.flush()
         _krige_solve(_h(self._handle), ctypes.c_int(nthread), ctypes.c_int(ncache_c))
 
     # ------------------------------------------------------------------
