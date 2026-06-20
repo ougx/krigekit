@@ -1,0 +1,14 @@
+# Normalize all text files to LF in the repository and the working tree.
+# git auto-detects binary content and leaves it untouched.
+* text=auto eol=lf
+
+# Windows batch scripts must keep CRLF.
+*.bat text eol=crlf
+
+# Force known binary types to binary regardless of content heuristics.
+*.png  binary
+*.zip  binary
+*.qgz  binary
+*.pptx binary
+*.docx binary
+*.xlsx binary
