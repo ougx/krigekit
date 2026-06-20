@@ -12,6 +12,7 @@ OpenMP.
 | Ordinary and simple kriging | Point and block support |
 | Co-kriging | Linear Model of Coregionalisation |
 | Universal kriging / KED | External drift variables |
+| Gradient / no-flow constraints | Derivative observations and zero-gradient (no-flow) boundaries |
 | Score transforms | Normal-score / uniform quantile transforms for kriging and SGSIM |
 | Sequential Gaussian Simulation | Reproducible paths, multi-realisation |
 | Space-time kriging | Sum-metric and product-sum ST models |
@@ -37,16 +38,20 @@ and output are excluded.
 | **KrigeKit, 1 thread** | **1.340 s** | **8.512 s** | Completed |
 | **KrigeKit, default threads** | **0.303 s** | **1.178 s** | Completed |
 | gstat 2.1.6 | 18.06 s | 79.11 s | Completed |
+| GSLIB (recompiled, gfortran -O3) | 245 s† | 978 s† | Completed |
 | [gstlearn 1.10.1](https://gstlearn.org/) | >600 s | >300 s‡ | Censored |
-| GSLIB | >300 s† | >300 s† | Censored after five minutes |
-| PyKrige 1.7.3 | — | — | Full-source setup requires ≥1.91 TiB |
-| TFInterpy 1.1.3 | — | — | Full-source pair vectors require ≈5.74 TiB |
+| PyKrige 1.7.3 | — | — | Full-source setup requires ≈1.87 TiB (1,912 GiB) |
+| TFInterpy 1.1.3 | — | — | Full-source pair vectors require ≈5.60 TiB (5,737 GiB) |
 | GSTools 1.7.0 | — | — | No native moving-neighborhood search |
 
 At one thread, KrigeKit was 13.5× faster than gstat for OK and 9.29× faster
 for CK. With its default OpenMP setting, the advantage increased to 59.5× and
-67.2× respectively. In five minutes, GSLIB completed 5,707 OK targets and
-1,249 CK targets, projecting to approximately 87.6 minutes and 6.67 hours.
+67.2× respectively. Recompiled with gfortran -O3 and run with a standard
+3×-range search radius, GSLIB completed the full source in 4.1 minutes (OK)
+and 16.3 minutes (CK) — far slower than gstat and parallel KrigeKit, but it
+completes. The original >hour projection came from a 24-year-old binary and an
+unbounded search radius (≈10,000× the range) that defeated kt3d's super-block
+index.
 
 † GSLIB combines input, computation, and formatted output, so its wall time is
 not directly comparable to the I/O-excluded runtimes. PyKrige and TFInterpy
@@ -74,8 +79,8 @@ observations. The clipping/search time is included below:
 | TFInterpy NumPy | 0.647 s | — |
 | gstat | 0.673 s | 1.606 s |
 | TFInterpy TF/CPU, 24 threads | 1.253 s | — |
+| [gstlearn](https://gstlearn.org/) | 1.526 s | 39.420 s‡ |
 | GSLIB | 2.277 s† | 7.784 s† |
-| [gstlearn](https://gstlearn.org/) | 3.297 s | 64.085 s‡ |
 | PyKrige | 192.713 s | — |
 
 PyKrige's prediction itself took 0.48 seconds; 192.14 seconds were spent in
@@ -93,10 +98,13 @@ without global source-pair allocation or a Python target loop.
   faster than gstat for OK and 9.29× faster for CK.
 - With default OpenMP threads, KrigeKit was 59.5× faster than gstat for OK and
   67.2× faster for CK.
-- GSLIB did not finish either full-source case in five minutes. Observed rates
-  projected to 87.6 minutes for OK and 6.67 hours for CK.
+- GSLIB, recompiled with gfortran -O3 and given a standard 3×-range search
+  radius, completed the full source in 4.1 min (OK) and 16.3 min (CK). Its
+  original >hour projection was an artifact of a 24-year-old binary and an
+  unbounded search radius that defeated kt3d's super-block index.
 - gstlearn did not finish full-source OK in ten minutes or its non-parity CK
-  configuration in five minutes. Its clipped OK workflow completed in 3.30 s.
+  configuration in five minutes. Its clipped OK workflow completed in 1.53 s
+  with the direct neighbour search.
 - PyKrige and TFInterpy could not accept all 506,645 primary observations
   because their setup creates global source-pair arrays.
 - In the externally clipped test, one-thread KrigeKit remained about 3.1×
@@ -132,12 +140,16 @@ without global source-pair allocation or a Python target loop.
 - **gstlearn** offers one of the broadest modern geostatistical APIs, backed by
   C++ and available from Python and R. Its covariance, fitting, simulation,
   multivariate, and space-time coverage is strong. On this benchmark its
-  moving-neighborhood search scaled poorly with the full source dataset, and
-  its single total heterotopic neighborhood cap could not reproduce the
-  per-variable CK search exactly.
+  moving-neighborhood search scanned the observations O(n) per target and
+  scaled poorly with the full source dataset; its `setBallSearch` option did
+  not accelerate the search in 1.10.1 (it was slower than the direct search, so
+  the reported timings use the direct search), and its single total heterotopic
+  neighborhood cap could not reproduce the per-variable CK search exactly.
 - **GSLIB** remains valuable as an independent legacy reference and provides a
-  broad geostatistical toolset, but its parameter-file workflow, text I/O, and
-  serial search scale poorly on this benchmark.
+  broad geostatistical toolset. Recompiled (gfortran -O3) and run with a
+  standard search radius, kt3d/cokb3d complete the full source in minutes, but
+  the parameter-file workflow, text I/O, and serial single-threaded search keep
+  it far behind gstat and parallel KrigeKit.
 - **GSTools** has an excellent covariance-model and random-field API. It is a
   strong choice for simulation and model composition, but lacks a native
   moving-neighborhood kriging engine.
@@ -290,4 +302,10 @@ python build_lib.py --hcache 0         # disable factor cache
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+krigekit is released under the MIT License — see [LICENSE](LICENSE).
+
+The binary wheels bundle two permissive third-party components, retained under
+their own licences and documented in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES): the LAPACK linear-algebra
+routines (BSD-3-Clause) and the kdtree2 nearest-neighbour search (Academic Free
+License v1.1).

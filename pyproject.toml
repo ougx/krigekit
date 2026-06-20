@@ -54,6 +54,11 @@ Homepage = "https://github.com/ougx/krigekit"
 Repository = "https://github.com/ougx/krigekit"
 Issues = "https://github.com/ougx/krigekit/issues"
 
+[tool.setuptools]
+# Ship both the MIT licence and the bundled third-party licences (LAPACK,
+# kdtree2) in the sdist and wheel metadata, since the wheels bundle that code.
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
