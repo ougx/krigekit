@@ -1,6 +1,6 @@
-# krigekit
+# KrigeKit
 
-**krigekit** is a Python interface to a high-performance Fortran kriging and
+**KrigeKit** is a Python interface to a high-performance Fortran kriging and
 Sequential Gaussian Simulation engine, parallelised with OpenMP.
 
 Install the precompiled package from PyPI:
@@ -34,7 +34,7 @@ Gallery of runnable scripts — ordinary kriging, co-kriging, SGSIM, and more.
 :::
 ::::
 
-## What krigekit does
+## What KrigeKit does
 
 | Capability | Notes |
 |---|---|
@@ -51,9 +51,9 @@ Gallery of runnable scripts — ordinary kriging, co-kriging, SGSIM, and more.
 | Kriging weight reuse | Store and replay weights for fast value updates |
 | OpenMP parallelism | Thread count controllable per `solve()` call |
 
-## Why krigekit?
+## Why KrigeKit?
 
-krigekit is designed for workflows that need **Python usability with a
+KrigeKit is designed for workflows that need **Python usability with a
 compiled-Fortran backend**.  Its Fortran core handles large grids, SGSIM
 realisation paths, space-time systems, and OpenMP scheduling in a single
 library.  The Python layer is a thin ctypes wrapper — no heavy dependencies,

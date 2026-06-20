@@ -63,7 +63,7 @@ b₁₂ₖ² ≤ b₁₁ₖ × b₂₂ₖ
 ```
 
 If the constraint is violated the covariance matrix is not positive
-semi-definite and the kriging system may fail.  krigekit does not enforce
+semi-definite and the kriging system may fail.  KrigeKit does not enforce
 this automatically; use `neglect_error=True` to continue past failures and
 inspect the resulting `NaN` blocks.
 

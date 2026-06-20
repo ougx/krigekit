@@ -632,10 +632,6 @@ Relevant examples:
 
 - `examples/variogram/s_variogram_fitting.py`: nested 2-D indicator variogram.
 - `examples/variogram/s_variogram_fitting_3d.py`: 3-D directional anisotropy.
-- `examples/variogram/s_variogram_fitting_butte_mis.py`: three direct indicator
-  models for regularized 3-D borehole lithofacies.
-- `examples/variogram/coik_variogram_fitting_butte_aem.py`: PSD LMC fitting
-  and co-indicator simulation with raw AEM resistivity.
 - `examples/variogram/st_variogram_fitting_gwlevel.py`: marginal and
   sum-metric coupling fitting.
 - `examples/variogram/st_variogram_fitting_ctet.py`: product-sum fitting and

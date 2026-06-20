@@ -177,11 +177,11 @@ where $\tilde\gamma_S$ and $\tilde\gamma_T$ are the marginal variograms
 normalised to sill = 1.  Validity requires $a, b > 0$, $p \le 0$, and
 $a + b + p > 0$ (positive total sill).
 
-krigekit stores the product-sum model in covariance form:
+KrigeKit stores the product-sum model in covariance form:
 
 $$C(h_s, h_t) = k_\text{ps}\,C_S(h_s)\,C_T(h_t) + C_S(h_s) + C_T(h_t)$$
 
-Converting from fitted variogram parameters $(a, b, p)$ to krigekit's
+Converting from fitted variogram parameters $(a, b, p)$ to KrigeKit's
 covariance parameters:
 
 $$C_S(0) = a + p, \qquad C_T(0) = b + p, \qquad
@@ -189,7 +189,7 @@ k_\text{ps} = -\frac{p}{C_S(0)\cdot C_T(0)}$$
 
 These equations should be checked against the exact fitted product-sum
 parameterisation used in your calibration workflow.  The conversion is included
-here because krigekit stores the model in covariance form, while many fitting
+here because KrigeKit stores the model in covariance form, while many fitting
 workflows estimate product-sum parameters in variogram form.
 
 Because $p \le 0$, the coupling coefficient $k_\text{ps} \ge 0$ — a larger

@@ -11,9 +11,18 @@ The shared library is expected to be compiled before running tests:
 """
 
 import os
+
+# Plotting tests must not depend on a GUI toolkit.  In particular, some
+# Windows GitHub Actions Python images can select TkAgg even though their
+# Tcl/Tk installation is incomplete.
+os.environ["MPLBACKEND"] = "Agg"
+
+import matplotlib
 import pytest
 import numpy as np
 import pandas as pd
+
+matplotlib.use("Agg", force=True)
 
 # ---------------------------------------------------------------------------
 # Path helper

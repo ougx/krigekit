@@ -160,7 +160,7 @@ the CDF draw and probability normalisation.
 
 ## Variogram orientation
 
-In krigekit the default variogram major axis is aligned with the **Y** axis.
+In KrigeKit the default variogram major axis is aligned with the **Y** axis.
 For horizontal stratigraphy (long range along X), pass the same `azimuth` to
 **both** `set_indicator_vgm` and `set_search`.  Passing it only to `set_search`
 leaves the variogram ellipse pointing the wrong way and produces vertical patches

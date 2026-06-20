@@ -53,7 +53,7 @@ strongly non-Gaussian (concentrations, hydraulic conductivity, percentages).
 The standard practice is to transform the data to normal scores, simulate in
 Gaussian space, and back-transform the realisations to data units.
 
-krigekit performs this transform inside the engine. Enable it with
+KrigeKit performs this transform inside the engine. Enable it with
 `set_nscore()` after `set_obs()`, and fit the variogram in normal-score space:
 
 ```python

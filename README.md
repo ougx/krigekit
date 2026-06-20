@@ -1,4 +1,4 @@
-﻿# krigekit
+﻿# KrigeKit
 
 [![PyPI](https://img.shields.io/pypi/v/krigekit)](https://pypi.org/project/krigekit/)
 [![Python](https://img.shields.io/pypi/pyversions/krigekit)](https://pypi.org/project/krigekit/)
@@ -301,7 +301,7 @@ python build_lib.py --hcache 0         # disable factor cache
 
 ## License
 
-krigekit is released under the MIT License — see [LICENSE](LICENSE).
+KrigeKit is released under the MIT License — see [LICENSE](LICENSE).
 
 The binary wheels bundle two permissive third-party components, retained under
 their own licences and documented in

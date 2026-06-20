@@ -4,7 +4,7 @@ Spatially varying anisotropy (SVA) lets the variogram behaviour change from
 one estimation block to the next.  Use it when the continuity direction,
 effective range, or local uncertainty is not constant across the domain.
 
-krigekit supports three levels of spatial variation:
+KrigeKit supports three levels of spatial variation:
 
 - `rangescale`: a per-block multiplier on the effective variogram range.
 - `localnugget`: a per-block additional nugget term.

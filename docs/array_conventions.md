@@ -1,6 +1,6 @@
 # Array conventions
 
-krigekit uses a consistent set of array shapes across all methods.
+KrigeKit uses a consistent set of array shapes across all methods.
 Understanding these conventions prevents the most common errors.
 
 ## Coordinate arrays
@@ -65,7 +65,7 @@ var_all = k.get_variance_all()   # shape (nblock, nvar, nvar)
 
 ## Data types
 
-krigekit accepts any numeric dtype for input arrays and converts internally:
+KrigeKit accepts any numeric dtype for input arrays and converts internally:
 
 - Coordinates → `float64`
 - Values → `float64`

@@ -6,7 +6,7 @@ and percentages often vary by orders of magnitude.  Kriging those values in raw
 units can make the variogram and local estimates overly sensitive to high-end
 outliers.
 
-krigekit can transform observation values inside the Fortran engine, solve in
+KrigeKit can transform observation values inside the Fortran engine, solve in
 score space, and back-transform results to data units.  The same transform is
 available to every C-API client and works for ordinary/simple kriging
 (`nsim=0`) and SGSIM (`nsim > 0`).
@@ -54,7 +54,7 @@ is a useful starting sill when the transformed variable is close to uniform.
 
 ## Plotting positions
 
-krigekit uses midpoint plotting positions when it builds the empirical
+KrigeKit uses midpoint plotting positions when it builds the empirical
 transform table.  For `n` sorted observations with no ties, the rank-`r`
 observation is assigned
 
@@ -76,7 +76,7 @@ unbounded at exactly `0` and `1`.
 
 This mainly affects the numerical scores near the lower and upper tails.  It
 does not change the basic workflow: fit the variogram in the chosen score
-space, and use the same krigekit transform table for forward transforms and
+space, and use the same KrigeKit transform table for forward transforms and
 back-transforms.
 
 ## Back-transform behavior
@@ -84,7 +84,7 @@ back-transforms.
 For SGSIM, each simulated score realization is directly back-transformed
 through the empirical quantile table.
 
-For kriging (`nsim=0`), krigekit treats the score-space result as a conditional
+For kriging (`nsim=0`), KrigeKit treats the score-space result as a conditional
 normal distribution and uses Gauss-Hermite quadrature to report data-unit
 moments:
 
@@ -106,7 +106,7 @@ where `x_i` and `w_i` are Gauss-Hermite nodes and weights expressed in the
 *probabilists'* convention — that is, the quadrature rule for the standard
 normal weight {math}`\phi(x)`, so the weights satisfy {math}`\sum_i w_i = 1`
 and the nodes enter as {math}`\mu_Y + \sigma_Y x_i` (no {math}`\sqrt{2}` or
-{math}`1/\sqrt{\pi}` factors).  krigekit uses the five-node rule
+{math}`1/\sqrt{\pi}` factors).  KrigeKit uses the five-node rule
 {math}`x_i \in \{0, \pm 1.3556, \pm 2.8570\}`.  The reported variance is
 
 ```{math}
