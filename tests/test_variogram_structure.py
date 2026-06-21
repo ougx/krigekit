@@ -164,7 +164,7 @@ def test_structure_fit_not_inplace_leaves_template_unchanged():
     avg = _avg_table(truth)
 
     structure = VgmStructure().set_vgm("sph", sill=1.5, a_major=4.0)
-    res = structure.fit(avg, inplace=False)
+    res = structure.fit(avg, inplace=False, fit_nugget=False)
 
     assert res.target is not structure
     assert structure[0].sill == 1.5               # template untouched
