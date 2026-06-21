@@ -995,6 +995,29 @@ def test_variogram_system_fit_pair_updates_pair_model():
     np.testing.assert_allclose(params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
 
 
+def test_variogram_system_fit_method_facade_routes_to_pair():
+    h = np.linspace(0.2, 8.0, 30)
+    true_model = VariogramModel()
+    true_model.set_vgm(vtype="sph", nugget=0.1, sill=2.0, a_major=5.0)
+    avg = pd.DataFrame({
+        ("distance", "mean"): h,
+        ("variogram", "mean"): true_model.variogram(h),
+    })
+
+    system = VariogramSystem(nvar=1)
+    system.set_vgm(1, 1, vtype="sph", nugget=0.0, sill=1.5, a_major=4.0)
+    system.set_avg_vgm(1, 1, avg)
+
+    res = system.fit(method="pair", ivar=1)
+    assert system.vgm[1, 1] is res.target
+    np.testing.assert_allclose(res.params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
+
+    with pytest.raises(ValueError):
+        system.fit(method="pair")          # ivar is required
+    with pytest.raises(ValueError):
+        system.fit(method="bogus")
+
+
 def test_variogram_system_fit_lmc_returns_psd_coregionalization_matrix():
     h = np.linspace(0.2, 8.0, 40)
     b11, b22, b12 = 2.0, 1.0, 0.8

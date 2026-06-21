@@ -366,7 +366,7 @@ The same contract spans every level:
 |---|---|
 | `VgmStructure.fit` | isotropic sills/ranges/nugget for one pair |
 | `VariogramModel.fit` / `.fit_anisotropy` | marginal isotropic / directional ranges |
-| `VariogramSystem.fit_pair` / `.fit_lmc` | per-pair and joint LMC coregionalization |
+| `VariogramSystem.fit(method=...)` | facade over `fit_pair` (`"pair"`) and `fit_lmc` (`"lmc"`) |
 | `SpaceTimeVariogramModel.fit(model=...)` | `"product_sum"` or `"sum_metric"` coupling |
 
 Constrained/weighted joint fits (LMC, space-time) populate `optimizer` and

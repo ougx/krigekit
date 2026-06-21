@@ -292,6 +292,24 @@ class VariogramSystem:
             avgvgm = self.calc_average(*key)
         return structure.fit(avgvgm, inplace=inplace, **kwargs)
 
+    def fit(self, *, method="lmc", ivar=None, jvar=None, pairs=None, **kwargs):
+        """Fit the system, returning a :class:`FitResult` (method facade).
+
+        ``method="lmc"`` (default) fits a joint linear model of coregionalization
+        via :meth:`fit_lmc`; ``method="pair"`` fits one variable pair
+        independently via :meth:`fit_pair` and requires ``ivar`` (with optional
+        ``jvar``).  Subclasses extend this facade -- ``IndicatorVariogramSystem``
+        adds ``method="closure"``.
+        """
+        method = str(method).lower()
+        if method == "lmc":
+            return self.fit_lmc(pairs=pairs, **kwargs)
+        if method == "pair":
+            if ivar is None:
+                raise ValueError("method='pair' requires ivar (and optional jvar)")
+            return self.fit_pair(ivar, jvar, **kwargs)
+        raise ValueError("method must be 'lmc' or 'pair'")
+
     def _template_components(self):
         """Return the shared LMC structure template from configured pairs."""
         configured = self.vgm.configured_items()
