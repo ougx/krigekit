@@ -885,9 +885,8 @@ system.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=500.0)
 system.set_vgm(ivar=2, jvar=2, vtype="sph", sill=0.6, a_major=500.0)
 system.set_vgm(ivar=1, jvar=2, vtype="sph", sill=0.4, a_major=500.0)
 
-system.calc_experimental(ivar=1, jvar=1, cutoff=2000.0, verbose=False)
-system.calc_experimental(ivar=2, jvar=2, cutoff=2000.0, verbose=False)
-system.calc_experimental(ivar=1, jvar=2, cutoff=2000.0, verbose=False)
+# With no pair given, compute the cloud for every pair that has a model set.
+system.calc_experimental(cutoff=2000.0, verbose=False)
 system.calc_average(h_width=100.0)
 
 result = system.fit_lmc(fit_ranges=True, fit_nugget=True)

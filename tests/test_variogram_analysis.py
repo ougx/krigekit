@@ -976,6 +976,34 @@ def test_variogram_system_calculates_direct_and_lmc_cross_clouds():
     assert system.raw_variograms_[(1, 2)] is cross
 
 
+def test_variogram_system_calc_experimental_all_configured_pairs():
+    coord = np.array([[0.0], [1.0], [2.0]])
+    value1 = np.array([0.0, 1.0, 3.0])
+    value2 = np.array([0.0, 2.0, 4.0])
+
+    system = VariogramSystem(nvar=2)
+    system.set_obs(1, coord, value1)
+    system.set_obs(2, coord, value2)
+    # only the (1, 1) and (1, 2) pairs have a model configured
+    system.set_vgm(1, 1, vtype="sph", sill=1.0, a_major=1.0)
+    system.set_vgm(1, 2, vtype="sph", sill=0.5, a_major=1.0)
+
+    clouds = system.calc_experimental(verbose=False)
+
+    assert set(clouds) == {(1, 1), (1, 2)}          # (2, 2) was never configured
+    assert set(system.raw_variograms_) == {(1, 1), (1, 2)}
+    pd.testing.assert_frame_equal(
+        clouds[(1, 2)], system.calc_experimental(1, 2, verbose=False))
+
+    with pytest.raises(ValueError):
+        system.calc_experimental(jvar=2)            # ivar omitted but jvar given
+
+    empty = VariogramSystem(nvar=2)
+    empty.set_obs(1, coord, value1)
+    with pytest.raises(RuntimeError, match="set_vgm"):
+        empty.calc_experimental()                   # no models configured
+
+
 def test_variogram_system_fit_pair_updates_pair_model():
     h = np.linspace(0.2, 8.0, 30)
     true_model = VariogramModel()

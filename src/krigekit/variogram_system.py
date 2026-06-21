@@ -183,19 +183,37 @@ class VariogramSystem:
 
     def calc_experimental(
         self,
-        ivar,
+        ivar=None,
         jvar=None,
         cross="auto",
         store=True,
         **kwargs,
     ):
-        """Compute a raw empirical variogram cloud for one variable pair.
+        """Compute a raw empirical variogram cloud for one or all pairs.
+
+        With ``ivar=None`` (and no ``jvar``), the cloud is computed for every
+        pair that has a variogram model configured via :meth:`set_vgm`
+        (``vgm.configured_pairs()``), returning a ``{(ivar, jvar): cloud}`` dict.
+        Otherwise a single pair is computed and returned.
 
         Direct pairs use :func:`raw_vgm`.  Cross pairs use the LMC
         cross-variogram estimator :func:`raw_cross_vgm` when the observations
         are collocated.  Set ``cross="pseudo"`` to force :func:`cross_vgm`, or
         ``cross="lmc"`` to require collocated observations.
         """
+        if ivar is None:
+            if jvar is not None:
+                raise ValueError("pass both ivar and jvar, or neither")
+            pairs = self.vgm.configured_pairs()
+            if not pairs:
+                raise RuntimeError(
+                    "no variogram pairs are configured; call set_vgm() first")
+            return {
+                key: self.calc_experimental(
+                    key[0], key[1], cross=cross, store=store, **kwargs)
+                for key in pairs
+            }
+
         key = self._pair_key(ivar, jvar)
         obs_i = self._require_obs(key[0])
         obs_j = self._require_obs(key[1])
