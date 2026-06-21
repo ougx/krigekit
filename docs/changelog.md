@@ -2,6 +2,20 @@
 
 ## 0.2.8 (unreleased)
 
+### Added - Indicator variogram system
+
+`IndicatorVariogramSystem` (a `VariogramSystem` subclass) owns indicator
+construction in Python: `set_categorical_obs` encodes raw labels into `K`
+binary indicator variables and records proportions, and `set_indicator_vgm`
+configures all pairs with `sill_strategy` and `cross_strategy` options
+(including the recommended `"closure"`, `-p_k p_l`). `fit(method="closure")`
+fits a coregionalization parameterized as `B = Q L Lᵀ Qᵀ` over the contrast
+basis, guaranteeing positive semidefiniteness and closure (`B·1 = 0`);
+`validate_closure()` checks it and `apply()` transfers to `IndicatorKriging`.
+The pure helpers `encode_indicator_matrix`, `indicator_covariance`, and
+`contrast_basis` are exported. `VariogramSystem.fit(method="lmc"|"pair")` adds a
+uniform fit facade across the system level.
+
 ### Changed - Unified space-time fitting and removal of the legacy forwarder
 
 `SpaceTimeVariogramModel` now exposes a single `fit(model="product_sum" |

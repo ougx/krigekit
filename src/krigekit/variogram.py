@@ -68,6 +68,12 @@ from .variogram_plotting import (
 )
 from .variogram_st import SpaceTimeVariogramModel
 from .variogram_system import VariogramSystem
+from .variogram_system_indicator import (
+    IndicatorVariogramSystem,
+    contrast_basis,
+    encode_indicator_matrix,
+    indicator_covariance,
+)
 
 __all__ = [
     "VgmComponent",
@@ -77,6 +83,10 @@ __all__ = [
     "VariogramModel",
     "SpaceTimeVariogramModel",
     "VariogramSystem",
+    "IndicatorVariogramSystem",
+    "contrast_basis",
+    "encode_indicator_matrix",
+    "indicator_covariance",
     "avg_vgm",
     "azimuth_dip_to_vector",
     "calc_anisotropic_lag",

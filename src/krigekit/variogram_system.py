@@ -489,10 +489,14 @@ class VariogramSystem:
             fitted = self
         return FitResult(target=fitted, optimizer=result)
 
+    def _new_system(self, nvar):
+        """Factory for a fitted system of the same kind (subclasses override)."""
+        return VariogramSystem(nvar=nvar)
+
     def _build_lmc_system(self, template, nugget, mats, ranges):
-        """Build a fitted :class:`VariogramSystem` from LMC matrices."""
+        """Build a fitted system of the same kind from LMC matrices."""
         nvar = self.nvar or nugget.shape[0]
-        fitted = VariogramSystem(nvar=nvar)
+        fitted = self._new_system(nvar)
         for i in range(1, nvar + 1):
             for j in range(i, nvar + 1):
                 structure = fitted.vgm[i, j]

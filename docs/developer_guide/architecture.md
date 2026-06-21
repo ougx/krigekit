@@ -262,6 +262,7 @@ The implementation is split by responsibility:
 | `variogram_model.py` | Marginal analysis workflow (owns a `VgmStructure`) | `vgm_struct` analysis |
 | `variogram_st.py` | Product-sum and sum-metric coupling | `vgm_struct_st` |
 | `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
+| `variogram_system_indicator.py` | Indicator encoding + closure-aware LMC (`IndicatorVariogramSystem`) | Indicator coregionalization |
 | `variogram_observation.py` | `ObservationSet` (data + search config) | Observation/search state |
 | `variogram_accessors.py` | Internal 1-based `vgm[i, j]` / `obs[i]` accessors | Variogram matrix / observation indexing |
 
@@ -372,3 +373,25 @@ The same contract spans every level:
 Constrained/weighted joint fits (LMC, space-time) populate `optimizer` and
 labelled `params` but leave `variance`/`p_value` as `NaN`, since a curve-fit
 covariance is not meaningful under those constraints.
+
+### Indicator system (`IndicatorVariogramSystem`)
+
+`IndicatorVariogramSystem` (`variogram_system_indicator.py`) subclasses
+`VariogramSystem` for mutually exclusive, exhaustive categorical indicators
+(`I_1 + ... + I_K = 1`). It owns the Python-side construction that previously
+lived on the `IndicatorKriging` engine wrapper: `set_categorical_obs` encodes
+raw labels into `K` binary indicator variables and records proportions, and
+`set_indicator_vgm` configures all `K^2` pairs from one shared model shape with
+`sill_strategy` (`"theoretical"` → `p_k(1-p_k)`, `"uniform"`) and
+`cross_strategy` (`"closure"` → `-p_k p_l`, `"independent"`, `"proportional"`,
+`"uniform"`). Legacy strategies map directly, so the kriging configuration is
+unchanged.
+
+`fit(method="closure")` → `fit_indicator_lmc` parameterizes each nested
+coregionalization matrix as `B = Q L L^T Q^T`, where `Q = contrast_basis(K)`
+spans the contrast space orthogonal to the all-ones vector. This guarantees
+both positive semidefiniteness *and* closure (`B 1 = 0`) at every fitted lag;
+`validate_closure()` checks the row sums. `apply` transfers the encoded
+indicators and pair structures to an `IndicatorKriging`, checking `ncat`
+agreement. The engine wrapper keeps only solve/post-processing; it no longer
+owns empirical fitting.
