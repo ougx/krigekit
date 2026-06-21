@@ -989,10 +989,18 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
                          get_eigens=False, dx=None, dy=None, dz=None):
     """Estimate anisotropy directions from a variogram cloud via weighted PCA.
 
-    Lag coordinates near the origin are binned, weighted inversely by the
-    (normalised) variogram value -- low variogram means strong continuity --
-    and an eigen-decomposition of the weighted covariance yields the principal
-    axes.
+    Near-origin lags are grouped into cells, each cell weighted inversely by its
+    (normalised) mean variogram -- low variogram means strong continuity -- and
+    an eigen-decomposition of the weighted second moment **about the origin**
+    yields the principal axes.  Each cell contributes its **mean lag vector**
+    (not the bin edge), and the bins are **equal-sized** on every axis by
+    default, so the estimate is insensitive to the bin size and not distorted by
+    an anisotropic bin lattice.  Pass ``dx`` / ``dy`` / ``dz`` to override the
+    spacing per axis.
+
+    This is an approximate, robust orientation estimate -- best used to seed a
+    fixed-orientation fit (:meth:`VariogramModel.fit_anisotropy`), not as a final
+    answer.
 
     Returns
     -------
@@ -1015,22 +1023,32 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
         r_max = np.quantile(rawvgm[dist], 0.25)
     df = rawvgm[rawvgm[dist] < r_max].copy()
 
+    # Equal bin sizes by default.  A different size per axis makes the bin
+    # lattice itself anisotropic, which distorts the estimated axes, so derive a
+    # single spacing from the near-origin lag scale and apply it to every
+    # dimension.  Explicit ``dx`` / ``dy`` / ``dz`` override this.
     if dx is None:
-        dx = abs(np.quantile(df[x], 0.9) / 20)
+        dx = abs(np.quantile(df[dist], 0.9)) / 20.0
     if dy is None:
         dy = dx
     if dz is None and dim3d:
-        dz = abs(np.quantile(df[z], 0.9) / 20)
+        dz = dx
 
-    df["ix"] = (df[x] // dx).astype(int) * dx
-    df["iy"] = (df[y] // dy).astype(int) * dy
-    if dim3d:
-        df["iz"] = (df[z] // dz).astype(int) * dz
+    coord_cols = [x, y, z] if dim3d else [x, y]
+    sizes = [dx, dy, dz] if dim3d else [dx, dy]
+    keys = []
+    for col, size in zip(coord_cols, sizes):
+        key = f"_bin_{col}"
+        df[key] = (df[col] // size).astype(int)
+        keys.append(key)
 
-    dims = ["ix", "iy", "iz"] if dim3d else ["ix", "iy"]
-    binned = df.groupby(dims, as_index=False)[vgm].mean()
+    # Average the variogram per cell to denoise, and use each cell's MEAN lag
+    # vector as its coordinate (not the floored bin edge), so the estimate does
+    # not drift with the bin size.
+    grouped = df.groupby(keys, sort=False)
+    coords = grouped[coord_cols].mean().to_numpy(dtype=float)
+    g = grouped[vgm].mean().to_numpy()
 
-    g = binned[vgm].values
     gmin, gmax = np.nanmin(g), np.nanmax(g)
     if gmax == gmin:
         w = np.ones_like(g)
@@ -1043,7 +1061,6 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     # are symmetric -- ``gamma(h) = gamma(-h)`` -- so a half-space pair cloud
     # (one lag per unordered pair) must be measured around the origin; mean
     # centring would bias the axes toward the half-space's offset.
-    coords = binned[dims].values.astype(float)
     weights = w / np.sum(w)
     moment = (coords * weights[:, None]).T @ coords
     eigvals, eigvecs = np.linalg.eigh(moment)

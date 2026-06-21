@@ -529,6 +529,13 @@ def test_estimate_aniso_angle_recovers_three_angles_and_ratios():
         assert abs(float(true_axes[:, k] @ fit_axes[:, k])) > 0.99
     assert 0.0 < anis2 < anis1 < 1.0         # ordered minor/major ratios
 
+    # the estimate is insensitive to the bin size (mean-lag coords, equal bins)
+    fine = rotation_matrix_3d(*empirical.estimate_aniso_angle(
+        raw, dim3d=True, r_max=30.0, dx=2.0, dy=2.0, dz=2.0)[0])
+    coarse = rotation_matrix_3d(*empirical.estimate_aniso_angle(
+        raw, dim3d=True, r_max=30.0, dx=7.0, dy=7.0, dz=7.0)[0])
+    assert abs(float(fine[:, 0] @ coarse[:, 0])) > 0.99
+
     # 2D path returns one angle and one ratio
     (azimuth2,), (anis1_2,) = empirical.estimate_aniso_angle(
         raw[raw["d2"].abs() < 1e-9], dim3d=False, r_max=30.0)
