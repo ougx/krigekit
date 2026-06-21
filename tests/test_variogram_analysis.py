@@ -541,6 +541,10 @@ def test_estimate_aniso_angle_recovers_three_angles_and_ratios():
         raw[raw["d2"].abs() < 1e-9], dim3d=False, r_max=30.0)
     assert 0.0 < anis1_2 <= 1.0
 
+    # an r_max below the smallest pair separation raises instead of crashing
+    with pytest.raises(ValueError, match="r_max"):
+        empirical.estimate_aniso_angle(raw, dim3d=True, r_max=2.0)
+
 
 def test_variogram_model_apply_to_kriging_replays_specs():
     model = VariogramModel()

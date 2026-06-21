@@ -999,9 +999,15 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     under a single horizontal-scale spacing.  Pass ``dx`` / ``dy`` / ``dz`` to
     override the spacing per axis.
 
-    This is an approximate, robust orientation estimate -- best used to seed a
-    fixed-orientation fit (:meth:`VariogramModel.fit_anisotropy`), not as a final
-    answer.
+    The estimate is sensitive to ``r_max``: too small and a gridded cloud is
+    dominated by axis-aligned lags (the sampling lattice -- which can throw the
+    azimuth off by tens of degrees), too large and it mixes nested structures.
+    A good choice is roughly **half the shortest structure's range**.  Sweeping
+    ``r_max`` to find a stable value does *not* help reliably -- there is no
+    clean plateau -- so prefer one principled near-origin radius.  This is an
+    approximate orientation estimate (a few degrees at best), best used to seed
+    a fixed-orientation fit (:meth:`VariogramModel.fit_anisotropy`), not as a
+    final answer.
 
     Returns
     -------
@@ -1023,6 +1029,10 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     if r_max is None:
         r_max = np.quantile(rawvgm[dist], 0.25)
     df = rawvgm[rawvgm[dist] < r_max].copy()
+    if len(df) < 3:
+        raise ValueError(
+            f"r_max={r_max:g} selects only {len(df)} near-origin lag(s); use a "
+            "larger r_max (it must exceed the smallest pair separation)")
 
     # Per-axis bin sizes, each scaled to that axis's own lag extent.  A thin or
     # short axis -- e.g. a shallow ``z`` slab where ``zmax - zmin`` is far
