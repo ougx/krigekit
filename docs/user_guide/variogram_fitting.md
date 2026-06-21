@@ -890,11 +890,14 @@ system.calc_experimental(ivar=2, jvar=2, cutoff=2000.0, verbose=False)
 system.calc_experimental(ivar=1, jvar=2, cutoff=2000.0, verbose=False)
 system.calc_average(h_width=100.0)
 
-fitted_system, result = system.fit_lmc(fit_ranges=True, fit_nugget=True)
-fitted_system.apply_to(k)
+result = system.fit_lmc(fit_ranges=True, fit_nugget=True)
+result.target.apply(k)        # result is a FitResult; .target is the fitted system
 ```
 
-`fit_pair()` fits one pair independently.  For cokriging, prefer `fit_lmc()`
+`fit_lmc()` returns a `FitResult`: `result.target` is the fitted `VariogramSystem`
+and `result.optimizer` is the SciPy result.  `system.fit(method="lmc")` and
+`system.fit(method="pair", ivar=...)` are equivalent facades over `fit_lmc()` and
+`fit_pair()`.  `fit_pair()` fits one pair independently.  For cokriging, prefer `fit_lmc()`
 because it fits the requested pairs together while enforcing positive
 semidefinite sill matrices for each nested structure.
 
@@ -934,7 +937,7 @@ system.set_vgm(ivar=2, jvar=2, vtype="exp", nugget=0.02, sill=0.05, a_major=6500
 
 # cross from the collocated correlation (the cross adopts variable 2's structure)
 system.set_markov_cross(primary=1, secondary=2, corr=0.8)
-system.apply_to(k)
+system.apply(k)
 ```
 
 Pass `corr=None` to estimate the correlation from collocated observations (the
@@ -945,6 +948,37 @@ implemented.
 In short: use `fit_lmc()` for co-sampled multivariate data, and
 `set_markov_cross()` for sparse-primary / dense-secondary collocated cokriging
 (Almeida & Journel, 1994; Goovaerts, 1997).
+
+### Indicator coregionalization (closure)
+
+For mutually exclusive, exhaustive categories (`I_1 + ... + I_K = 1`), use
+`IndicatorVariogramSystem`.  It encodes raw labels into `K` indicator variables,
+builds the `K × K` coregionalization from category proportions, and fits a
+coregionalization that is both positive semidefinite **and** closed — every
+matrix has rows summing to zero, matching the constraint `B · 1 = 0` implied by
+the indicators summing to one.
+
+```python
+from krigekit import IndicatorVariogramSystem
+
+system = IndicatorVariogramSystem(categories=["sand", "silt", "clay"])
+system.set_categorical_obs(coord, categories)          # encode + record proportions
+
+# Initial K×K block: theoretical autos p_k(1-p_k), closed cross sills -p_k p_l.
+system.set_indicator_vgm(vtype="sph", a_major=500.0,
+                         sill_strategy="theoretical", cross_strategy="closure")
+
+system.calc_average(h_width=50.0)                       # empirical curves for all pairs
+result = system.fit(method="closure")                  # PSD + closure-preserving LMC
+result.target.validate_closure()                       # assert row sums ~ 0
+result.target.apply(indicator_kriging)                 # transfer to IndicatorKriging
+```
+
+`fit(method="closure")` parameterizes each nested coregionalization matrix as
+`B = Q L Lᵀ Qᵀ`, where the contrast basis `Q = contrast_basis(K)` spans the space
+orthogonal to the all-ones vector, so positive semidefiniteness and closure hold
+at every fitted lag.  See {doc}`indicator_kriging` for the full estimation/
+simulation workflow and the available `sill_strategy`/`cross_strategy` options.
 
 ## Example gallery
 
