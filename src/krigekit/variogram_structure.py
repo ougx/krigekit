@@ -16,8 +16,9 @@ from .variogram_geometry import calc_lag_vectors
 class VgmStructure:
     """An ordered set of nested variogram components for one variable pair."""
 
-    def __init__(self, components=None):
+    def __init__(self, components=None, name=None):
         """Create a structure from components or flat component specs."""
+        self.name = None if name is None else str(name)
         self.components = []
         if components is not None:
             for comp in components:
@@ -46,11 +47,12 @@ class VgmStructure:
 
     def __repr__(self):
         """Return a compact debugging representation."""
-        return f"VgmStructure(ncomponent={self.ncomponent})"
+        label = "" if self.name is None else f"name={self.name!r}, "
+        return f"VgmStructure({label}ncomponent={self.ncomponent})"
 
     def copy(self):
         """Return an independent copy with copied components."""
-        return VgmStructure([comp.copy() for comp in self.components])
+        return VgmStructure([comp.copy() for comp in self.components], name=self.name)
 
     def clear(self):
         """Remove all components and return ``self``."""
@@ -77,6 +79,7 @@ class VgmStructure:
         plunge=0.0,
         append=True,
         product=False,
+        name=None,
     ):
         """Add one nested component.
 
@@ -98,6 +101,7 @@ class VgmStructure:
             dip=dip,
             plunge=plunge,
             product=product,
+            name=name,
         ))
         return self
 

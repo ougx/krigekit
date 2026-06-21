@@ -1,6 +1,6 @@
 """One flat, engine-compatible theoretical variogram component."""
 
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import dataclass, fields, replace
 
 import numpy as np
 
@@ -27,9 +27,15 @@ class VgmComponent:
     dip: float = 0.0
     plunge: float = 0.0
     product: bool = False
+    name: str | None = None
+
+    #: Engine-transfer fields, in order.  ``name`` is metadata and excluded.
+    ENGINE_FIELDS = ("vtype", "nugget", "sill", "a_major", "a_minor1",
+                     "a_minor2", "azimuth", "dip", "plunge", "product")
 
     def __post_init__(self):
         """Normalize aliases/default ranges and validate the component."""
+        self.name = None if self.name is None else str(self.name)
         self.vtype = resolve_model(self.vtype)
         self.nugget = float(self.nugget)
         self.sill = float(self.sill)
@@ -71,6 +77,11 @@ class VgmComponent:
     def copy(self, **changes):
         """Return a validated copy, optionally replacing selected fields."""
         return replace(self, **changes)
+
+    @property
+    def display_name(self):
+        """Human-readable label: the ``name`` if set, otherwise the model type."""
+        return self.name or self.vtype
 
     def set_anisotropy(
         self,
@@ -182,8 +193,8 @@ class VgmComponent:
         return self.cov0 - self.calc_covariance_lag(lag)
 
     def to_flat_dict(self):
-        """Return the stable flat representation used for engine transfer."""
-        return asdict(self)
+        """Return the flat engine representation (excludes the ``name`` metadata)."""
+        return {f: getattr(self, f) for f in self.ENGINE_FIELDS}
 
     @classmethod
     def from_flat_dict(cls, spec):

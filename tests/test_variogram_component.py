@@ -93,6 +93,17 @@ def test_covariance_matches_kernel_and_adds_nugget_only_at_zero():
     )
 
 
+def test_name_is_metadata_excluded_from_engine_transfer():
+    comp = VgmComponent("sph", a_major=10.0, name="long range")
+    assert comp.name == "long range"
+    assert comp.display_name == "long range"
+    assert "name" not in comp.to_flat_dict()          # engine transfer drops it
+    assert comp.copy().name == "long range"           # copy preserves it
+    assert VgmComponent("exp").display_name == "exp"   # falls back to vtype
+    # from_flat_dict still accepts an explicit name
+    assert VgmComponent.from_flat_dict({"vtype": "sph", "name": "x"}).name == "x"
+
+
 def test_covariance_lag_applies_anisotropy():
     comp = VgmComponent(
         "sph",

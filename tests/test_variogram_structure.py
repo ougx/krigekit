@@ -117,6 +117,20 @@ def test_to_kriging_specs_replace_flag():
     assert "product" in specs[0]  # flat engine fields are present
 
 
+def test_structure_and_component_names():
+    structure = VgmStructure(name="primary")
+    structure.set_vgm("sph", sill=0.6, a_major=300.0, name="long", append=False)
+    structure.set_vgm("exp", sill=0.3, a_major=900.0, name="short")
+
+    assert structure.name == "primary"
+    assert [comp.name for comp in structure] == ["long", "short"]
+    # engine specs carry no name metadata
+    assert all("name" not in spec for spec in structure.to_kriging_specs())
+    # copy preserves structure and component names
+    copy = structure.copy()
+    assert copy.name == "primary" and copy[0].name == "long"
+
+
 def test_variogram_model_owns_structure_and_delegates():
     model = VariogramModel()
     model.set_vgm("sph", nugget=0.1, sill=0.6, a_major=300.0, append=False)
