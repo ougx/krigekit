@@ -289,6 +289,12 @@ list, and the legacy `_VgmComponent` has been removed. `SpaceTimeVariogramModel`
 still composes two `VariogramModel` marginals; folding it onto a
 `VgmStructureST` is a later phase.
 
+The space-time coupling methods live **only** on `SpaceTimeVariogramModel` -- the
+old `VariogramModel.__getattr__` chain that lazily forwarded `*_spacetime_*`
+calls to a hidden compatibility wrapper has been removed, so a marginal model no
+longer silently grows space-time state. Construct a `SpaceTimeVariogramModel`
+explicitly to fit a coupling.
+
 Index convention: variable indices in a system (`obs[ivar]`, `vgm[ivar, jvar]`)
 are 1-based labels matching the engine, while component indices within a
 structure (`set_anisotropy(index=...)`) are 0-based Python positions.
@@ -329,3 +335,27 @@ transfers observations in ascending variable order (drift immediately after
 each base observation) and configured variograms in canonical upper-triangle
 order, delegating to `ObservationSet.apply_to` and `VgmStructure.apply_to`.
 `apply_observations` / `apply_variograms` expose each half independently.
+
+### Unified fitting (`FitResult`)
+
+Every fit entry point returns a `FitResult` (`variogram_fitting.py`) rather than
+mutating-and-returning `self` or a bare params tuple. `FitResult` carries the
+fitted `target`, the flat `params`, the optimizer `cov`/`optimizer`,
+goodness-of-fit `metrics`, the fitted-point count `nobs`, and `param_labels`
+(one `(component, vtype, param)` triple per parameter). `FitResult.summary()`
+renders a labelled table with per-parameter `value`, `variance`, `std_err`, and
+a two-sided Wald `p_value` (Student-t with `nobs - nparams` degrees of freedom);
+the p-values are heuristic because binned variogram points are not independent.
+
+The same contract spans every level:
+
+| Entry point | Fit |
+|---|---|
+| `VgmStructure.fit` | isotropic sills/ranges/nugget for one pair |
+| `VariogramModel.fit` / `.fit_anisotropy` | marginal isotropic / directional ranges |
+| `VariogramSystem.fit_pair` / `.fit_lmc` | per-pair and joint LMC coregionalization |
+| `SpaceTimeVariogramModel.fit(model=...)` | `"product_sum"` or `"sum_metric"` coupling |
+
+Constrained/weighted joint fits (LMC, space-time) populate `optimizer` and
+labelled `params` but leave `variance`/`p_value` as `NaN`, since a curve-fit
+covariance is not meaningful under those constraints.

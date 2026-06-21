@@ -306,7 +306,7 @@ def test_spacetime_variogram_model_composes_marginals():
     assert model.temporal.to_temporal_specs()[0]["vtype"] == "gau"
 
 
-def test_variogram_model_legacy_spacetime_fit_uses_cached_average():
+def test_spacetime_fit_product_sum_uses_cached_average_and_returns_result():
     hs, ht = np.meshgrid([1.0, 2.0], [0.5, 1.0])
     gamma = 0.1 * calc_vgm("sph", hs, rng=3.0)
     avg = pd.DataFrame({
@@ -315,9 +315,10 @@ def test_variogram_model_legacy_spacetime_fit_uses_cached_average():
         ("variogram", "mean"): gamma.ravel(),
         ("variogram", "count"): 10.0,
     })
-    legacy = VariogramModel()
-    legacy.avg_variogram_ = avg
-    returned = legacy.fit_spacetime_product_sum(
+    model = SpaceTimeVariogramModel()
+    model.avg_variogram_ = avg
+    res = model.fit(
+        model="product_sum",
         starts=[(0.1, 0.01, 0.0, 3.0, 2.0)],
         bounds=[
             (0.001, 1.0),
@@ -328,8 +329,47 @@ def test_variogram_model_legacy_spacetime_fit_uses_cached_average():
         ],
     )
 
-    assert returned is legacy
-    assert legacy.spacetime_params_ is not None
+    assert res.target is model and res.success
+    assert model.spacetime_params_ is not None
+    assert res.nobs == 4
+    summary = res.summary()
+    assert list(summary["param"]) == [
+        "a", "b", "p", "spatial_range", "temporal_range"]
+
+
+def test_spacetime_fit_sum_metric_via_unified_fit():
+    spatial = VariogramModel().set_vgm("sph", sill=2.0, a_major=10.0)
+    temporal = VariogramModel().set_vgm("gau", sill=0.6, a_major=4.0)
+    hs, ht = np.meshgrid(np.linspace(1.0, 15.0, 6), np.linspace(0.25, 6.0, 7))
+    truth = np.array([0.8, 1.2, 0.4, 3.0])
+    dw = calc_vgm("lin", ht, rng=truth[3])
+    hst = np.sqrt((hs / 10.0) ** 2 + dw ** 2)
+    gamma = (
+        truth[0] * spatial.variogram(hs)
+        + truth[1] * temporal.variogram(ht)
+        + truth[2] * calc_vgm("sph", hst, rng=1.0)
+    )
+    avg = pd.DataFrame({
+        ("distance", "mean"): hs.ravel(),
+        ("time_lag", "mean"): ht.ravel(),
+        ("variogram", "mean"): gamma.ravel(),
+        ("variogram", "count"): np.full(gamma.size, 100),
+    })
+
+    model = SpaceTimeVariogramModel(spatial=spatial, temporal=temporal)
+    res = model.fit(
+        avgvgm=avg,
+        model="sum_metric",
+        p0=(1.0, 1.0, 0.2, 2.0),
+        bounds=((0.0, 0.0, 0.0, 0.5), (2.0, 2.0, 2.0, 10.0)),
+    )
+
+    assert res.target is model and res.success
+    np.testing.assert_allclose(model.sum_metric_params_, truth, rtol=5e-3, atol=5e-3)
+    assert res.nobs == gamma.size
+    summary = res.summary()
+    assert list(summary["param"]) == [
+        "spatial_scale", "temporal_scale", "joint_sill", "at"]
 
 
 def test_variogram_model_calc_covariance_pairwise_matrix():

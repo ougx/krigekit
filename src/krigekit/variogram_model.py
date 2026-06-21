@@ -45,31 +45,11 @@ class VariogramModel(_VariogramModelBase):
         """Create an empty marginal model or load ``set_vgm`` specifications."""
         super().__init__()
         self.structure = VgmStructure()
-        self._spacetime_compat = None
         if structures is not None:
             for i, spec in enumerate(structures):
                 spec = dict(spec)
                 spec.setdefault("append", i > 0)
                 self.set_vgm(**spec)
-
-    def experimental(self, store: bool = True, **kwargs):
-        """Compute the raw empirical cloud.
-
-        Spatial anisotropy stored on ordinary ``set_vgm`` structures is not
-        applied implicitly; pass the empirical ``anisotropy`` keyword
-        explicitly.  The legacy space-time compatibility layer forwards its
-        separately stored space-time anisotropy.
-        """
-        if self._spacetime_compat is not None:
-            _default = {
-                "anis1": 1.0, "anis2": 1.0, "azimuth": 0.0, "dip": 0.0, "plunge": 0.0,
-            }
-            if "anisotropy" in kwargs and kwargs["anisotropy"] is not None:
-                self._spacetime_compat.set_spacetime_anisotropy(**kwargs["anisotropy"])
-            elif "anisotropy" not in kwargs and \
-                    self._spacetime_compat.spacetime_anisotropy_ != _default:
-                kwargs["anisotropy"] = dict(self._spacetime_compat.spacetime_anisotropy_)
-        return super().experimental(store=store, **kwargs)
 
     @staticmethod
     def _raw_dimension(rawvgm):
@@ -1046,54 +1026,6 @@ class VariogramModel(_VariogramModelBase):
         for spec in self.to_temporal_specs():
             kriging.set_vgm_temporal(ivar=ivar, jvar=jvar, **spec)
         return kriging
-
-    def _get_spacetime_compat(self):
-        """Return the lazily created compatibility space-time wrapper."""
-        if self._spacetime_compat is None:
-            from .variogram_st import SpaceTimeVariogramModel
-
-            self._spacetime_compat = SpaceTimeVariogramModel(spatial=self)
-        self._spacetime_compat.obs_coord = self.obs_coord
-        self._spacetime_compat.obs_value = self.obs_value
-        self._spacetime_compat.obs_time = self.obs_time
-        self._spacetime_compat._raw = self._raw
-        self._spacetime_compat._avg = self._avg
-        return self._spacetime_compat
-
-    def __getattr__(self, name):
-        """Forward legacy space-time APIs to ``SpaceTimeVariogramModel``."""
-        method_names = {
-            "calc_spacetime_variogram",
-            "calc_spacetime_variogram_between",
-            "set_spacetime_anisotropy",
-            "set_spacetime_params",
-            "fit_spacetime_product_sum",
-            "calc_spacetime_sum_metric_variogram",
-            "fit_spacetime_sum_metric",
-            "to_sum_metric_kriging_specs",
-            "to_spacetime_kriging_specs",
-        }
-        state_names = {
-            "spacetime_params_",
-            "spacetime_fit_result_",
-            "spacetime_fit_results_",
-            "spacetime_spatial_vtype_",
-            "spacetime_temporal_vtype_",
-            "spacetime_anisotropy_",
-            "sum_metric_params_",
-            "sum_metric_fit_result_",
-        }
-        if name in method_names:
-            target = getattr(self._get_spacetime_compat(), name)
-
-            def forwarded(*args, **kwargs):
-                result = target(*args, **kwargs)
-                return self if result is self._spacetime_compat else result
-
-            return forwarded
-        if name in state_names:
-            return getattr(self._get_spacetime_compat(), name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
 
     def __len__(self):
         """Return the number of stored structures."""

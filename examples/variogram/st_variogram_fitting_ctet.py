@@ -171,7 +171,8 @@ starts = [
     (0.12, 0.04, -0.020, 3_000.0, 10.0),
     (0.10, 0.10, -0.010, 5_000.0, 5.0),
 ]
-model.fit_spacetime_product_sum(
+model.fit(
+    model="product_sum",
     spatial_vtype="sph",
     temporal_vtype="gau",
     starts=starts,

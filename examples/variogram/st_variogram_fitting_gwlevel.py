@@ -303,7 +303,8 @@ joint_average = joint_average.loc[
 ].copy()
 joint.avg_variogram_ = joint_average
 
-joint.fit_spacetime_sum_metric(
+joint.fit(
+    model="sum_metric",
     transform="lin",
     time_sill=1.0,
     # (spatial scale, temporal scale, joint sill, at)

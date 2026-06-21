@@ -777,7 +777,7 @@ two-dimensional lag surface.
 
 After fitting spatial and temporal marginals separately, calculate a full
 space-time lag surface and fit the coupling with
-`fit_sum_metric()`:
+`fit(model="sum_metric")`, which returns a `FitResult`:
 
 ```python
 from krigekit import SpaceTimeVariogramModel
@@ -800,11 +800,13 @@ joint.calc_average(
     t_width=0.5,
 )
 
-joint.fit_sum_metric(
+result = joint.fit(
+    model="sum_metric",
     transform="lin",
     p0=(1.0, 1.0, 100.0, 20.0),
     weight_cap_quantile=0.90,
 )
+print(result.summary())          # labelled spatial_scale/temporal_scale/joint_sill/at
 specs = joint.to_sum_metric_kriging_specs()
 ```
 
@@ -842,7 +844,8 @@ joint.calc_average(
     t_width=0.5,
 )
 
-joint.fit_product_sum(
+joint.fit(
+    model="product_sum",
     spatial_vtype="sph",
     temporal_vtype="gau",
     starts=[

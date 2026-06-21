@@ -5,6 +5,7 @@ import pandas as pd
 from scipy.optimize import least_squares, minimize
 
 from .variogram_base import _VariogramModelBase
+from .variogram_fitting import FitResult
 from .variogram_geometry import calc_anisotropic_lag, calc_lag_vectors
 from .variogram_kernels import calc_vgm, resolve_model
 from .variogram_model import VariogramModel
@@ -39,6 +40,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         self.sum_metric_transform_ = None
         self.sum_metric_time_nugget_ = 0.0
         self.sum_metric_time_sill_ = 1.0
+        self._fit_nobs_ = None
         self.spacetime_anisotropy_ = {
             "anis1": 1.0,
             "anis2": 1.0,
@@ -55,6 +57,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         self.spacetime_fit_results_ = None
         self.sum_metric_params_ = None
         self.sum_metric_fit_result_ = None
+        self._fit_nobs_ = None
 
     def set_vgm(self, *args, **kwargs):
         """Add a structure to the spatial marginal and return ``self``."""
@@ -296,6 +299,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         hs, ht, gamma, count = hs[valid], ht[valid], gamma[valid], count[valid]
         if len(gamma) == 0:
             raise ValueError("avgvgm contains no finite positive-count bins")
+        self._fit_nobs_ = int(len(gamma))
 
         if weight_cap_quantile is None:
             capped_count = count
@@ -473,6 +477,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         hs, ht, gamma, count = hs[valid], ht[valid], gamma[valid], count[valid]
         if len(gamma) == 0:
             raise ValueError("avgvgm contains no finite positive-count bins")
+        self._fit_nobs_ = int(len(gamma))
 
         if weight_cap_quantile is None:
             capped_count = count
@@ -522,13 +527,51 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         self.sum_metric_fit_result_ = result
         return self
 
-    def fit_product_sum(self, *args, **kwargs):
-        """Alias for :meth:`fit_spacetime_product_sum`."""
-        return self.fit_spacetime_product_sum(*args, **kwargs)
+    def fit(self, avgvgm=None, *, model="product_sum", **kwargs):
+        """Fit a space-time coupling model, returning a :class:`FitResult`.
 
-    def fit_sum_metric(self, *args, **kwargs):
-        """Alias for :meth:`fit_spacetime_sum_metric`."""
-        return self.fit_spacetime_sum_metric(*args, **kwargs)
+        ``model`` selects the coupling form:
+
+        - ``"product_sum"`` fits the constrained
+          ``a*g_s(h_s) + b*g_t(h_t) + p*g_s(h_s)*g_t(h_t)`` model; its
+          parameters are ``(a, b, p, spatial_range, temporal_range)``.
+        - ``"sum_metric"`` fits a spatial marginal scale, a temporal marginal
+          scale, one joint sill per spatial structure, and the joint temporal
+          scale ``at``.
+
+        Remaining keyword arguments are forwarded to the underlying fitter, and
+        the fitted parameters are stored on the model for
+        :meth:`to_spacetime_kriging_specs` / :meth:`to_sum_metric_kriging_specs`.
+        ``FitResult.summary()`` reports the labelled parameter table; variance
+        and p-values are not estimated for these constrained/weighted joint
+        fits, so those columns are ``NaN``.
+        """
+        key = str(model).replace("-", "_").lower()
+        if key in ("product_sum", "productsum", "ps"):
+            self.fit_spacetime_product_sum(avgvgm, **kwargs)
+            params = self.spacetime_params_
+            optimizer = self.spacetime_fit_result_
+            labels = [("space-time", "product_sum", name) for name in
+                      ("a", "b", "p", "spatial_range", "temporal_range")]
+        elif key in ("sum_metric", "summetric", "sm"):
+            self.fit_spacetime_sum_metric(avgvgm=avgvgm, **kwargs)
+            params = self.sum_metric_params_
+            optimizer = self.sum_metric_fit_result_
+            labels = [("space-time", "sum_metric", "spatial_scale"),
+                      ("space-time", "sum_metric", "temporal_scale")]
+            for comp in self.sum_metric_spatial_model_.structure.components:
+                labels.append((comp.display_name, "sum_metric", "joint_sill"))
+            labels.append(("space-time", "sum_metric", "at"))
+        else:
+            raise ValueError("model must be 'product_sum' or 'sum_metric'")
+
+        return FitResult(
+            target=self,
+            params=np.asarray(params, dtype=float),
+            optimizer=optimizer,
+            nobs=self._fit_nobs_,
+            param_labels=labels,
+        )
 
     def __repr__(self):
         """Return a compact representation of marginal and coupling state."""

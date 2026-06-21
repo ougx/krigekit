@@ -2,6 +2,20 @@
 
 ## 0.2.8 (unreleased)
 
+### Changed - Unified space-time fitting and removal of the legacy forwarder
+
+`SpaceTimeVariogramModel` now exposes a single `fit(model="product_sum" |
+"sum_metric")` entry point that returns a `FitResult`, matching the unified fit
+contract used by `VgmStructure`, `VariogramModel`, and `VariogramSystem`. The
+`fit_product_sum()` / `fit_sum_metric()` short aliases are replaced by this
+method; the lower-level `fit_spacetime_product_sum()` /
+`fit_spacetime_sum_metric()` fitters remain available.
+
+The `VariogramModel.__getattr__` chain that lazily forwarded `*_spacetime_*`
+calls and state to a hidden `SpaceTimeVariogramModel` compatibility wrapper has
+been removed. A marginal `VariogramModel` no longer silently acquires
+space-time methods or state; construct a `SpaceTimeVariogramModel` explicitly.
+
 ## 0.2.7
 
 ### Added - Variogram Extensions
