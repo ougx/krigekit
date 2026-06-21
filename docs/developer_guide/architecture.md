@@ -261,6 +261,7 @@ The implementation is split by responsibility:
 | `variogram_model.py` | Marginal analysis workflow (owns a `VgmStructure`) | `vgm_struct` analysis |
 | `variogram_st.py` | Product-sum and sum-metric coupling | `vgm_struct_st` |
 | `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
+| `variogram_accessors.py` | Internal 1-based `vgm[i, j]` matrix accessor | Variogram matrix indexing |
 
 `krigekit.variogram` is a compatibility facade, so existing helper and class
 imports remain valid. New code may import the public classes directly
@@ -290,3 +291,19 @@ still composes two `VariogramModel` marginals; folding it onto a
 Index convention: variable indices in a system (`obs[ivar]`, `vgm[ivar, jvar]`)
 are 1-based labels matching the engine, while component indices within a
 structure (`set_anisotropy(index=...)`) are 0-based Python positions.
+
+### The `vgm[i, j]` accessor
+
+`VariogramSystem.vgm` (a `_VgmAccessor` from `variogram_accessors.py`) presents
+the per-pair structures as a symmetric matrix: `vgm[i, j]` and `vgm[j, i]`
+return the same `VgmStructure`, indices are 1-based (0/negative/non-integer
+raise a teaching error), and a fixed `nvar` is a strict upper bound while
+`nvar=None` grows the variable count to the largest referenced index.
+
+A pair is **materialized** once it has a stored structure and **configured**
+only once that structure has at least one component. Reading `vgm[i, j]`
+materializes an empty structure but does *not* configure it, so it never
+becomes an LMC input or a transfer target; selection uses
+`vgm.configured_pairs()`, never materialization. The accessor is a view over
+the system's per-pair storage (each `VariogramModel`'s `structure`), so the
+legacy `system.models[(i, j)].structure` observes the same object.

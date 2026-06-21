@@ -5,6 +5,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
+from .variogram_accessors import _VgmAccessor
 from .variogram_component import VgmComponent
 from .variogram_kernels import calc_vgm
 from .variogram_model import VariogramModel
@@ -19,26 +20,47 @@ class VariogramSystem:
     coregionalization matrices.
     """
 
+    _INDEX_HELP = (
+        "variables are 1-based: the first variable is vgm[1, 1] / obs[1], not 0"
+    )
+
     def __init__(self, nvar=None):
-        """Create an empty multivariable variogram system."""
+        """Create an empty multivariable variogram system.
+
+        ``nvar=None`` selects dynamic mode: the variable count grows to the
+        largest referenced 1-based index.  An explicit ``nvar`` is a strict
+        upper bound and access beyond it raises.
+        """
         self.nvar = int(nvar) if nvar is not None else None
         if self.nvar is not None and self.nvar < 1:
             raise ValueError("nvar must be positive")
+        self._dynamic = nvar is None
         self.observations = {}
         self.models = {}
         self.raw_variograms_ = {}
         self.avg_variograms_ = {}
         self.fit_result_ = None
+        self.vgm = _VgmAccessor(
+            key=self._pair_key,
+            ensure=self._vgm_ensure,
+            peek=self._vgm_peek,
+            assign=self._vgm_assign,
+            drop=self._vgm_drop,
+            materialized=self._vgm_materialized,
+        )
 
     def _check_ivar(self, ivar):
-        """Validate and register a 1-based variable index."""
+        """Validate a 1-based variable index, growing ``nvar`` in dynamic mode."""
+        if isinstance(ivar, bool) or not isinstance(ivar, (int, np.integer)):
+            raise TypeError(self._INDEX_HELP)
         ivar = int(ivar)
         if ivar < 1:
-            raise ValueError("ivar must be a positive 1-based index")
-        if self.nvar is None:
-            self.nvar = ivar
+            raise ValueError(self._INDEX_HELP)
+        if self._dynamic:
+            if self.nvar is None or ivar > self.nvar:
+                self.nvar = ivar
         elif ivar > self.nvar:
-            raise ValueError(f"ivar={ivar} exceeds nvar={self.nvar}")
+            raise ValueError(f"ivar={ivar} exceeds nvar={self.nvar}: {self._INDEX_HELP}")
         return ivar
 
     def _pair_key(self, ivar, jvar=None):
@@ -55,6 +77,34 @@ class VariogramSystem:
                 raise KeyError(f"no variogram model has been set for pair {key}")
             self.models[key] = VariogramModel()
         return self.models[key]
+
+    # -- storage callbacks used by the ``vgm`` accessor --------------------
+    def _vgm_ensure(self, key):
+        """Return the structure for a canonical pair, creating it if needed."""
+        if key not in self.models:
+            self.models[key] = VariogramModel()
+        return self.models[key].structure
+
+    def _vgm_peek(self, key):
+        """Return the structure for a canonical pair, or ``None``."""
+        model = self.models.get(key)
+        return None if model is None else model.structure
+
+    def _vgm_assign(self, key, structure):
+        """Replace the structure stored for a canonical pair."""
+        model = self.models.get(key)
+        if model is None:
+            model = VariogramModel()
+            self.models[key] = model
+        model.structure = structure
+
+    def _vgm_drop(self, key):
+        """Remove a materialized pair entry."""
+        self.models.pop(key, None)
+
+    def _vgm_materialized(self):
+        """Return ``(key, structure)`` for every materialized pair."""
+        return [(key, model.structure) for key, model in self.models.items()]
 
     def set_obs(self, ivar, coord, value, times=None):
         """Store observations for variable ``ivar``.
