@@ -11,9 +11,12 @@ KrigeKit combines a high-performance OpenMP-parallel Fortran engine with
 Python workflows for experimental variograms, anisotropy analysis, model
 fitting, kriging, cokriging, and conditional simulation.
 
+<img src="examples/variogram/s_nested_variogram_fitting_2d.png" width="1000" alt="Robust Variogram Analysis">
+
 | Capability | Notes |
 |---|---|
-| Variogram analysis and fitting | 1-D/2-D/3-D and space-time workflows, directional analysis, anisotropy, maps, nested models, and cross-variograms |
+| Variogram analysis | 1-D, 2-D, 3-D, and space-time workflows; directional analysis, and maps |
+| Variogram fitting | Anisotropy, nested models, cross-variograms, and LMC fitting |
 | Ordinary and simple kriging | Point and block support |
 | Co-kriging | Linear Model of Coregionalization |
 | Universal kriging / KED | External drift variables |
@@ -284,7 +287,7 @@ secondary observations, and 5,912,940 target cells), KrigeKit scales from
 | 16 | 32.11 s | 11.06× | 69.1% |
 | 24 | 27.65 s | 12.85× | 53.5% |
 
-![KrigeKit full 3-D cokriging thread scaling](docs/_static/ck_thread_scaling.png)
+<img src="docs/_static/ck_thread_scaling.png" width="800" alt="KrigeKit full 3-D cokriging thread scaling">
 
 Measured on Windows 11 with an Intel Core i7-13700K (16 cores, 24 logical
 processors). Each point is one fresh run from `Kriging(...)` through

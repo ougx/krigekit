@@ -27,10 +27,13 @@ gfortran -cpp -fbacktrace -ffree-line-length-none -O2 -fdefault-real-8 %CACHE_FL
    gaussian_quadrature.f90 ^
    lapack.f ^
    solver.f90 ^
+   vgmfunc.f90 ^
+   nscore.f90 ^
    kriging_base.F90 ^
    variogram.f90 ^
    variogram_st.f90 ^
    kriging.F90 ^
+   kriging_indicator.F90 ^
    kriging_capi_common.F90 ^
    kriging_capi.F90 ^
    kriging_st.F90 ^
