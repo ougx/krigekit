@@ -9,6 +9,7 @@ from .variogram_fitting import FitResult
 from .variogram_geometry import calc_anisotropic_lag, calc_lag_vectors
 from .variogram_kernels import calc_vgm, resolve_model
 from .variogram_model import VariogramModel
+from .variogram_structure_st import VgmStructureST
 
 
 class SpaceTimeVariogramModel(_VariogramModelBase):
@@ -41,6 +42,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         self.sum_metric_time_nugget_ = 0.0
         self.sum_metric_time_sill_ = 1.0
         self._fit_nobs_ = None
+        self.structure = VgmStructureST()
         self.spacetime_anisotropy_ = {
             "anis1": 1.0,
             "anis2": 1.0,
@@ -58,6 +60,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         self.sum_metric_params_ = None
         self.sum_metric_fit_result_ = None
         self._fit_nobs_ = None
+        self.structure = VgmStructureST()
 
     def set_vgm(self, *args, **kwargs):
         """Add a structure to the spatial marginal and return ``self``."""
@@ -121,20 +124,27 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         if self.spacetime_spatial_vtype_ is None:
             raise RuntimeError("space-time marginal model types are not configured")
 
-        a, b, p, spatial_range, temporal_range = np.asarray(
-            params, dtype=float
-        ).reshape(-1)
-        gs = calc_vgm(
-            self.spacetime_spatial_vtype_,
-            spatial_lag,
-            rng=spatial_range,
+        return self._product_sum_structure(params).calc_variogram(
+            spatial_lag, temporal_lag)
+
+    def _product_sum_structure(self, params):
+        """Return the owned (or a transient) product-sum :class:`VgmStructureST`.
+
+        When ``params`` matches the stored fit, the owned ``self.structure`` is
+        reused; an override builds a transient structure from the same stored
+        marginal types and spatial anisotropy.
+        """
+        if (self.structure.model == "product_sum"
+                and self.spacetime_params_ is not None
+                and np.array_equal(np.asarray(params, dtype=float).reshape(-1),
+                                   np.asarray(self.spacetime_params_, dtype=float))):
+            return self.structure
+        return VgmStructureST().set_product_sum(
+            params,
+            spatial_vtype=self.spacetime_spatial_vtype_,
+            temporal_vtype=self.spacetime_temporal_vtype_,
+            anisotropy=self.spacetime_anisotropy_,
         )
-        gt = calc_vgm(
-            self.spacetime_temporal_vtype_,
-            temporal_lag,
-            rng=temporal_range,
-        )
-        return a * gs + b * gt + p * gs * gt
 
     def calc_spacetime_variogram_between(
         self,
@@ -191,6 +201,9 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             "dip": float(dip),
             "plunge": float(plunge),
         }
+        if self.structure.model == "product_sum":
+            self.structure.anisotropy = dict(self.spacetime_anisotropy_)
+            self.structure._rebuild_product_sum_marginals()
         return self
 
     def set_spacetime_params(
@@ -229,6 +242,12 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             self.spacetime_temporal_vtype_ = "gau"
 
         self.spacetime_params_ = params.copy()
+        self.structure = VgmStructureST().set_product_sum(
+            self.spacetime_params_,
+            spatial_vtype=self.spacetime_spatial_vtype_,
+            temporal_vtype=self.spacetime_temporal_vtype_,
+            anisotropy=self.spacetime_anisotropy_,
+        )
         return self
 
     def fit_spacetime_product_sum(
@@ -384,36 +403,24 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         if params is None or self.sum_metric_spatial_model_ is None:
             raise RuntimeError("call fit_spacetime_sum_metric() first")
 
-        params = np.asarray(params, dtype=float).reshape(-1)
-        spatial_scale, temporal_scale = params[:2]
-        joint_sills = params[2:-1]
-        at = params[-1]
-        hs, ht = np.broadcast_arrays(
-            np.asarray(spatial_lag, dtype=float),
-            np.asarray(temporal_lag, dtype=float),
-        )
+        return self._sum_metric_structure(params).calc_variogram(
+            spatial_lag, temporal_lag)
 
-        total = (
-            spatial_scale * self.sum_metric_spatial_model_.variogram(hs)
-            + temporal_scale * self.sum_metric_temporal_model_.variogram(ht)
+    def _sum_metric_structure(self, params):
+        """Return the owned (or a transient) sum-metric :class:`VgmStructureST`."""
+        if (self.structure.model == "sum_metric"
+                and self.sum_metric_params_ is not None
+                and np.array_equal(np.asarray(params, dtype=float).reshape(-1),
+                                   np.asarray(self.sum_metric_params_, dtype=float))):
+            return self.structure
+        return VgmStructureST().set_sum_metric(
+            self.sum_metric_spatial_model_.structure,
+            self.sum_metric_temporal_model_.structure,
+            params,
+            transform=self.sum_metric_transform_,
+            time_nugget=self.sum_metric_time_nugget_,
+            time_sill=self.sum_metric_time_sill_,
         )
-        dw = calc_vgm(
-            self.sum_metric_transform_,
-            ht,
-            psill=self.sum_metric_time_sill_,
-            rng=at,
-            nugget=self.sum_metric_time_nugget_,
-        )
-        dw = np.where(np.abs(ht) <= np.finfo(float).eps, 0.0, dw)
-        for sill, comp in zip(
-            joint_sills,
-            self.sum_metric_spatial_model_.structure.components,
-        ):
-            if comp.vtype == "nug":
-                continue
-            hst = np.sqrt((hs / comp.a_major) ** 2 + dw ** 2)
-            total = total + sill * calc_vgm(comp.vtype, hst, rng=1.0)
-        return total
 
     def fit_spacetime_sum_metric(
         self,
@@ -525,6 +532,14 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             raise RuntimeError(f"sum-metric fit failed: {result.message}")
         self.sum_metric_params_ = result.x.copy()
         self.sum_metric_fit_result_ = result
+        self.structure = VgmStructureST().set_sum_metric(
+            self.sum_metric_spatial_model_.structure,
+            self.sum_metric_temporal_model_.structure,
+            self.sum_metric_params_,
+            transform=self.sum_metric_transform_,
+            time_nugget=self.sum_metric_time_nugget_,
+            time_sill=self.sum_metric_time_sill_,
+        )
         return self
 
     def fit(self, avgvgm=None, *, model="product_sum", **kwargs):
@@ -586,35 +601,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
         """Return fitted sum-metric marginal, coupling, and search parameters."""
         if self.sum_metric_params_ is None:
             raise RuntimeError("call fit_spacetime_sum_metric() first")
-        spatial_scale, temporal_scale = self.sum_metric_params_[:2]
-        joint_sills = self.sum_metric_params_[2:-1]
-        at = self.sum_metric_params_[-1]
-        spatial_specs = []
-        for spec in self.sum_metric_spatial_model_.to_kriging_specs():
-            spec = dict(spec)
-            spec.pop("append", None)
-            if not spec["product"]:
-                spec["nugget"] = float(spec["nugget"] * spatial_scale)
-                spec["sill"] = float(spec["sill"] * spatial_scale)
-            spatial_specs.append(spec)
-        temporal_specs = []
-        for spec in self.sum_metric_temporal_model_.to_temporal_specs():
-            spec = dict(spec)
-            if not spec["product"]:
-                spec["nugget"] = float(spec["nugget"] * temporal_scale)
-                spec["sill"] = float(spec["sill"] * temporal_scale)
-            temporal_specs.append(spec)
-        return {
-            "model": "sum_metric",
-            "transform": self.sum_metric_transform_,
-            "at": float(at),
-            "time_nugget": self.sum_metric_time_nugget_,
-            "time_sill": self.sum_metric_time_sill_,
-            "spatial_specs": spatial_specs,
-            "temporal_specs": temporal_specs,
-            "joint_sills": joint_sills.astype(float).tolist(),
-            "time_at": float(at),
-        }
+        return self._sum_metric_structure(self.sum_metric_params_).to_kriging_specs()
 
     def to_spacetime_kriging_specs(
         self,
@@ -628,36 +615,7 @@ class SpaceTimeVariogramModel(_VariogramModelBase):
             raise RuntimeError(
                 "call fit_spacetime_product_sum() or set_spacetime_params() first"
             )
-        anisotropy = dict(self.spacetime_anisotropy_)
-        if z_scale is not None:
-            if z_scale <= 0.0:
-                raise ValueError("z_scale must be positive")
-            anisotropy["anis2"] = 1.0 / float(z_scale)
-        a, b, p, spatial_range, temporal_range = self.spacetime_params_
-        sill_s = a + p
-        sill_t = b + p
-        k_ps = -p / (sill_s * sill_t)
-        time_at = (spatial_range / temporal_range) * (sill_s / sill_t)
-        return {
-            "model": "product_sum",
-            "k_ps": float(k_ps),
-            "spatial_spec": {
-                "vtype": self.spacetime_spatial_vtype_,
-                "nugget": float(spatial_nugget),
-                "sill": float(sill_s),
-                "a_major": float(spatial_range),
-                "a_minor1": float(spatial_range * anisotropy["anis1"]),
-                "a_minor2": float(spatial_range * anisotropy["anis2"]),
-                "azimuth": anisotropy["azimuth"],
-                "dip": anisotropy["dip"],
-                "plunge": anisotropy["plunge"],
-            },
-            "temporal_spec": {
-                "vtype": self.spacetime_temporal_vtype_,
-                "nugget": float(temporal_nugget),
-                "sill": float(sill_t),
-                "at_k": float(temporal_range),
-            },
-            "time_at": float(time_at),
-        }
+        return self._product_sum_structure(self.spacetime_params_).to_kriging_specs(
+            z_scale=z_scale, spatial_nugget=spatial_nugget,
+            temporal_nugget=temporal_nugget)
 

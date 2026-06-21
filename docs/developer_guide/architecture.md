@@ -294,9 +294,13 @@ and a temporal structure (`ct`) plus the coupling parameters of a
 product-sum or sum-metric model. It evaluates the joint semivariogram
 (`calc_variogram(spatial_lag, temporal_lag)`) and emits engine specs
 (`to_kriging_specs`), mirroring `vgm_struct_st`'s `cs`/`ct` composition rather
-than extending `vgm_struct`. `SpaceTimeVariogramModel` currently still composes
-two `VariogramModel` marginals and carries the coupling state directly; folding
-its theoretical evaluation onto an owned `VgmStructureST` is the next step.
+than extending `vgm_struct`. `SpaceTimeVariogramModel` owns one
+(`model.structure`) and delegates all space-time theoretical evaluation and
+engine-spec generation to it: the analysis wrapper composes the two
+`VariogramModel` marginals and runs the empirical/fitting workflow, rebuilds the
+owned `VgmStructureST` whenever its coupling parameters change, and a parameter
+override (`calc_spacetime_variogram(..., params=...)`) builds a transient
+structure from the same stored marginal types and anisotropy.
 
 The space-time coupling methods live **only** on `SpaceTimeVariogramModel` -- the
 old `VariogramModel.__getattr__` chain that lazily forwarded `*_spacetime_*`
