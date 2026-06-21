@@ -993,10 +993,11 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     (normalised) mean variogram -- low variogram means strong continuity -- and
     an eigen-decomposition of the weighted second moment **about the origin**
     yields the principal axes.  Each cell contributes its **mean lag vector**
-    (not the bin edge), and the bins are **equal-sized** on every axis by
-    default, so the estimate is insensitive to the bin size and not distorted by
-    an anisotropic bin lattice.  Pass ``dx`` / ``dy`` / ``dz`` to override the
-    spacing per axis.
+    (not the bin edge), so the estimate is insensitive to the bin size.  Bins
+    are sized **per axis** from each axis's own lag extent, so a thin or short
+    axis (e.g. a shallow ``z`` slab) is still resolved rather than collapsing
+    under a single horizontal-scale spacing.  Pass ``dx`` / ``dy`` / ``dz`` to
+    override the spacing per axis.
 
     This is an approximate, robust orientation estimate -- best used to seed a
     fixed-orientation fit (:meth:`VariogramModel.fit_anisotropy`), not as a final
@@ -1023,16 +1024,22 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
         r_max = np.quantile(rawvgm[dist], 0.25)
     df = rawvgm[rawvgm[dist] < r_max].copy()
 
-    # Equal bin sizes by default.  A different size per axis makes the bin
-    # lattice itself anisotropic, which distorts the estimated axes, so derive a
-    # single spacing from the near-origin lag scale and apply it to every
-    # dimension.  Explicit ``dx`` / ``dy`` / ``dz`` override this.
+    # Per-axis bin sizes, each scaled to that axis's own lag extent.  A thin or
+    # short axis -- e.g. a shallow ``z`` slab where ``zmax - zmin`` is far
+    # smaller than the horizontal span -- is then still resolved into many bins
+    # instead of collapsing into one or two under a single horizontal-scale
+    # spacing.  The mean-lag cell coordinates (below) keep the differently sized
+    # bins from biasing the axes.  Explicit ``dx`` / ``dy`` / ``dz`` override.
     if dx is None:
-        dx = abs(np.quantile(df[dist], 0.9)) / 20.0
+        dx = np.quantile(np.abs(df[x]), 0.9) / 20.0
     if dy is None:
-        dy = dx
+        dy = np.quantile(np.abs(df[y]), 0.9) / 20.0
     if dz is None and dim3d:
-        dz = dx
+        dz = np.quantile(np.abs(df[z]), 0.9) / 20.0
+    dx = dx if dx > 0 else 1.0          # guard single-valued axes
+    dy = dy if dy > 0 else 1.0
+    if dim3d and not dz > 0:
+        dz = 1.0
 
     coord_cols = [x, y, z] if dim3d else [x, y]
     sizes = [dx, dy, dz] if dim3d else [dx, dy]
