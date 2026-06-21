@@ -316,3 +316,12 @@ materialized-vs-configured rules apply: an observation is configured only once
 it has coordinates and values, and empirical/LMC pair selection uses
 `obs.configured_indices()`. `set_search(...)` records search settings on the
 set for transfer to the engine; neighbour selection itself stays in Fortran.
+
+`VariogramSystem.apply(kriging, observations=True, variograms=True)` is
+transactional: `validate_for` checks target `nvar`/`ndim`/`ndrift`, configured
+pair indices, required auto-variograms for cross pairs, and structure ranges
+*before* any mutation, so a failure leaves the target unchanged. It then
+transfers observations in ascending variable order (drift immediately after
+each base observation) and configured variograms in canonical upper-triangle
+order, delegating to `ObservationSet.apply_to` and `VgmStructure.apply_to`.
+`apply_observations` / `apply_variograms` expose each half independently.

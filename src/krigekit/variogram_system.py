@@ -599,11 +599,78 @@ class VariogramSystem:
         self.markov_corr_[self._pair_key(pi, si)] = corr
         return self
 
-    def apply_to(self, kriging, replace=True, pairs=None):
-        """Apply all pair models to a :class:`krigekit.Kriging` object."""
-        pairs = sorted(self.models) if pairs is None else [self._pair_key(*p) for p in pairs]
-        for key in pairs:
-            self.models[key].apply_to(kriging, key[0], key[1], replace=replace)
+    def _selected_pairs(self, pairs):
+        """Return configured ``(key, structure)`` items, optionally filtered."""
+        items = self.vgm.configured_items()
+        if pairs is None:
+            return items
+        keys = {self._pair_key(*p) for p in pairs}
+        return [(k, s) for k, s in items if k in keys]
+
+    def validate_for(self, kriging, observations=True, variograms=True, pairs=None):
+        """Check that this system can be applied to ``kriging`` without leaving
+        it partially configured.  Raises on the first problem and mutates
+        nothing; this is the validate-first half of :meth:`apply`.
+        """
+        nvar, ndim = kriging.nvar, kriging.ndim
+        if self.nvar is not None and self.nvar > nvar:
+            raise ValueError(f"system nvar={self.nvar} exceeds target nvar={nvar}")
+
+        if observations:
+            for ivar, obs in self.obs.configured_items():
+                if ivar > nvar:
+                    raise ValueError(f"observation variable {ivar} exceeds target nvar={nvar}")
+                obs.validate(ndim=ndim)
+                if obs.times is not None:
+                    raise ValueError(
+                        "space-time observations require a space-time system "
+                        "(not yet supported by apply())")
+                if obs.ndrift and obs.ndrift != kriging.ndrift:
+                    raise ValueError(
+                        f"variable {ivar} has {obs.ndrift} drift column(s) but "
+                        f"target ndrift={kriging.ndrift}")
+
+        if variograms:
+            all_pairs = set(self.vgm.configured_pairs())
+            for (i, j), structure in self._selected_pairs(pairs):
+                if i > nvar or j > nvar:
+                    raise ValueError(f"variogram pair {(i, j)} exceeds target nvar={nvar}")
+                structure.validate()
+                if i != j:
+                    missing = [a for a in ((i, i), (j, j)) if a not in all_pairs]
+                    if missing:
+                        raise ValueError(
+                            f"cross pair {(i, j)} requires auto-variogram(s) {missing}")
+        return self
+
+    def apply_observations(self, kriging):
+        """Transfer configured observations (and drift) in ascending order."""
+        for ivar, obs in self.obs.configured_items():
+            obs.apply_to(kriging, ivar)
+        return kriging
+
+    def apply_variograms(self, kriging, replace=True, pairs=None):
+        """Transfer configured pair structures in canonical upper-triangle order."""
+        for (i, j), structure in self._selected_pairs(pairs):
+            structure.apply_to(kriging, i, j, replace=replace)
+        return kriging
+
+    def apply(self, kriging, observations=True, variograms=True, replace=True,
+              pairs=None):
+        """Validate, then transfer observations and/or variograms to ``kriging``.
+
+        Validation (:meth:`validate_for`) completes before any mutation, so a
+        failure leaves ``kriging`` unchanged.  Observations are applied in
+        ascending variable order (drift immediately after each base
+        observation), then configured variograms in canonical upper-triangle
+        order.
+        """
+        self.validate_for(kriging, observations=observations,
+                           variograms=variograms, pairs=pairs)
+        if observations:
+            self.apply_observations(kriging)
+        if variograms:
+            self.apply_variograms(kriging, replace=replace, pairs=pairs)
         return kriging
 
     def __repr__(self):
