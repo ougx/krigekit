@@ -576,6 +576,39 @@ def test_fit_aniso_angle_recovers_orientation_on_scattered_cloud():
     np.testing.assert_allclose([anis1, anis2], [0.25, 0.13], atol=0.07)
 
 
+def test_variogram_model_fit_aniso_angle_applies_orientation():
+    import itertools
+    from krigekit.variogram import rotation_matrix_3d
+
+    truth = VariogramModel()
+    truth.set_vgm("sph", sill=1.0, a_major=60.0, a_minor1=15.0, a_minor2=8.0,
+                  azimuth=35.0, dip=22.0, plunge=10.0)
+    rng = np.random.default_rng(0)
+    pts = rng.uniform(0.0, 120.0, size=(180, 3))
+    idx = np.array(list(itertools.combinations(range(len(pts)), 2)))
+    lag = pts[idx[:, 0]] - pts[idx[:, 1]]
+    dist = np.linalg.norm(lag, axis=1)
+    keep = dist < 70.0
+    lag, dist = lag[keep], dist[keep]
+    raw = pd.DataFrame({
+        "d0": lag[:, 0], "d1": lag[:, 1], "d2": lag[:, 2], "distance": dist,
+        "variogram": truth.calc_variogram(np.zeros_like(lag), lag),
+    })
+
+    model = VariogramModel()
+    model.set_vgm("sph", sill=0.8, a_major=55.0, a_minor1=30.0, a_minor2=18.0)
+    returned = model.fit_aniso_angle(
+        raw, starts=[(60.0, 30.0, 0.0), (20.0, 15.0, 0.0)], use_seed=False)
+
+    assert returned is model                       # chainable, runs before fit
+    comp = model.structure.components[0]
+    fit_axes = rotation_matrix_3d(comp.azimuth, comp.dip, comp.plunge)
+    true_axes = rotation_matrix_3d(35.0, 22.0, 10.0)
+    assert abs(float(fit_axes[:, 0] @ true_axes[:, 0])) > 0.99   # orientation set
+    assert comp.a_minor2 < comp.a_minor1 < comp.a_major          # ranges seeded
+    assert model.aniso_angle_ is not None
+
+
 def test_variogram_model_apply_to_kriging_replays_specs():
     model = VariogramModel()
     model.set_vgm(vtype="exp", sill=1.0, a_major=5.0)

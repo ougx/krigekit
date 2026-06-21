@@ -366,6 +366,7 @@ The same contract spans every level:
 | Entry point | Fit |
 |---|---|
 | `VgmStructure.fit` | isotropic sills/ranges/nugget for one pair |
+| `VariogramModel.fit_aniso_angle` | anisotropy *orientation* (runs before the range fit) |
 | `VariogramModel.fit` / `.fit_anisotropy` | marginal isotropic / directional ranges |
 | `VariogramSystem.fit(method=...)` | facade over `fit_pair` (`"pair"`) and `fit_lmc` (`"lmc"`) |
 | `SpaceTimeVariogramModel.fit(model=...)` | `"product_sum"` or `"sum_metric"` coupling |

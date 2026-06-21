@@ -2,6 +2,20 @@
 
 ## 0.2.8 (unreleased)
 
+### Added - Anisotropy orientation fitting
+
+`estimate_aniso_angle()` now returns the full 3-D orientation
+`((azimuth, dip, plunge), (anis1, anis2))` (the minor/major ratios), measures the
+second moment about the origin (fixing a half-space bias that mis-estimated the
+azimuth on gridded clouds), and uses per-axis, bin-size-independent binning.
+
+A new `fit_aniso_angle()` does a multi-started, model-based **profile** fit of
+the orientation -- far more robust than the PCA on scattered, strongly
+anisotropic clouds. Both `VariogramModel` and `VariogramSystem` gain a
+`fit_aniso_angle()` method that fits the orientation from the empirical cloud and
+writes it into the structures; run it **before** `fit_anisotropy` / `fit_lmc` so
+the directional binning and range fit use the correct axes.
+
 ### Added - Indicator variogram system
 
 `IndicatorVariogramSystem` (a `VariogramSystem` subclass) owns indicator

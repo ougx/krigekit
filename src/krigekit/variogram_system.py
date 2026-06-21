@@ -4,7 +4,14 @@
 import numpy as np
 from scipy.optimize import least_squares
 
-from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
+from .variogram_empirical import (
+    avg_vgm,
+    cross_vgm,
+    estimate_aniso_angle,
+    fit_aniso_angle as _fit_aniso_angle,
+    raw_cross_vgm,
+    raw_vgm,
+)
 from .variogram_accessors import _ObservationAccessor, _VgmAccessor
 from .variogram_component import VgmComponent
 from .variogram_fitting import FitResult
@@ -327,6 +334,52 @@ class VariogramSystem:
                 raise ValueError("method='pair' requires ivar (and optional jvar)")
             return self.fit_pair(ivar, jvar, **kwargs)
         raise ValueError("method must be 'lmc' or 'pair'")
+
+    def fit_aniso_angle(self, ivar=1, jvar=None, pairs=None, n_struct=None,
+                        set_ranges=True, raw_kwargs=None, **kwargs):
+        """Fit the anisotropy orientation from one pair and apply it system-wide.
+
+        Run this **before** :meth:`fit_lmc` / :meth:`fit_pair`: the orientation is
+        estimated from the ``(ivar, jvar)`` pair's empirical cloud (the primary
+        auto-variogram by default) with the model-based profile fit
+        (:func:`krigekit.fit_aniso_angle`, 3-D) or the PCA azimuth
+        (:func:`estimate_aniso_angle`, 2-D), then written into the structures
+        selected by ``pairs`` (all configured pairs by default, since an LMC
+        shares one orientation).  ``set_ranges=True`` also seeds the minor ranges
+        from the fitted ratios.  Returns ``self``.
+        """
+        key = self._pair_key(ivar, jvar)
+        rawvgm = self.raw_variograms_.get(key)
+        if rawvgm is None:
+            rawvgm = self.calc_experimental(key[0], key[1], **(raw_kwargs or {}))
+        reference = self.vgm.get(key[0], key[1], create=False)
+        if n_struct is None:
+            n_struct = max(1, reference.ncomponent if reference is not None else 1)
+
+        dim = sum(f"d{k}" in rawvgm.columns for k in range(3))
+        if dim >= 3:
+            (azimuth, dip, plunge), (anis1, anis2) = _fit_aniso_angle(
+                rawvgm, n_struct=n_struct, **kwargs)
+        elif dim == 2:
+            (azimuth,), (anis1,) = estimate_aniso_angle(rawvgm, dim3d=False)
+            dip = plunge = 0.0
+            anis2 = None
+        else:
+            raise ValueError("fit_aniso_angle() needs a 2-D or 3-D variogram cloud")
+
+        for _, structure in self._selected_pairs(pairs):
+            for comp in structure.components:
+                comp.azimuth = float(azimuth)
+                if dim >= 3:
+                    comp.dip = float(dip)
+                    comp.plunge = float(plunge)
+                if set_ranges:
+                    comp.a_minor1 = comp.a_major * float(anis1)
+                    if dim >= 3 and anis2 is not None:
+                        comp.a_minor2 = comp.a_major * float(anis2)
+
+        self.aniso_angle_ = ((azimuth, dip, plunge), (anis1, anis2))
+        return self
 
     def _template_components(self):
         """Return the shared LMC structure template from configured pairs."""

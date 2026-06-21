@@ -375,13 +375,20 @@ The corresponding Python functions for each step are:
 | 2 | Create an initial model template | `model.set_vgm()` |
 | 3 | Calculate the physical empirical cloud | `model.calc_experimental(calc_angle=True)` |
 | 4 | Inspect the empirical map | `model.plot_map()` or `model.plot_map3d()` |
-| 5 | Display an estimated orientation | `model.plot_map(angle_aniso="estimate")` or `model.plot_map3d(angle_aniso="estimate")` |
-| 6 | Obtain the numeric estimate | `estimate_aniso_angle()` |
-| 7 | Store the selected orientation | `model.set_anisotropy()` or `model.set_vgm()` |
-| 8 | Calculate major/minor directional curves | `model.calc_directional_average()` |
-| 9 | Fit directional ranges | `model.fit_anisotropy()` |
-| 10 | Validate the fitted orientation and ranges | `model.plot_map(angle_aniso="model", ellipse_aniso="model")` or `model.plot_map3d(angle_aniso="model")` |
-| 11 | Transfer the final model to kriging | `model.apply_to()` |
+| 5 | **Fit and apply the anisotropy orientation** | **`model.fit_aniso_angle()`** |
+| 6 | Calculate major/minor directional curves | `model.calc_directional_average()` |
+| 7 | Fit directional ranges (orientation fixed) | `model.fit_anisotropy()` |
+| 8 | Validate the fitted orientation and ranges | `model.plot_map(angle_aniso="model", ellipse_aniso="model")` or `model.plot_map3d(angle_aniso="model")` |
+| 9 | Transfer the final model to kriging | `model.apply_to()` |
+
+**Fit the orientation first.** Step 5 (`model.fit_aniso_angle()`) estimates the
+anisotropy orientation from the empirical cloud and writes `azimuth` / `dip` /
+`plunge` into the structures, so the directional binning (step 6) and the
+range fit (step 7) use the correct axes.  A 3-D cloud uses the multi-started,
+model-based profile fit; a 2-D cloud uses the fast PCA azimuth.  It must run
+**before** `fit_anisotropy`.  For manual control you can instead read
+`estimate_aniso_angle()` (or `fit_aniso_angle()`) yourself and apply the angles
+with `model.set_anisotropy()`, as the 2-D example below shows.
 
 #### Two-dimensional example
 
@@ -419,8 +426,8 @@ model.plot_map(angle_aniso="model", cutoff=2500.0)
 model.plot_map(angle_aniso="estimate", cutoff=2500.0)
 
 # Obtain the numeric estimate so it can be inspected and stored explicitly.
-(azimuth,), axis_lengths = estimate_aniso_angle(raw)
-ratio_guess = axis_lengths[1] / axis_lengths[0]
+# In 2-D this returns the azimuth and the minor/major ratio (anis1).
+(azimuth,), (ratio_guess,) = estimate_aniso_angle(raw)
 print(f"estimated azimuth={azimuth:.1f}, ratio={ratio_guess:.3f}")
 
 # Lock the selected orientation into the model.  You may use the estimated
@@ -463,11 +470,12 @@ k.solve()
 
 #### Three-dimensional differences
 
-For 3-D data, use `plot_map3d()` and request `dim3d=True` from
-`estimate_aniso_angle()`:
+For 3-D data, `model.fit_aniso_angle()` fits all three angles
+(`azimuth` / `dip` / `plunge`) with the multi-started, model-based profile fit
+and writes them into the structures:
 
 ```python
-raw = model.calc_experimental(
+model.calc_experimental(
     cutoff=3000.0,
     calc_angle=True,
     verbose=False,
@@ -476,17 +484,9 @@ raw = model.calc_experimental(
 # Visual estimate only; does not modify model.structure.
 model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
 
-# Numeric azimuth and dip estimate.
-(azimuth, dip), axis_lengths = estimate_aniso_angle(raw, dim3d=True)
-ratio_minor1 = axis_lengths[1] / axis_lengths[0]
-ratio_minor2 = axis_lengths[2] / axis_lengths[0]
-
-model.set_anisotropy(
-    azimuth=azimuth,
-    dip=dip,
-    ratio_minor1=ratio_minor1,
-    ratio_minor2=ratio_minor2,
-)
+# Fit and apply the 3-D orientation (and seed the minor ranges from the fitted
+# anisotropy ratios) -- run this before the directional range fit.
+model.fit_aniso_angle()
 
 directional = model.calc_directional_average(
     h_bins=15,
@@ -580,25 +580,34 @@ not change the underlying data.
 
 ### Automated direction estimation
 
-`estimate_aniso_angle()` runs weighted PCA on the near-origin lag cloud and
-returns the major-axis direction as `(azimuth,)` for 2-D or
-`(azimuth, dip)` for 3-D, along with approximate axis half-lengths:
+Two estimators are available, both returning the angles plus the minor/major
+anisotropy ratios:
+
+- `estimate_aniso_angle()` -- a fast weighted PCA of the near-origin lag cloud.
+  A good seed; best on dense/gridded clouds.  Choose `r_max` near **half the
+  shortest range** (too small is dominated by the sampling lattice on grids).
+- `fit_aniso_angle()` -- a slower, multi-started **model-based** profile fit.
+  More robust on scattered, strongly anisotropic clouds where the PCA can be
+  tens of degrees wrong; itself biased by a regular sampling lattice.
 
 ```python
-from krigekit import estimate_aniso_angle
+from krigekit.variogram import estimate_aniso_angle, fit_aniso_angle
 
 model.calc_experimental(cutoff=3000.0, calc_angle=True, verbose=False)
 raw = model.raw_variogram_
 
-# 2-D: returns ((azimuth_deg,), axis_lengths)
-(azimuth,), lengths = estimate_aniso_angle(raw)
-print(f"Major axis azimuth: {azimuth:.1f}°,  ratio: {lengths[0]/lengths[1]:.2f}")
+# 2-D: returns ((azimuth_deg,), (anis1,))
+(azimuth,), (anis1,) = estimate_aniso_angle(raw)
+print(f"Major axis azimuth: {azimuth:.1f} deg,  ratio: {anis1:.2f}")
 
-# 3-D: returns ((azimuth_deg, dip_deg), axis_lengths)
-(azimuth, dip), lengths = estimate_aniso_angle(raw, dim3d=True)
+# 3-D: returns ((azimuth_deg, dip_deg, plunge_deg), (anis1, anis2))
+(azimuth, dip, plunge), (anis1, anis2) = estimate_aniso_angle(raw, dim3d=True)
+(azimuth, dip, plunge), (anis1, anis2) = fit_aniso_angle(raw)   # robust refinement
 ```
 
-The returned `azimuth` and `dip` can be fed directly into `set_vgm()` or
+Usually you do not call these directly -- `model.fit_aniso_angle()` runs the
+right one for the cloud's dimension and applies the result.  The returned
+`azimuth` / `dip` / `plunge` can also be fed into `set_vgm()` or
 `set_anisotropy()`:
 
 ```python

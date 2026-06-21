@@ -12,6 +12,7 @@ from .variogram_empirical import (
     avg_vgm,
     directional_vgm,
     estimate_aniso_angle,
+    fit_aniso_angle as _fit_aniso_angle,
     raw_vgm,
 )
 from .variogram_fitting import FitResult, _fit_sigma
@@ -309,6 +310,56 @@ class VariogramModel(_VariogramModelBase):
         return FitResult(target=target, params=res.params, cov=res.cov,
                          metrics=res.metrics, ax=ax, nobs=res.nobs,
                          param_labels=res.param_labels)
+
+    def fit_aniso_angle(self, rawvgm=None, n_struct=None, set_ranges=True,
+                        raw_kwargs=None, **kwargs):
+        """Estimate the anisotropy orientation from the empirical cloud and apply it.
+
+        This is the **first** fitting step of the anisotropic workflow: run it
+        *before* :meth:`fit_anisotropy` so the directional binning and the
+        sill/range fit use the correct axes.  A 3-D cloud uses the multi-started
+        model-based profile fit (:func:`krigekit.fit_aniso_angle`); a 2-D cloud
+        falls back to the fast PCA azimuth (:func:`estimate_aniso_angle`).  The
+        fitted ``azimuth`` / ``dip`` / ``plunge`` are written into every
+        structure, and with ``set_ranges=True`` the minor ranges are seeded from
+        the fitted anisotropy ratios.
+
+        ``rawvgm`` defaults to the cached cloud, otherwise it is computed from
+        observations.  ``n_struct`` defaults to the number of structures.
+        Returns ``self`` so it can precede the rest of the workflow.
+        """
+        if not self.structure.components:
+            raise RuntimeError("call set_vgm() before fit_aniso_angle()")
+        if rawvgm is None:
+            rawvgm = self._raw if self._raw is not None else \
+                self.experimental(**(raw_kwargs or {}))
+        dim = self._raw_dimension(rawvgm)
+        if n_struct is None:
+            n_struct = max(1, len(self.structure.components))
+
+        if dim >= 3:
+            (azimuth, dip, plunge), (anis1, anis2) = _fit_aniso_angle(
+                rawvgm, n_struct=n_struct, **kwargs)
+        elif dim == 2:
+            (azimuth,), (anis1,) = estimate_aniso_angle(rawvgm, dim3d=False)
+            dip = plunge = 0.0
+            anis2 = None
+        else:
+            raise ValueError("fit_aniso_angle() needs a 2-D or 3-D variogram cloud")
+
+        for comp in self.structure.components:
+            comp.azimuth = float(azimuth)
+            if dim >= 3:
+                comp.dip = float(dip)
+                comp.plunge = float(plunge)
+            if set_ranges:
+                comp.a_minor1 = comp.a_major * float(anis1)
+                if dim >= 3 and anis2 is not None:
+                    comp.a_minor2 = comp.a_major * float(anis2)
+
+        self.aniso_angle_ = ((azimuth, dip, plunge), (anis1, anis2))
+        self._store_manual_params(fit_nugget=True)
+        return self
 
     def _default_anisotropic_fit_p0(self, include_minor2: bool, fit_nugget: bool = True):
         """Build default ``(sill, major, minor1[, minor2], ..., [nugget])`` params."""
