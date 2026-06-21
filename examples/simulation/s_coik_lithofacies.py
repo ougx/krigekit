@@ -60,7 +60,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
-from krigekit import IndicatorKriging
+from krigekit import IndicatorKriging, IndicatorVariogramSystem
 
 # ---------------------------------------------------------------------------
 # Configuration (shared with s_sis_lithofacies)
@@ -226,7 +226,8 @@ plt.show()
 # ``IndicatorKriging(ncat=4, nvar=5)`` allocates a 5 × 5 co-kriging system.
 # The variogram is assembled in three parts:
 #
-# 1. ``set_indicator_vgm(cross="proportional")`` — fills the 4 × 4 indicator block.
+# 1. ``IndicatorVariogramSystem.set_indicator_vgm(cross_strategy="proportional")``
+#    fills the 4 × 4 indicator block and ``apply()`` transfers it.
 # 2. ``set_vgm(5, 5, ...)`` — adds the covariate auto-variogram.
 # 3. ``set_vgm(k, 5, ...)`` for k = 1–4 — adds the four cross-variograms.
 #    Cross-sills for coarse categories are positive; for fine categories negative.
@@ -240,21 +241,19 @@ ik = IndicatorKriging(
     neglect_error=True, std_ck=True, seed=SEED,
 )
 
-# Indicator observations (ivar = 1..ncat)
-ik.set_categorical_obs(
-    coord=obs_coord, categories=obs_cats,
-    category_labels=cat_labels, nmax=NMAX,
+# Indicator block (observations + 4 × 4 proportional sills) built with the
+# indicator variogram system, then transferred to the co-kriging engine.
+isys = IndicatorVariogramSystem(categories=cat_labels)
+isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_indicator_vgm(
+    vtype="sph", nugget=NUGGET, sill=SILL,
+    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
+    sill_strategy="theoretical", cross_strategy="proportional", proportions=props,
 )
+isys.apply(ik)
 
 # Covariate observations (ivar = ncat + 1)
 ik.set_obs(ivar=ncat + 1, coord=obs_coord, value=y, nmax=NMAX)
-
-# 4 × 4 indicator block — proportional sills
-ik.set_indicator_vgm(
-    vtype="sph", nugget=NUGGET, sill=SILL,
-    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR,
-    azimuth=AZIMUTH, cross="proportional", proportions=props,
-)
 
 # Covariate auto-variogram (5, 5)
 ik.set_vgm(
@@ -313,15 +312,14 @@ ik_plain = IndicatorKriging(
     ncat=ncat, ndim=2, nsim=NSIM,
     neglect_error=True, std_ck=True, seed=SEED,
 )
-ik_plain.set_categorical_obs(
-    coord=obs_coord, categories=obs_cats,
-    category_labels=cat_labels, nmax=NMAX,
-)
-ik_plain.set_indicator_vgm(
+isys_plain = IndicatorVariogramSystem(categories=cat_labels)
+isys_plain.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys_plain.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
-    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR,
-    azimuth=AZIMUTH, cross="proportional", proportions=props,
+    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
+    sill_strategy="theoretical", cross_strategy="proportional", proportions=props,
 )
+isys_plain.apply(ik_plain)
 ik_plain.set_grid(coord=grid_coord)
 ik_plain.set_sim()
 for k in range(1, ncat + 1):

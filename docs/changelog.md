@@ -16,6 +16,13 @@ The pure helpers `encode_indicator_matrix`, `indicator_covariance`, and
 `contrast_basis` are exported. `VariogramSystem.fit(method="lmc"|"pair")` adds a
 uniform fit facade across the system level.
 
+### Removed - Indicator construction on the engine wrapper
+
+`IndicatorKriging.set_categorical_obs` and `IndicatorKriging.set_indicator_vgm`
+are removed; build the indicator encoding and coregionalization with
+`IndicatorVariogramSystem` and transfer them with `system.apply(ik)`. The engine
+wrapper now only allocates the solver, solves, and post-processes probabilities.
+
 ### Changed - Unified space-time fitting and removal of the legacy forwarder
 
 `SpaceTimeVariogramModel` now exposes a single `fit(model="product_sum" |

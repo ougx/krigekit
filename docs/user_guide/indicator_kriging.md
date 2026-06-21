@@ -4,6 +4,11 @@
 (MIK)** for probability estimation and **Sequential Indicator Simulation (SIS)**
 for stochastic categorical simulation.
 
+Indicator encoding and the K×K coregionalization are built with
+{py:class}`~krigekit.IndicatorVariogramSystem` and transferred to the engine
+with its `apply()`; `IndicatorKriging` then allocates the solver, solves, and
+post-processes probabilities.
+
 ## Concepts
 
 ### Indicator variables
@@ -31,25 +36,24 @@ and `post_solve` normalisation produces a valid probability simplex.
 
 ```python
 import numpy as np
-from krigekit import IndicatorKriging
+from krigekit import IndicatorKriging, IndicatorVariogramSystem
 
-ik = IndicatorKriging(ncat=3, ndim=2)
-
-ik.set_categorical_obs(
-    coord=obs_coord,       # (nobs, 2) array
-    categories=obs_labels, # string or integer category per sample
-    category_labels=["A", "B", "C"],
+system = IndicatorVariogramSystem(categories=["A", "B", "C"])
+system.set_categorical_obs(
+    obs_coord,             # (nobs, 2) array
+    obs_labels,            # string or integer category per sample
     nmax=20,
 )
-
-ik.set_indicator_vgm(
-    vtype="sph", nugget=0.02, sill=0.20,
-    a_major=500.0, a_minor1=100.0,
-    azimuth=0.0,
+system.set_indicator_vgm(
+    vtype="sph", nugget=0.02,
+    a_major=500.0, a_minor1=100.0, azimuth=0.0,
+    sill_strategy="theoretical", cross_strategy="closure",
 )
 
-ik.set_grid(coord=grid_coord)
+ik = IndicatorKriging(ncat=3, ndim=2)
+system.apply(ik)               # transfers indicators + K² structures
 
+ik.set_grid(coord=grid_coord)
 for k in range(1, 4):
     ik.set_search(ivar=k, anis1=100.0/500.0)
 
@@ -69,12 +73,14 @@ solving.  Each realisation visits grid nodes in a random sequential order and
 draws a category by inverting the local conditional CDF.
 
 ```python
-ik = IndicatorKriging(ncat=3, ndim=2, nsim=50, seed=42)
+system = IndicatorVariogramSystem(categories=["A", "B", "C"])
+system.set_categorical_obs(obs_coord, obs_labels, nmax=20)
+system.set_indicator_vgm(vtype="sph", nugget=0.02,
+                         a_major=500.0, a_minor1=100.0,
+                         sill_strategy="theoretical", cross_strategy="closure")
 
-ik.set_categorical_obs(coord=obs_coord, categories=obs_labels,
-                       category_labels=["A", "B", "C"], nmax=20)
-ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.20,
-                     a_major=500.0, a_minor1=100.0)
+ik = IndicatorKriging(ncat=3, ndim=2, nsim=50, seed=42)
+system.apply(ik)
 ik.set_grid(coord=grid_coord)
 ik.set_sim()                  # must be called after set_grid
 
@@ -90,22 +96,44 @@ del ik
 
 ## Cross-variogram strategies
 
-{py:meth}`~krigekit.IndicatorKriging.set_indicator_vgm` sets all K² variogram
-pairs in one call.  The `cross` parameter controls how off-diagonal (cross)
-sills are derived:
+{py:meth}`~krigekit.IndicatorVariogramSystem.set_indicator_vgm` configures all
+K² variogram pairs in one call.  Two orthogonal options select the
+coregionalization: `sill_strategy` (diagonal/auto sills) and `cross_strategy`
+(off-diagonal/cross sills):
 
-| `cross` | Auto sill | Cross sill | When to use |
-|---|---|---|---|
-| `"same"` *(default)* | `sill` for all k | `sill` | Simplest; good starting point |
-| `"proportional"` | `p_k (1 − p_k)` | `√(s_k · s_l)` | LMC-valid; needs `proportions` |
-| `"independent"` | `p_k (1 − p_k)` or `sill` | 0 | Most conservative |
+| `sill_strategy` | Auto sill |
+|---|---|
+| `"theoretical"` *(default)* | `p_k (1 − p_k)` from proportions |
+| `"uniform"` | `sill` for every category |
+
+| `cross_strategy` | Cross sill | When to use |
+|---|---|---|
+| `"closure"` *(default)* | `−p_k p_l` | Recommended; closed (`B·1=0`) and PSD |
+| `"proportional"` | `√(s_k · s_l)` | LMC-valid per nested structure |
+| `"independent"` | 0 | Most conservative; K separate systems |
+| `"uniform"` | `sill` | Simplest approximation |
+
+`fit(method="closure")` then refits the coregionalization from empirical
+variograms while enforcing both positive semidefiniteness and closure; see the
+{doc}`variogram_fitting` guide.
+
+### Closure (recommended)
+
+Auto sills `p_k(1 − p_k)` and cross sills `−p_k p_l` reproduce the closed
+indicator covariance `diag(p) − p pᵀ`.
+
+```python
+system.set_indicator_vgm(vtype="sph", nugget=0.02,
+                         a_major=500, a_minor1=80, azimuth=90,
+                         sill_strategy="theoretical", cross_strategy="closure")
+```
 
 ### Uniform sill
 
 ```python
-ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                     a_major=500, a_minor1=80, azimuth=90,
-                     cross="same")
+system.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
+                         a_major=500, a_minor1=80, azimuth=90,
+                         sill_strategy="uniform", cross_strategy="uniform")
 ```
 
 ### Proportional sills (LMC)
@@ -115,9 +143,10 @@ geometric mean so the coregionalisation matrix is positive-definite.
 
 ```python
 props = np.array([0.18, 0.23, 0.21, 0.38])   # observed p_k per category
-ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                     a_major=500, a_minor1=80, azimuth=90,
-                     cross="proportional", proportions=props)
+system.set_indicator_vgm(vtype="sph", nugget=0.02,
+                         a_major=500, a_minor1=80, azimuth=90,
+                         sill_strategy="theoretical", cross_strategy="proportional",
+                         proportions=props)
 ```
 
 ### Independent (no cross-coupling)
@@ -126,26 +155,31 @@ Cross-variogram sills are set to zero — equivalent to running K separate
 ordinary kriging systems.
 
 ```python
-ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                     a_major=500, a_minor1=80, azimuth=90,
-                     cross="independent", proportions=props)
+system.set_indicator_vgm(vtype="sph", nugget=0.02,
+                         a_major=500, a_minor1=80, azimuth=90,
+                         sill_strategy="theoretical", cross_strategy="independent")
 ```
 
 ## Co-kriging MIS
 
 Secondary continuous variables can be added by setting `nvar = ncat + M`:
 
-```python
-ik = IndicatorKriging(ncat=3, nvar=4, ndim=2)  # 3 indicators + 1 secondary
+The indicator block (variables 1..K) is built with the system and applied; the
+secondary variable and its cross-models are set on the engine directly.
 
-ik.set_categorical_obs(coord=obs_coord, categories=obs_labels,
-                       category_labels=["A", "B", "C"], nmax=20)
+```python
+system = IndicatorVariogramSystem(categories=["A", "B", "C"])
+system.set_categorical_obs(obs_coord, obs_labels, nmax=20)
+system.set_indicator_vgm(vtype="sph", a_major=500, a_minor1=100,
+                         sill_strategy="theoretical", cross_strategy="closure")
+
+ik = IndicatorKriging(ncat=3, nvar=4, ndim=2)  # 3 indicators + 1 secondary
+system.apply(ik)                                # indicator block (ivar 1..3)
 ik.set_obs(ivar=4, coord=sec_coord, value=sec_val)  # secondary variable
 
-for iv in range(1, 5):
-    for jv in range(1, 5):
-        ik.set_vgm(ivar=iv, jvar=jv, vtype="sph", sill=0.2,
-                   a_major=500, a_minor1=100)
+ik.set_vgm(ivar=4, jvar=4, vtype="sph", sill=1.0, a_major=500, a_minor1=100)
+for k in range(1, 4):                           # indicator–secondary cross-models
+    ik.set_vgm(ivar=k, jvar=4, vtype="sph", sill=0.1, a_major=500, a_minor1=100)
 
 ik.set_grid(coord=grid_coord)
 for k in range(1, 5):
@@ -162,14 +196,14 @@ the CDF draw and probability normalisation.
 
 In KrigeKit the default variogram major axis is aligned with the **Y** axis.
 For horizontal stratigraphy (long range along X), pass the same `azimuth` to
-**both** `set_indicator_vgm` and `set_search`.  Passing it only to `set_search`
-leaves the variogram ellipse pointing the wrong way and produces vertical patches
-in the simulated images.
+**both** the system's `set_indicator_vgm` and the engine's `set_search`.  Passing
+it only to `set_search` leaves the variogram ellipse pointing the wrong way and
+produces vertical patches in the simulated images.
 
 ```python
 AZIMUTH = 90.0   # rotate major axis from Y → X
 
-ik.set_indicator_vgm(..., azimuth=AZIMUTH)        # variogram ellipse
+system.set_indicator_vgm(..., azimuth=AZIMUTH)    # variogram ellipse
 for k in range(1, ncat + 1):
     ik.set_search(ivar=k, anis1=anis1, azimuth=AZIMUTH)  # search ellipse
 ```

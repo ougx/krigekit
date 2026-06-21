@@ -126,17 +126,18 @@ class IndicatorVariogramSystem(VariogramSystem):
         computed from the encoded indicators.
         """
         cats = np.asarray(categories)
+        expected = self.ncat
         if category_labels is not None:
             labels = list(category_labels)
         elif self.categories is not None:
             labels = list(self.categories)
         else:
             labels = sorted(np.unique(cats).tolist())
+        if len(labels) != expected:
+            raise ValueError(
+                f"len(category_labels)={len(labels)} must equal ncat={expected}")
         if self.categories is None:
             self.categories = tuple(labels)
-        if len(labels) != self.ncat:
-            raise ValueError(
-                f"len(category_labels)={len(labels)} must equal ncat={self.ncat}")
         matrix = encode_indicator_matrix(cats, labels)
         var_arr = None if variance is None else np.asarray(variance, dtype=float)
         for k in range(1, self.ncat + 1):

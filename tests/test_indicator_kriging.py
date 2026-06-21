@@ -6,7 +6,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import pytest
-from krigekit import IndicatorKriging
+from krigekit import IndicatorKriging, IndicatorVariogramSystem
+from krigekit.variogram_system_indicator import encode_indicator_matrix
+
+
+def _set_indicator_obs(ik, coord, categories, labels, nmax):
+    """Encode raw categories and load them as indicator observations.
+
+    Replaces the removed ``IndicatorKriging.set_categorical_obs`` convenience for
+    cokriging-with-secondary cases, where the pure indicator system cannot own
+    the extra continuous variable.
+    """
+    matrix = encode_indicator_matrix(categories, labels)
+    for k in range(1, len(labels) + 1):
+        ik.set_obs(ivar=k, coord=coord, value=matrix[:, k - 1], nmax=nmax)
 
 
 # ---------------------------------------------------------------------------
@@ -37,14 +50,14 @@ def _build_ik(nsim=0, seed=1):
     """
     ik = IndicatorKriging(ncat=NCAT, ndim=NDIM, nsim=nsim, seed=seed,
                           neglect_error=True, std_ck=True)
-    ik.set_categorical_obs(coord=OBS_COORD, categories=OBS_CAT,
-                           category_labels=CAT_LABELS, nmax=NMAX)
-    # All K² variogram pairs are required; off-diagonal get the same model
-    # (independent-kriging approximation — the post_solve normalisation
-    # corrects the probabilities regardless of cross-variogram choice).
-    for iv in range(1, NCAT + 1):
-        for jv in range(1, NCAT + 1):
-            ik.set_vgm(ivar=iv, jvar=jv, **VGM)
+    # Build the indicator block with the variogram system and transfer it.  The
+    # off-diagonal pairs get the same (uniform) model — the post_solve
+    # normalisation corrects probabilities regardless of cross-variogram choice.
+    system = IndicatorVariogramSystem(categories=CAT_LABELS)
+    system.set_categorical_obs(OBS_COORD, OBS_CAT, nmax=NMAX)
+    system.set_indicator_vgm(sill_strategy="uniform", cross_strategy="uniform",
+                             **VGM)
+    system.apply(ik)
     ik.set_grid(coord=GRID_COORD)
     if nsim > 0:
         ik.set_sim()   # must come before set_search when nsim>0
@@ -81,9 +94,9 @@ class TestMIKEstimation:
                                    err_msg="Probability rows do not sum to 1")
 
     def test_set_categorical_obs_label_mismatch_raises(self):
-        ik = IndicatorKriging(ncat=3, ndim=2, seed=1)
+        system = IndicatorVariogramSystem(ncat=3)
         with pytest.raises(ValueError, match="ncat"):
-            ik.set_categorical_obs(OBS_COORD, OBS_CAT, category_labels=[1, 2])
+            system.set_categorical_obs(OBS_COORD, OBS_CAT, category_labels=[1, 2])
 
     def test_destroy_without_error(self):
         ik = _build_ik()
@@ -145,9 +158,7 @@ def test_secondary_covariate_is_excluded_from_indicator_results():
         neglect_error=True, std_ck=True,
     )
     categories = np.where(np.arange(NOBS) % 2 == 0, 1, 2)
-    ik.set_categorical_obs(
-        OBS_COORD, categories, category_labels=[1, 2], nmax=NMAX,
-    )
+    _set_indicator_obs(ik, OBS_COORD, categories, [1, 2], NMAX)
     ik.set_obs(
         ivar=3,
         coord=OBS_COORD,
@@ -182,9 +193,7 @@ def _build_secondary_coik_1d(cross_sill, nsim=0, weight_file=""):
         std_ck=True, store_weight=bool(weight_file),
         weight_file=str(weight_file),
     )
-    ik.set_categorical_obs(
-        obs_coord, categories, category_labels=[1, 2], nmax=5,
-    )
+    _set_indicator_obs(ik, obs_coord, categories, [1, 2], 5)
     ik.set_obs(3, secondary_coord, secondary_value, nmax=5)
 
     # Positive-semidefinite coregionalization matrix.  The two indicators are

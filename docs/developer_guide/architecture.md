@@ -393,5 +393,6 @@ spans the contrast space orthogonal to the all-ones vector. This guarantees
 both positive semidefiniteness *and* closure (`B 1 = 0`) at every fitted lag;
 `validate_closure()` checks the row sums. `apply` transfers the encoded
 indicators and pair structures to an `IndicatorKriging`, checking `ncat`
-agreement. The engine wrapper keeps only solve/post-processing; it no longer
-owns empirical fitting.
+agreement. The engine wrapper keeps only solve/post-processing; its former
+`set_categorical_obs`/`set_indicator_vgm` construction helpers were removed in
+the Phase 9 cutover, so indicator construction lives in exactly one place.

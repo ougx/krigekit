@@ -8,25 +8,33 @@ Each of the K categories (or threshold classes) is treated as one indicator
 variable (ivar = 1..K).  Estimation produces K probability values per block;
 simulation produces a single drawn category (encoded as a one-hot binary vector).
 
+Indicator encoding and the K x K coregionalization are built with
+:class:`~krigekit.IndicatorVariogramSystem` and transferred with its
+``apply()``; this wrapper only allocates the engine, solves, and post-processes
+probabilities.
+
 Typical workflow — estimation
 ------------------------------
+>>> system = IndicatorVariogramSystem(categories=[1, 2, 3])
+>>> system.set_categorical_obs(obs_coord, obs_cat, nmax=20)
+>>> system.set_indicator_vgm(vtype="sph", a_major=1000,
+...                          sill_strategy="theoretical", cross_strategy="closure")
 >>> ik = IndicatorKriging(ncat=3, ndim=2)
->>> ik.set_categorical_obs(coord=obs_coord, categories=obs_cat,
-...                        category_labels=[1, 2, 3], nmax=20)
->>> for k in range(1, 4):
-...     ik.set_vgm(ivar=k, jvar=k, vtype="sph", nugget=0, sill=1.0,
-...                a_major=1000, a_minor1=500, a_minor2=500)
-...     ik.set_search(ivar=k)
+>>> system.apply(ik)                # transfers indicators + K x K structures
 >>> ik.set_grid(coord=grid_coord)
+>>> for k in range(1, 4): ik.set_search(ivar=k)
 >>> ik.solve()
 >>> probs, var = ik.get_results()   # probs.shape == (ngrid, ncat)
 >>> del ik
 
 Typical workflow — SIS
 -----------------------
+>>> system = IndicatorVariogramSystem(categories=[1, 2, 3])
+>>> system.set_categorical_obs(obs_coord, obs_cat, nmax=20)
+>>> system.set_indicator_vgm(vtype="sph", sill=0.2, a_major=500,
+...                          sill_strategy="uniform", cross_strategy="uniform")
 >>> ik = IndicatorKriging(ncat=3, ndim=2, nsim=100)
->>> ik.set_categorical_obs(...)
->>> ik.set_indicator_vgm(vtype="sph", sill=0.2, a_major=500)
+>>> system.apply(ik)
 >>> ik.set_grid(coord=grid_coord)
 >>> ik.set_sim()    # generates U(0,1) draws in Python and passes to Fortran
 >>> for k in range(1, 4): ik.set_search(ivar=k)
@@ -65,8 +73,9 @@ class IndicatorKriging(Kriging):
     * ``ncat`` names the K indicator categories.  ``nvar`` defaults to
       ``ncat`` (pure MIS) but can be set larger to add secondary continuous
       co-variates for co-kriging MIS (see below).
-    * :meth:`set_categorical_obs` is a convenience method that converts raw
-      category labels into K binary indicator datasets.
+    * Indicator encoding and the K x K coregionalization are built with
+      :class:`~krigekit.IndicatorVariogramSystem` and transferred via its
+      ``apply()``; this engine wrapper no longer owns that construction.
 
     Parameters
     ----------
@@ -93,12 +102,15 @@ class IndicatorKriging(Kriging):
 
     Co-kriging MIS example (K=3 categories + 1 secondary variable)::
 
+        system = IndicatorVariogramSystem(categories=[1, 2, 3])
+        system.set_categorical_obs(coord, cats, nmax=20)
+        system.set_indicator_vgm(vtype="sph", a_major=1000,
+                                 sill_strategy="theoretical",
+                                 cross_strategy="closure")
         ik = IndicatorKriging(ncat=3, nvar=4, ndim=2)
-        ik.set_categorical_obs(coord, cats, nmax=20)   # loads ivar=1,2,3
-        ik.set_obs(ivar=4, coord=sec_coord, value=sec_val)  # secondary
-        for iv in range(1, 5):
-            for jv in range(1, 5):
-                ik.set_vgm(ivar=iv, jvar=jv, ...)
+        system.apply(ik)                            # indicator block (ivar 1..3)
+        ik.set_obs(ivar=4, coord=sec_coord, value=sec_val)   # secondary
+        ik.set_vgm(ivar=4, jvar=4, ...)             # secondary auto/cross models
         ik.set_grid(coord=grid_coord)
         for k in range(1, 5):
             ik.set_search(ivar=k)
@@ -261,178 +273,3 @@ class IndicatorKriging(Kriging):
         else:
             super().set_sim(randpath=randpath)
 
-    # ------------------------------------------------------------------
-    def set_categorical_obs(
-        self,
-        coord: np.ndarray,
-        categories: np.ndarray,
-        category_labels=None,
-        nmax: int = 32,
-        maxdist: Optional[float] = None,
-        variance: Optional[np.ndarray] = None,
-    ):
-        """
-        Build K binary indicator datasets from raw category labels.
-
-        For each category k (ivar = 1..K), creates a binary indicator array
-        ``I_k = (categories == category_labels[k-1])`` and calls
-        :meth:`set_obs(ivar=k, ...)`.
-
-        Parameters
-        ----------
-        coord : ndarray, shape (nobs, ndim)
-            Sample coordinates.
-        categories : array-like, shape (nobs,)
-            Integer or string category label at each sample.
-        category_labels : list, optional
-            Ordered list of K unique labels — one per indicator variable.
-            If omitted, sorted unique values from ``categories`` are used.
-            The order determines which label maps to ivar=1, 2, ..., K.
-        nmax : int
-            Maximum neighbours per indicator variable.
-        maxdist : float
-            Maximum search distance (0 = unlimited).
-        variance : ndarray, shape (nobs,) or None
-            Measurement error variance at each sample (0 if omitted).
-        """
-        cats = np.asarray(categories)
-        if category_labels is None:
-            category_labels = sorted(np.unique(cats).tolist())
-        if len(category_labels) != self.ncat:
-            raise ValueError(
-                f"len(category_labels)={len(category_labels)} must equal "
-                f"ncat={self.ncat}"
-            )
-        var_arr = (np.zeros(len(cats), dtype=np.float64)
-                   if variance is None else np.asarray(variance, dtype=np.float64))
-        for k, label in enumerate(category_labels, start=1):
-            indicator = (cats == label).astype(np.float64)
-            self.set_obs(
-                ivar=k,
-                coord=coord,
-                value=indicator,
-                variance=var_arr,
-                nmax=nmax,
-                maxdist=maxdist,
-            )
-
-    # ------------------------------------------------------------------
-    def set_indicator_vgm(
-        self,
-        vtype: str = "sph",
-        nugget: float = 0.0,
-        sill: float = 1.0,
-        a_major: float = 1.0,
-        a_minor1: Optional[float] = None,
-        a_minor2: Optional[float] = None,
-        azimuth: float = 0.0,
-        dip: float = 0.0,
-        plunge: float = 0.0,
-        cross: str = "same",
-        proportions: Optional[np.ndarray] = None,
-    ):
-        """
-        Set indicator variograms for all K² pairs in one call.
-
-        This is a convenience wrapper around :meth:`set_vgm` that handles the
-        three standard approaches for the cross-variogram sills.
-
-        Parameters
-        ----------
-        vtype, nugget, sill, a_major, a_minor1, a_minor2, azimuth, dip, plunge
-            Shared variogram model — same shape and range are used for all pairs.
-            ``sill`` is the base partial sill (see ``cross`` for how it is applied
-            to off-diagonal pairs).
-        cross : {"same", "independent", "proportional"}
-            Controls how cross-variogram sills are computed:
-
-            * ``"same"`` *(default)* — sill is identical for all K² pairs.
-              Simple and robust; ``post_solve`` normalisation absorbs the error.
-            * ``"independent"`` — auto-variogram sill as given (or from
-              ``proportions``); cross-variogram sill = 0 (no co-kriging).
-              Equivalent to running K separate ordinary kriging systems.
-            * ``"proportional"`` — auto sills ∝ p_k (1 − p_k) from
-              ``proportions``; cross sills = √(s_k · s_l).  Satisfies the LMC
-              positive-definiteness condition for each nested structure.
-              Requires ``proportions``.
-        proportions : array-like of shape (K,), optional
-            Observed category proportions [p_1, …, p_K].  When given:
-
-            * auto sill for category k = p_k · (1 − p_k)  (indicator variance)
-            * cross sill for k ≠ l = √(s_k · s_l)   (if ``cross="proportional"``)
-
-            Ignored when ``cross="same"``.
-
-        Notes
-        -----
-        Theoretical sills differ per category (p_k varies), and cross-sills are
-        theoretically negative (−p_k · p_l for jointly exhaustive indicators).
-        ``cross="same"`` uses one positive value for all pairs, relying on
-        ``post_solve_indicator`` normalisation to produce a valid probability
-        simplex.  ``cross="proportional"`` is more principled; ``cross="independent"``
-        is the most conservative (no coupling between indicator variables).
-
-        Examples
-        --------
-        Same sill for all 16 pairs (current practice)::
-
-            ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                                 a_major=500, a_minor1=80, azimuth=90)
-
-        Category-specific sills from observed proportions, proportional cross-terms::
-
-            props = np.array([0.18, 0.23, 0.21, 0.38])
-            ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                                 a_major=500, a_minor1=80, azimuth=90,
-                                 cross="proportional", proportions=props)
-
-        Independent kriging (zero cross-covariance)::
-
-            ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
-                                 a_major=500, a_minor1=80, azimuth=90,
-                                 cross="independent", proportions=props)
-        """
-        valid_cross = {"same", "independent", "proportional"}
-        if cross not in valid_cross:
-            raise ValueError(f"cross must be one of {valid_cross!r}, got {cross!r}")
-        if cross == "proportional" and proportions is None:
-            raise ValueError("cross='proportional' requires proportions to be supplied")
-
-        # Compute auto sills: theory gives p_k*(1-p_k) if proportions supplied
-        if proportions is not None and cross != "same":
-            p = np.asarray(proportions, dtype=float)
-            if len(p) != self.ncat:
-                raise ValueError(
-                    f"len(proportions)={len(p)} must equal ncat={self.ncat}"
-                )
-            auto_sills = p * (1.0 - p)
-        else:
-            auto_sills = np.full(self.ncat, sill)
-
-        for iv in range(1, self.ncat + 1):
-            for jv in range(1, self.ncat + 1):
-                if iv == jv:
-                    pair_sill = float(auto_sills[iv - 1])
-                    pair_nugget = nugget
-                elif cross == "independent":
-                    pair_sill = 0.0
-                    pair_nugget = 0.0
-                elif cross == "proportional":
-                    pair_sill = float(np.sqrt(auto_sills[iv - 1] * auto_sills[jv - 1]))
-                    pair_nugget = nugget
-                else:  # "same"
-                    pair_sill = sill
-                    pair_nugget = nugget
-
-                self.set_vgm(
-                    ivar=iv, jvar=jv,
-                    vtype=vtype,
-                    nugget=pair_nugget,
-                    sill=pair_sill,
-                    a_major=a_major,
-                    a_minor1=a_minor1,
-                    a_minor2=a_minor2,
-                    azimuth=azimuth,
-                    dip=dip,
-                    plunge=plunge,
-                )

@@ -31,19 +31,22 @@ digitised from an outcrop photograph (Klingbeil 1998).
 SIS workflow
 ------------
 1. Convert raw category labels into K = 4 binary indicator datasets via
-   :meth:`~krigekit.IndicatorKriging.set_categorical_obs`.
+   :meth:`~krigekit.IndicatorVariogramSystem.set_categorical_obs`.
 2. Assign variograms to all K² = 16 pairs in one call using
-   :meth:`~krigekit.IndicatorKriging.set_indicator_vgm`.
-   Three ``cross`` strategies are available:
+   :meth:`~krigekit.IndicatorVariogramSystem.set_indicator_vgm`, then transfer
+   the encoded indicators and structures to the engine with ``apply()``.
+   ``sill_strategy`` and ``cross_strategy`` select the coregionalization:
 
-   * ``"same"`` — one shared sill for all K² pairs.  Simplest; relies on
-     ``post_solve`` normalisation to compensate for approximate cross-sills.
-   * ``"proportional"`` — auto sills = p_k (1 − p_k); cross sills = √(s_k · s_l).
-     LMC positive-definite for each nested structure; requires ``proportions``.
-   * ``"independent"`` — cross sills = 0; equivalent to K separate ordinary
-     kriging systems.
+   * ``sill_strategy="uniform", cross_strategy="uniform"`` — one shared sill for
+     all K² pairs.  Simplest; relies on ``post_solve`` normalisation.
+   * ``sill_strategy="theoretical", cross_strategy="proportional"`` — auto sills
+     = p_k (1 − p_k); cross sills = √(s_k · s_l).  LMC positive-definite per
+     nested structure; requires proportions.
+   * ``cross_strategy="independent"`` — cross sills = 0; equivalent to K separate
+     ordinary kriging systems.  ``cross_strategy="closure"`` (``-p_k p_l``) is
+     the recommended exhaustive-indicator model.
 
-   This example runs both ``"same"`` and ``"proportional"`` for comparison.
+   This example runs the uniform and proportional strategies for comparison.
 
 3. Run the simulation — Fortran's ``prepare_indicator`` replaces the
    standard Gaussian samples with U(0, 1) draws used for CDF inversion
@@ -66,7 +69,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
-from krigekit import IndicatorKriging
+from krigekit import IndicatorKriging, IndicatorVariogramSystem
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -188,15 +191,14 @@ ik = IndicatorKriging(
     ncat=ncat, ndim=2, nsim=NSIM,
     neglect_error=True, std_ck=True, seed=SEED,
 )
-ik.set_categorical_obs(
-    coord=obs_coord, categories=obs_cats,
-    category_labels=cat_labels, nmax=NMAX,
-)
-ik.set_indicator_vgm(
+isys = IndicatorVariogramSystem(categories=cat_labels)
+isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
-    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR,
-    azimuth=AZIMUTH, cross="same",
+    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
+    sill_strategy="uniform", cross_strategy="uniform",
 )
+isys.apply(ik)
 ik.set_grid(coord=grid_coord)
 ik.set_sim()
 for k in range(1, ncat + 1):
@@ -217,7 +219,7 @@ _plot_reals(
 plt.show()
 
 #%%
-# SIS — proportional sills (``cross="proportional"``)
+# SIS — proportional sills (``cross_strategy="proportional"``)
 # ----------------------------------------------------
 # Auto-variogram sills are calibrated to the indicator variance p_k (1 − p_k)
 # for each category.  Cross sills are set to √(s_k · s_l) so the coregionalisation
@@ -241,15 +243,14 @@ ik = IndicatorKriging(
     ncat=ncat, ndim=2, nsim=NSIM,
     neglect_error=True, std_ck=True, seed=SEED,
 )
-ik.set_categorical_obs(
-    coord=obs_coord, categories=obs_cats,
-    category_labels=cat_labels, nmax=NMAX,
-)
-ik.set_indicator_vgm(
+isys = IndicatorVariogramSystem(categories=cat_labels)
+isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
-    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR,
-    azimuth=AZIMUTH, cross="proportional", proportions=props,
+    a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
+    sill_strategy="theoretical", cross_strategy="proportional", proportions=props,
 )
+isys.apply(ik)
 ik.set_grid(coord=grid_coord)
 ik.set_sim()
 for k in range(1, ncat + 1):
