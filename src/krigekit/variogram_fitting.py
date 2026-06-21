@@ -1,9 +1,62 @@
 """Generic weighted fitting for marginal nested variogram models."""
 
+from dataclasses import dataclass
+
 import numpy as np
 from scipy.optimize import curve_fit
 
 from .variogram_kernels import vgmfunc
+
+
+@dataclass
+class FitResult:
+    """Uniform result of a variogram fit at any level.
+
+    ``target`` is the fitted object (a :class:`VgmStructure`, analysis model, or
+    system).  ``params`` is the flat fitted vector, ``cov`` its covariance when
+    available, ``optimizer`` the SciPy result for joint/constrained fits, and
+    ``metrics`` a goodness-of-fit dict.  :meth:`summary` returns a labelled
+    parameter table using each component's ``name``/``vtype``.
+    """
+
+    target: object
+    params: object = None
+    cov: object = None
+    optimizer: object = None
+    metrics: object = None
+    ax: object = None
+
+    @property
+    def success(self):
+        """True unless an optimizer reported failure."""
+        if self.optimizer is None:
+            return True
+        return bool(getattr(self.optimizer, "success", True))
+
+    def _structure(self):
+        """Return the VgmStructure carried by the target, if any."""
+        if hasattr(self.target, "components"):
+            return self.target
+        return getattr(self.target, "structure", None)
+
+    def summary(self):
+        """Return a labelled parameter table (one row per fitted value)."""
+        import pandas as pd
+
+        structure = self._structure()
+        if structure is None:
+            raise TypeError("summary() requires a structure-bearing fit target")
+        name = getattr(structure, "name", None)
+        rows = []
+        comps = structure.components
+        if comps:
+            c0 = comps[0]
+            rows.append((name, c0.display_name, c0.vtype, "nugget", c0.nugget))
+        for comp in comps:
+            rows.append((name, comp.display_name, comp.vtype, "sill", comp.sill))
+            rows.append((name, comp.display_name, comp.vtype, "range", comp.a_major))
+        return pd.DataFrame(
+            rows, columns=["structure", "component", "vtype", "param", "value"])
 
 
 def _normalise_model_specs(models):

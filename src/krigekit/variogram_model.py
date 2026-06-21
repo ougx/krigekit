@@ -14,7 +14,7 @@ from .variogram_empirical import (
     estimate_aniso_angle,
     raw_vgm,
 )
-from .variogram_fitting import _fit_sigma, fit_vgm
+from .variogram_fitting import _fit_sigma
 from .variogram_component import VgmComponent
 from .variogram_structure import VgmStructure
 from .variogram_geometry import (
@@ -278,75 +278,58 @@ class VariogramModel(_VariogramModelBase):
         weights=None,
         bounds=None,
         inplace: bool = False,
-        return_params: bool = False,
         makeplot: bool = False,
         fit_nugget: bool = True,
         raw_kwargs=None,
         avg_kwargs=None,
         **kwargs,
     ):
-        """Fit this model template to an averaged variogram.
+        """Fit this model to an averaged variogram, returning a ``FitResult``.
 
-        If ``avgvgm`` is omitted, the method uses ``avg_variogram_`` when
-        available, otherwise computes ``experimental()`` and ``average()`` from
-        observations supplied by :meth:`set_obs`.
-
-        ``sigma_col`` supplies SciPy-style standard deviations.  ``weights``
-        or ``weight_col`` supply weighted least-squares weights, where larger
-        values carry more influence.  Other parameters, except ``inplace``,
-        ``return_params``, ``fit_nugget``, ``raw_kwargs`` and ``avg_kwargs``,
-        are forwarded to :func:`fit_vgm`.
+        If ``avgvgm`` is omitted, the cached ``avg_variogram_`` is used when
+        available, otherwise it is computed from observations supplied by
+        :meth:`set_obs`.  The theoretical fit delegates to
+        :meth:`VgmStructure.fit`; this wrapper adds the empirical-data
+        convenience and updates the analysis fit-state caches.
 
         Returns
         -------
-        tuple
-            By default ``(fitted_model, covariance)``.  If ``return_params`` is
-            true, the fitted parameter vector is appended.  If ``makeplot`` is
-            true, the Matplotlib axis is appended.
+        FitResult
+            ``.target`` is this model (``inplace=True``) or a new fitted model;
+            ``.params``/``.cov``/``.metrics`` carry the fit outputs and
+            ``.summary()`` gives a labelled table.
         """
+        from .variogram_fitting import FitResult
+
         if avgvgm is None:
-            if self._avg is None:
-                avgvgm = self.average(raw_kwargs=raw_kwargs, **(avg_kwargs or {}))
-            else:
-                avgvgm = self._avg
-        if p0 is None:
-            p0 = self._default_fit_p0(fit_nugget=fit_nugget)
+            avgvgm = self._avg if self._avg is not None else \
+                self.average(raw_kwargs=raw_kwargs, **(avg_kwargs or {}))
 
-        result = fit_vgm(
-            avgvgm,
-            x_col=x_col,
-            y_col=y_col,
-            sigma_col=sigma_col,
-            weight_col=weight_col,
-            weights=weights,
-            models=self,
-            p0=p0,
-            bounds=bounds,
-            return_model=True,
-            makeplot=makeplot,
-            **kwargs,
-        )
-        params, cov, fitted = result[:3]
-        extras = result[3:]
-        self._params = np.asarray(params, dtype=float)
-        self._pcov = cov
-        self._fitted_model = fitted
+        common = dict(p0=p0, x_col=x_col, y_col=y_col, sigma_col=sigma_col,
+                      weight_col=weight_col, weights=weights, bounds=bounds,
+                      fit_nugget=fit_nugget, **kwargs)
         if inplace:
-            self.structure.components = [comp.copy() for comp in fitted.structure.components]
-            fitted = self
-            self._fitted_model = self
+            res = self.structure.fit(avgvgm, inplace=True, **common)
+            target = self
         else:
-            fitted._raw = self._raw
-            fitted._avg = self._avg
-            fitted._params = np.asarray(params, dtype=float)
-            fitted._pcov = cov
-            fitted._fitted_model = fitted
+            res = self.structure.fit(avgvgm, inplace=False, **common)
+            target = VariogramModel()
+            target.structure = res.target
+            target._raw = self._raw
+            target._avg = self._avg
 
-        out = [fitted, cov]
-        if return_params:
-            out.append(params)
-        out.extend(extras)
-        return tuple(out)
+        target._params = res.params
+        target._pcov = res.cov
+        target._fitted_model = target
+        self._params = res.params
+        self._pcov = res.cov
+        self._fitted_model = target
+
+        ax = None
+        if makeplot:
+            ax = target.plot(avgvgm, x_col=x_col, y_col=y_col)
+        return FitResult(target=target, params=res.params, cov=res.cov,
+                         metrics=res.metrics, ax=ax)
 
     def _default_anisotropic_fit_p0(self, include_minor2: bool, fit_nugget: bool = True):
         """Build default ``(sill, major, minor1[, minor2], ..., [nugget])`` params."""

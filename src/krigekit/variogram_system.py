@@ -8,7 +8,6 @@ from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
 from .variogram_accessors import _ObservationAccessor, _VgmAccessor
 from .variogram_component import VgmComponent
 from .variogram_kernels import calc_vgm
-from .variogram_model import VariogramModel
 from .variogram_observation import ObservationSet
 from .variogram_structure import VgmStructure
 
@@ -16,8 +15,8 @@ from .variogram_structure import VgmStructure
 class VariogramSystem:
     """Multivariable variogram system for cokriging workflows.
 
-    The system stores observations and variogram models by 1-based variable
-    pair ``(ivar, jvar)``.  Each pair model is a :class:`VariogramModel`, while
+    The system stores observations and variogram structures by 1-based variable
+    pair ``(ivar, jvar)``.  Each pair is a :class:`VgmStructure`, while
     :meth:`fit_lmc` fits all requested pairs together with positive-semidefinite
     coregionalization matrices.
     """
@@ -290,10 +289,7 @@ class VariogramSystem:
             avgvgm = self.avg_variograms_.get(key)
         if avgvgm is None:
             avgvgm = self.calc_average(*key)
-        model = VariogramModel()
-        model.structure = structure if inplace else structure.copy()
-        fitted, *rest = model.fit(avgvgm, inplace=inplace, **kwargs)
-        return (fitted.structure, *rest)
+        return structure.fit(avgvgm, inplace=inplace, **kwargs)
 
     def _template_components(self):
         """Return the shared LMC structure template from configured pairs."""

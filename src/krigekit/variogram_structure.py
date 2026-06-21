@@ -195,6 +195,65 @@ class VgmStructure:
             coord0, coord1, pairwise=pairwise))
         return gamma if pairwise else gamma.squeeze()
 
+    # -- fitting ------------------------------------------------------------
+    def _with_flat_params(self, params, fit_nugget):
+        """Return component copies updated from a flat ``(sill, range, ...)`` vector.
+
+        Model type, anisotropy, ``product`` and ``name`` are preserved; only
+        sill, major range, and (optionally) the first nugget are replaced.
+        """
+        params = np.asarray(params, dtype=float)
+        fitted = [comp.copy(sill=float(params[2 * i]), a_major=float(params[2 * i + 1]))
+                  for i, comp in enumerate(self.components)]
+        if fit_nugget and len(params) % 2 == 1:
+            fitted[0] = fitted[0].copy(nugget=float(params[-1]))
+        return fitted
+
+    def fit(self, data, *, kind="auto", p0=None, x_col=("distance", "mean"),
+            y_col=("variogram", "mean"), sigma_col=None, weight_col=None,
+            weights=None, bounds=None, fit_nugget=True, inplace=True, **kwargs):
+        """Fit sills, major ranges, and nugget to an averaged variogram.
+
+        Returns a :class:`krigekit.variogram_fitting.FitResult`.  Fitted values
+        are written into copies of the current components, so model type,
+        anisotropy, and ``name`` are preserved.  ``kind`` selects the fit; only
+        the ``"isotropic"`` path (default ``"auto"`` for a distance/variogram
+        table) is implemented here -- use ``VariogramModel.fit_anisotropy`` for
+        directional fits.
+        """
+        from .variogram_fitting import FitResult, calc_fit_metrics, fit_vgm
+
+        if not self.components:
+            raise RuntimeError("call set_vgm() before fit()")
+        if kind not in ("auto", "isotropic", "directional"):
+            raise ValueError("kind must be 'auto', 'isotropic', or 'directional'")
+        if kind == "directional":
+            raise NotImplementedError(
+                "directional fitting is available via VariogramModel.fit_anisotropy")
+
+        if p0 is None:
+            p0 = []
+            for comp in self.components:
+                p0.extend([comp.sill, comp.a_major])
+            if fit_nugget:
+                p0.append(self.components[0].nugget)
+
+        params, cov = fit_vgm(
+            data, x_col=x_col, y_col=y_col, sigma_col=sigma_col,
+            weight_col=weight_col, weights=weights,
+            models=self.to_kriging_specs(), p0=p0, bounds=bounds, **kwargs,
+        )
+        fitted = self._with_flat_params(params, fit_nugget)
+        target = self if inplace else VgmStructure(fitted, name=self.name)
+        if inplace:
+            self.components = fitted
+        return FitResult(
+            target=target,
+            params=np.asarray(params, dtype=float),
+            cov=cov,
+            metrics=calc_fit_metrics(data, target, x_col, y_col),
+        )
+
     # -- engine transfer ----------------------------------------------------
     def to_kriging_specs(self, replace=False):
         """Return flat specs accepted by ``Kriging.set_vgm``.

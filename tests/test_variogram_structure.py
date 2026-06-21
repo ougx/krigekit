@@ -1,6 +1,7 @@
 """Tests for the theoretical variogram structure and its engine equivalence."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from krigekit.variogram_component import VgmComponent
@@ -129,6 +130,43 @@ def test_structure_and_component_names():
     # copy preserves structure and component names
     copy = structure.copy()
     assert copy.name == "primary" and copy[0].name == "long"
+
+
+def _avg_table(structure, h=None):
+    """Build an averaged-variogram table from a truth structure."""
+    h = np.linspace(0.2, 8.0, 30) if h is None else h
+    return pd.DataFrame({
+        ("distance", "mean"): h,
+        ("variogram", "mean"): structure.variogram(h),
+    })
+
+
+def test_structure_fit_returns_result_and_preserves_names():
+    truth = VgmStructure().set_vgm("sph", nugget=0.1, sill=2.0, a_major=5.0)
+    avg = _avg_table(truth)
+
+    structure = VgmStructure(name="primary")
+    structure.set_vgm("sph", nugget=0.0, sill=1.5, a_major=4.0, name="long")
+    res = structure.fit(avg)
+
+    assert res.target is structure and res.success
+    np.testing.assert_allclose(res.params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
+    assert structure[0].name == "long"            # name survives the fit
+    summary = res.summary()
+    assert set(summary["param"]) == {"nugget", "sill", "range"}
+    assert (summary["component"] == "long").all()
+
+
+def test_structure_fit_not_inplace_leaves_template_unchanged():
+    truth = VgmStructure().set_vgm("sph", sill=2.0, a_major=5.0)
+    avg = _avg_table(truth)
+
+    structure = VgmStructure().set_vgm("sph", sill=1.5, a_major=4.0)
+    res = structure.fit(avg, inplace=False)
+
+    assert res.target is not structure
+    assert structure[0].sill == 1.5               # template untouched
+    np.testing.assert_allclose(res.target.components[0].sill, 2.0, rtol=1e-5)
 
 
 def test_variogram_model_owns_structure_and_delegates():

@@ -761,7 +761,8 @@ def test_variogram_model_fit_method_returns_fitted_model():
 
     template = VariogramModel()
     template.set_vgm(vtype="sph", nugget=0.0, sill=1.5, a_major=4.0)
-    fitted, _, params = template.fit(avg, return_params=True)
+    res = template.fit(avg)
+    fitted, params = res.target, res.params
 
     assert fitted is not template
     assert template._params is template.params_
@@ -783,7 +784,8 @@ def test_variogram_model_fit_inplace_updates_self():
 
     template = VariogramModel()
     template.set_vgm(vtype="sph", nugget=0.0, sill=1.5, a_major=4.0)
-    fitted, _ = template.fit(avg, inplace=True)
+    res = template.fit(avg, inplace=True)
+    fitted = res.target
 
     assert fitted is template
     assert template.fitted_model_ is template
@@ -946,7 +948,8 @@ def test_variogram_system_fit_pair_updates_pair_model():
     system = VariogramSystem(nvar=1)
     system.set_vgm(1, 1, vtype="sph", nugget=0.0, sill=1.5, a_major=4.0)
     system.set_avg_vgm(1, 1, avg)
-    fitted, _, params = system.fit_pair(1, 1, return_params=True)
+    res = system.fit_pair(1, 1)
+    fitted, params = res.target, res.params
 
     assert system.vgm[1, 1] is fitted
     np.testing.assert_allclose(params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
