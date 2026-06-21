@@ -473,7 +473,7 @@ raw = model.calc_experimental(
     verbose=False,
 )
 
-# Visual estimate only; does not modify model.structures.
+# Visual estimate only; does not modify model.structure.
 model.plot_map3d(angle_aniso="estimate", cutoff=2500.0)
 
 # Numeric azimuth and dip estimate.
