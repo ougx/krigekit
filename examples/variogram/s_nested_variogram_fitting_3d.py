@@ -90,10 +90,13 @@ print(f"pooled {len(pooled):,} pairs from {N_REAL} realisations")
 # ``estimate_aniso_angle`` returns ``(azimuth, dip, plunge)`` and the minor/major
 # ratios ``(anis1, anis2)`` from a weighted PCA of the pooled cloud.
 
-# Estimate orientation from near-origin lags (where the anisotropy is sharpest);
-# a larger radius would reach past the short structure and blur the axes.
+# Estimate orientation from a *small* near-origin radius -- about half the
+# shortest structure's range (short major = 18, so r_max ~ 8).  This is where
+# the anisotropy is sharpest; a larger radius reaches into the long structure
+# and picks up the grid lattice, which biases the axes (here r_max=14 pulls the
+# azimuth to ~42 deg, while r_max~8 recovers ~32 deg vs the true 35 deg).
 (azimuth, dip, plunge), (anis1, anis2) = estimate_aniso_angle(
-    pooled, dim3d=True, r_max=14.0)
+    pooled, dim3d=True, r_max=8.0)
 
 print(f"estimated orientation: azimuth={azimuth:.1f}  dip={dip:.1f}  "
       f"plunge={plunge:.1f}")
