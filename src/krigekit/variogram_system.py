@@ -7,6 +7,7 @@ from scipy.optimize import least_squares
 from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
 from .variogram_accessors import _ObservationAccessor, _VgmAccessor
 from .variogram_component import VgmComponent
+from .variogram_fitting import FitResult
 from .variogram_kernels import calc_vgm
 from .variogram_observation import ObservationSet
 from .variogram_structure import VgmStructure
@@ -468,7 +469,7 @@ class VariogramSystem:
             self._structures = fitted._structures
             self.fit_result_ = result
             fitted = self
-        return fitted, result
+        return FitResult(target=fitted, optimizer=result)
 
     def _build_lmc_system(self, template, nugget, mats, ranges):
         """Build a fitted :class:`VariogramSystem` from LMC matrices."""

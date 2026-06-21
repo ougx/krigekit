@@ -14,7 +14,7 @@ from .variogram_empirical import (
     estimate_aniso_angle,
     raw_vgm,
 )
-from .variogram_fitting import _fit_sigma
+from .variogram_fitting import FitResult, _fit_sigma
 from .variogram_component import VgmComponent
 from .variogram_structure import VgmStructure
 from .variogram_geometry import (
@@ -299,8 +299,6 @@ class VariogramModel(_VariogramModelBase):
             ``.params``/``.cov``/``.metrics`` carry the fit outputs and
             ``.summary()`` gives a labelled table.
         """
-        from .variogram_fitting import FitResult
-
         if avgvgm is None:
             avgvgm = self._avg if self._avg is not None else \
                 self.average(raw_kwargs=raw_kwargs, **(avg_kwargs or {}))
@@ -430,7 +428,6 @@ class VariogramModel(_VariogramModelBase):
         weights=None,
         bounds=None,
         inplace: bool = False,
-        return_params: bool = False,
         makeplot: bool = False,
         fit_nugget: bool = True,
         include_minor2: bool = None,
@@ -540,9 +537,6 @@ class VariogramModel(_VariogramModelBase):
             fitted._pcov = cov
             fitted._fitted_model = fitted
 
-        out = [fitted, cov]
-        if return_params:
-            out.append(params)
         if makeplot:
             if ax is None:
                 _, ax = plt.subplots(figsize=(8, 5))
@@ -555,8 +549,8 @@ class VariogramModel(_VariogramModelBase):
                 ax.plot(xx, model(xxdata, *params))
             ax.set(xlabel=xlabel, ylabel=ylabel)
             ax.legend()
-            out.append(ax)
-        return tuple(out)
+        return FitResult(target=fitted, params=np.asarray(params, dtype=float),
+                         cov=cov, ax=ax if makeplot else None)
 
     def set_vgm(
         self,

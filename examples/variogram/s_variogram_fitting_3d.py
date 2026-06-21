@@ -155,7 +155,7 @@ dir_avg["axis_weight"] = (
 
 # The synthetic field has no nugget, so fit_nugget=False keeps the fit stable
 # (fitting a spurious nugget would otherwise trade sill for nugget).
-fitted, _ = model.fit_anisotropy(
+model.fit_anisotropy(
     dir_avg,
     include_minor2=True,
     fit_nugget=False,

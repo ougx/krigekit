@@ -453,12 +453,12 @@ def test_variogram_model_fit_anisotropy_recovers_major_and_minor_ranges():
         azimuth=30.0,
     )
 
-    fitted, _, params = model.fit_anisotropy(
+    res = model.fit_anisotropy(
         directional,
         p0=(0.5, 80.0, 40.0),
         fit_nugget=False,
-        return_params=True,
     )
+    fitted, params = res.target, res.params
 
     np.testing.assert_allclose(params, [0.8, 100.0, 25.0], rtol=1e-5, atol=1e-5)
     np.testing.assert_allclose(fitted.structure.components[0].a_major, 100.0, rtol=1e-5)
@@ -971,10 +971,11 @@ def test_variogram_system_fit_lmc_returns_psd_coregionalization_matrix():
             ("variogram", "count"): np.ones_like(h),
         }))
 
-    fitted, result = system.fit_lmc(
+    res = system.fit_lmc(
         fit_nugget=False,
         weight_col=("variogram", "count"),
     )
+    fitted, result = res.target, res.optimizer
     mats = fitted.get_lmc_matrices(include_nugget=False)
     eig = np.linalg.eigvalsh(mats[0])
 
@@ -1013,8 +1014,9 @@ def test_fit_lmc_enforces_psd_under_invalid_cross():
             ("variogram", "count"): np.ones_like(h),
         }))
 
-    fitted, result = system.fit_lmc(fit_nugget=False,
-                                    weight_col=("variogram", "count"))
+    res = system.fit_lmc(fit_nugget=False,
+                         weight_col=("variogram", "count"))
+    fitted, result = res.target, res.optimizer
     B = fitted.get_lmc_matrices(include_nugget=False)[0]
 
     assert result.success
@@ -1044,8 +1046,9 @@ def test_fit_lmc_three_variable_nested_recovers_and_is_psd():
                 ("variogram", "count"): np.ones_like(h),
             }))
 
-    fitted, result = system.fit_lmc(fit_nugget=False, fit_ranges=False,
-                                    weight_col=("variogram", "count"))
+    res = system.fit_lmc(fit_nugget=False, fit_ranges=False,
+                         weight_col=("variogram", "count"))
+    fitted, result = res.target, res.optimizer
     mats = fitted.get_lmc_matrices(include_nugget=False)
 
     assert result.success
