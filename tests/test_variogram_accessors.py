@@ -110,3 +110,62 @@ def test_accessor_shares_storage_with_models_compat():
         system.vgm[1, 2].covariance([0.0, 5.0]),
         system.models[(1, 2)].structure.covariance([0.0, 5.0]),
     )
+
+
+# --- observation accessor --------------------------------------------------
+def _coords(n=6):
+    rng = np.random.default_rng(0)
+    return rng.uniform(0.0, 10.0, size=(n, 2)), rng.normal(size=n)
+
+
+def test_obs_reading_does_not_configure():
+    system = VariogramSystem(nvar=2)
+    _ = system.obs[1]
+    assert system.obs.nmaterialized == 1 and system.obs.nconfigured == 0
+    assert system.obs.configured_indices() == []
+
+    coord, value = _coords()
+    system.obs[1].set(coord, value)
+    assert system.obs.configured_indices() == [1]
+
+
+def test_obs_stable_identity_and_models_compat():
+    system = VariogramSystem(nvar=2)
+    assert system.obs[1] is system.obs[1]
+    coord, value = _coords()
+    system.obs[1].set(coord, value)
+    assert system.observations[1] is system.obs[1]
+
+
+def test_obs_get_create_false_and_clear():
+    system = VariogramSystem(nvar=2)
+    assert system.obs.get(1, create=False) is None
+    coord, value = _coords()
+    system.obs[1].set(coord, value)
+    assert system.obs.get(1, create=False) is system.obs[1]
+    system.obs.clear(1)
+    assert system.obs.nmaterialized == 0
+
+
+def test_obs_index_rules():
+    system = VariogramSystem(nvar=2)
+    with pytest.raises(ValueError, match="1-based"):
+        _ = system.obs[0]
+    with pytest.raises(ValueError, match="exceeds nvar"):
+        _ = system.obs[3]
+
+    dyn = VariogramSystem()
+    dyn.obs[1].set(*_coords())
+    dyn.obs[3].set(*_coords())
+    assert dyn.nvar == 3
+    assert dyn.obs.configured_indices() == [1, 3]
+
+
+def test_set_obs_invalidates_pair_caches():
+    system = VariogramSystem(nvar=2)
+    coord, value = _coords()
+    system.set_obs(1, coord, value)
+    system.set_raw_vgm(1, 1, "sentinel")          # pretend cached cloud
+    assert (1, 1) in system.raw_variograms_
+    system.set_obs(1, coord, value)               # re-set must invalidate
+    assert (1, 1) not in system.raw_variograms_

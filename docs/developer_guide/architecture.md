@@ -261,7 +261,8 @@ The implementation is split by responsibility:
 | `variogram_model.py` | Marginal analysis workflow (owns a `VgmStructure`) | `vgm_struct` analysis |
 | `variogram_st.py` | Product-sum and sum-metric coupling | `vgm_struct_st` |
 | `variogram_system.py` | Multivariable/LMC workflow | Variogram matrix by variable pair |
-| `variogram_accessors.py` | Internal 1-based `vgm[i, j]` matrix accessor | Variogram matrix indexing |
+| `variogram_observation.py` | `ObservationSet` (data + search config) | Observation/search state |
+| `variogram_accessors.py` | Internal 1-based `vgm[i, j]` / `obs[i]` accessors | Variogram matrix / observation indexing |
 
 `krigekit.variogram` is a compatibility facade, so existing helper and class
 imports remain valid. New code may import the public classes directly
@@ -307,3 +308,11 @@ becomes an LMC input or a transfer target; selection uses
 `vgm.configured_pairs()`, never materialization. The accessor is a view over
 the system's per-pair storage (each `VariogramModel`'s `structure`), so the
 legacy `system.models[(i, j)].structure` observes the same object.
+
+`system.obs[ivar]` (a `_ObservationAccessor`) mirrors this for single indices,
+returning an `ObservationSet` that carries observation data plus the
+per-variable neighbour-search configuration. The same 1-based and
+materialized-vs-configured rules apply: an observation is configured only once
+it has coordinates and values, and empirical/LMC pair selection uses
+`obs.configured_indices()`. `set_search(...)` records search settings on the
+set for transfer to the engine; neighbour selection itself stays in Fortran.

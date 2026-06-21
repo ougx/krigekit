@@ -5,10 +5,11 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from .variogram_empirical import avg_vgm, cross_vgm, raw_cross_vgm, raw_vgm
-from .variogram_accessors import _VgmAccessor
+from .variogram_accessors import _ObservationAccessor, _VgmAccessor
 from .variogram_component import VgmComponent
 from .variogram_kernels import calc_vgm
 from .variogram_model import VariogramModel
+from .variogram_observation import ObservationSet
 
 
 class VariogramSystem:
@@ -47,6 +48,13 @@ class VariogramSystem:
             assign=self._vgm_assign,
             drop=self._vgm_drop,
             materialized=self._vgm_materialized,
+        )
+        self.obs = _ObservationAccessor(
+            index=self._check_ivar,
+            ensure=self._obs_ensure,
+            peek=self._obs_peek,
+            drop=self._obs_drop,
+            materialized=self._obs_materialized,
         )
 
     def _check_ivar(self, ivar):
@@ -106,36 +114,59 @@ class VariogramSystem:
         """Return ``(key, structure)`` for every materialized pair."""
         return [(key, model.structure) for key, model in self.models.items()]
 
-    def set_obs(self, ivar, coord, value, times=None):
-        """Store observations for variable ``ivar``.
+    # -- storage callbacks used by the ``obs`` accessor --------------------
+    def _obs_ensure(self, ivar):
+        """Return the observation set for a variable, creating it if needed."""
+        if ivar not in self.observations:
+            self.observations[ivar] = ObservationSet()
+        return self.observations[ivar]
 
-        Parameters mirror :meth:`VariogramModel.set_obs`, with the additional
-        1-based variable index used by :class:`krigekit.Kriging`.
-        """
-        ivar = self._check_ivar(ivar)
-        coord = np.asarray(coord, dtype=float)
-        value = np.asarray(value, dtype=float).reshape(-1)
-        if coord.ndim == 1:
-            coord = coord.reshape(-1, 1)
-        if coord.ndim != 2:
-            raise ValueError("coord must have shape (n, dim)")
-        if coord.shape[0] != len(value):
-            raise ValueError("coord and value must have matching lengths")
-        if coord.shape[1] not in (1, 2, 3):
-            raise ValueError("coordinates must be 1D, 2D or 3D")
-        if times is not None:
-            times = np.asarray(times, dtype=float).reshape(-1)
-            if len(times) != len(value):
-                raise ValueError("times and value must have matching lengths")
-        self.observations[ivar] = {
-            "coord": coord,
-            "value": value,
-            "times": times,
-        }
+    def _obs_peek(self, ivar):
+        """Return the observation set for a variable, or ``None``."""
+        return self.observations.get(ivar)
+
+    def _obs_drop(self, ivar):
+        """Remove a materialized observation entry."""
+        self.observations.pop(ivar, None)
+
+    def _obs_materialized(self):
+        """Return ``(ivar, set)`` for every materialized observation."""
+        return list(self.observations.items())
+
+    def _invalidate_pair_caches(self, ivar):
+        """Drop cached raw/averaged variograms for any pair containing ``ivar``."""
         for key in list(self.raw_variograms_):
             if ivar in key:
                 self.raw_variograms_.pop(key, None)
                 self.avg_variograms_.pop(key, None)
+
+    def set_obs(self, ivar, coord, value, times=None, variance=None,
+                nmax=None, maxdist=None, sk_mean=None, drift=None):
+        """Store observations for variable ``ivar`` (ergonomic wrapper).
+
+        Delegates to ``self.obs[ivar].set(...)`` and invalidates cached
+        empirical variograms for any pair containing ``ivar``.
+        """
+        ivar = self._check_ivar(ivar)
+        self.obs[ivar].set(coord, value, times=times, variance=variance,
+                           nmax=nmax, maxdist=maxdist, sk_mean=sk_mean,
+                           drift=drift)
+        self._invalidate_pair_caches(ivar)
+        return self
+
+    def set_search(self, ivar, *, nmax=None, maxdist=None, anis1=1.0, anis2=1.0,
+                   azimuth=0.0, dip=0.0, plunge=0.0, sector_search=False,
+                   time_at=None):
+        """Configure per-variable neighbour search, transferred by ``apply()``.
+
+        Search settings are stored on the variable's :class:`ObservationSet`;
+        the Fortran engine performs the actual neighbour selection.
+        """
+        ivar = self._check_ivar(ivar)
+        self.obs[ivar].set_search(nmax=nmax, maxdist=maxdist, anis1=anis1,
+                                 anis2=anis2, azimuth=azimuth, dip=dip,
+                                 plunge=plunge, sector_search=sector_search,
+                                 time_at=time_at)
         return self
 
     def set_vgm(self, ivar, jvar, vtype, **kwargs):
@@ -156,25 +187,12 @@ class VariogramSystem:
         return self
 
     def _require_obs(self, ivar):
-        """Return stored observations for a variable or raise a clear error."""
+        """Return the configured observation set for a variable, or raise."""
         ivar = self._check_ivar(ivar)
-        if ivar not in self.observations:
+        obs = self.obs.get(ivar, create=False)
+        if obs is None or not obs.configured:
             raise RuntimeError(f"call set_obs(ivar={ivar}, ...) first")
-        return self.observations[ivar]
-
-    @staticmethod
-    def _same_obs_grid(obs_i, obs_j):
-        """Return true when two variables are collocated in space and time."""
-        same_coord = (
-            obs_i["coord"].shape == obs_j["coord"].shape
-            and np.allclose(obs_i["coord"], obs_j["coord"])
-        )
-        if not same_coord:
-            return False
-        ti, tj = obs_i["times"], obs_j["times"]
-        if ti is None or tj is None:
-            return ti is None and tj is None
-        return ti.shape == tj.shape and np.allclose(ti, tj)
+        return obs
 
     def calc_experimental(
         self,
@@ -199,15 +217,15 @@ class VariogramSystem:
             raise ValueError("cross must be 'auto', 'lmc', or 'pseudo'")
 
         if key[0] == key[1]:
-            kwargs.setdefault("times", obs_i["times"])
-            cloud = raw_vgm(obs_i["coord"], obs_i["value"], **kwargs)
+            kwargs.setdefault("times", obs_i.times)
+            cloud = raw_vgm(obs_i.coord, obs_i.value, **kwargs)
         else:
-            if cross != "pseudo" and self._same_obs_grid(obs_i, obs_j):
-                kwargs.setdefault("times", obs_i["times"])
+            if cross != "pseudo" and obs_i.is_collocated_with(obs_j):
+                kwargs.setdefault("times", obs_i.times)
                 cloud = raw_cross_vgm(
-                    obs_i["coord"],
-                    obs_i["value"],
-                    obs_j["value"],
+                    obs_i.coord,
+                    obs_i.value,
+                    obs_j.value,
                     **kwargs,
                 )
             elif cross == "lmc":
@@ -216,13 +234,13 @@ class VariogramSystem:
                     "coordinates and matching times for the variable pair"
                 )
             else:
-                kwargs.setdefault("timesA", obs_i["times"])
-                kwargs.setdefault("timesB", obs_j["times"])
+                kwargs.setdefault("timesA", obs_i.times)
+                kwargs.setdefault("timesB", obs_j.times)
                 cloud = cross_vgm(
-                    obs_i["coord"],
-                    obs_i["value"],
-                    obs_j["coord"],
-                    obs_j["value"],
+                    obs_i.coord,
+                    obs_i.value,
+                    obs_j.coord,
+                    obs_j.value,
                     **kwargs,
                 )
 
@@ -249,9 +267,10 @@ class VariogramSystem:
             keys = sorted(self.raw_variograms_)
             if not keys:
                 nvar = self.nvar or 0
+                configured = set(self.obs.configured_indices())
                 keys = [(i, j) for i in range(1, nvar + 1)
                         for j in range(i, nvar + 1)
-                        if i in self.observations and j in self.observations]
+                        if i in configured and j in configured]
             for key in keys:
                 out[key] = self.calc_average(
                     key[0], key[1], store=store,
@@ -345,9 +364,10 @@ class VariogramSystem:
         if self.avg_variograms_:
             return sorted(self.avg_variograms_)
         nvar = self.nvar or 0
+        configured = set(self.obs.configured_indices())
         return [(i, j) for i in range(1, nvar + 1)
                 for j in range(i, nvar + 1)
-                if i in self.observations and j in self.observations]
+                if i in configured and j in configured]
 
     def fit_lmc(
         self,
@@ -551,11 +571,11 @@ class VariogramSystem:
         if corr is None:
             obs_p = self._require_obs(pi)
             obs_s = self._require_obs(si)
-            if not self._same_obs_grid(obs_p, obs_s):
+            if not obs_p.is_collocated_with(obs_s):
                 raise ValueError(
                     "cannot estimate corr: the two variables are not collocated; "
                     "pass corr= explicitly")
-            corr = float(np.corrcoef(obs_p["value"], obs_s["value"])[0, 1])
+            corr = float(np.corrcoef(obs_p.value, obs_s.value)[0, 1])
         corr = float(np.clip(corr, -1.0, 1.0))
 
         base = model_s if structure == "secondary" else model_p

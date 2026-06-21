@@ -105,4 +105,65 @@ class _VgmAccessor:
                 f"nmaterialized={self.nmaterialized})")
 
 
-__all__ = ["_VgmAccessor"]
+class _ObservationAccessor:
+    """1-based accessor for per-variable :class:`ObservationSet` objects.
+
+    Mirrors :class:`_VgmAccessor` for single (not pair) indices.  An observation
+    is **materialized** once accessed and **configured** only once it has valid
+    coordinates and values, so reading ``obs[i]`` never makes variable ``i``
+    eligible for an empirical variogram.
+
+    Callbacks owned by the system: ``index(ivar)`` validates/grows and returns
+    the 1-based int; ``ensure``/``peek`` return or create the set; ``drop``
+    removes it; ``materialized()`` returns ``[(ivar, set), ...]``.
+    """
+
+    def __init__(self, *, index, ensure, peek, drop, materialized):
+        self._index = index
+        self._ensure = ensure
+        self._peek = peek
+        self._drop = drop
+        self._materialized = materialized
+
+    def __getitem__(self, ivar):
+        """Return the (lazily created) observation set for variable ``ivar``."""
+        return self._ensure(self._index(ivar))
+
+    def get(self, ivar, create=True):
+        """Return the set; with ``create=False`` return ``None`` if unmaterialized."""
+        key = self._index(ivar)
+        return self._ensure(key) if create else self._peek(key)
+
+    def clear(self, ivar):
+        """Remove a materialized observation entry."""
+        self._drop(self._index(ivar))
+
+    def configured_indices(self):
+        """Return sorted variable indices whose observations are configured."""
+        return sorted(i for i, o in self._materialized() if o.configured)
+
+    def configured_items(self):
+        """Return sorted ``(ivar, set)`` for configured observations only."""
+        return [(i, o) for i, o in sorted(self._materialized()) if o.configured]
+
+    def materialized_items(self):
+        """Return sorted ``(ivar, set)`` including unconfigured entries."""
+        return sorted(self._materialized())
+
+    @property
+    def nconfigured(self):
+        """Number of configured observation variables."""
+        return sum(1 for _, o in self._materialized() if o.configured)
+
+    @property
+    def nmaterialized(self):
+        """Number of materialized observation variables."""
+        return len(self._materialized())
+
+    def __repr__(self):
+        """Return a compact debugging representation."""
+        return (f"_ObservationAccessor(nconfigured={self.nconfigured}, "
+                f"nmaterialized={self.nmaterialized})")
+
+
+__all__ = ["_VgmAccessor", "_ObservationAccessor"]
