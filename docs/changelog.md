@@ -1,6 +1,8 @@
 ﻿# Changelog
 
-## 0.2.8 (unreleased)
+## 0.3.1 (unreleased)
+
+## 0.3.0
 
 ### Added - Anisotropy orientation fitting
 

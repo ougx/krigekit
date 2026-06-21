@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "krigekit"
-version = "0.2.7"
+version = "0.3.0"
 description = "Integrated Python-Fortran toolkit for variogram analysis, kriging, and geostatistical simulation"
 readme = "README.md"
 license = { file = "LICENSE" }
