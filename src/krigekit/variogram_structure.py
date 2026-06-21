@@ -247,11 +247,21 @@ class VgmStructure:
         target = self if inplace else VgmStructure(fitted, name=self.name)
         if inplace:
             self.components = fitted
+
+        labels = []
+        for comp in fitted:
+            labels.append((comp.display_name, comp.vtype, "sill"))
+            labels.append((comp.display_name, comp.vtype, "range"))
+        if fit_nugget and len(params) % 2 == 1:
+            labels.append((fitted[0].display_name, fitted[0].vtype, "nugget"))
+
         return FitResult(
             target=target,
             params=np.asarray(params, dtype=float),
             cov=cov,
             metrics=calc_fit_metrics(data, target, x_col, y_col),
+            nobs=int(len(data)),
+            param_labels=labels,
         )
 
     # -- engine transfer ----------------------------------------------------

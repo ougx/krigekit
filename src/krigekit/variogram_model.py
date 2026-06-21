@@ -327,7 +327,8 @@ class VariogramModel(_VariogramModelBase):
         if makeplot:
             ax = target.plot(avgvgm, x_col=x_col, y_col=y_col)
         return FitResult(target=target, params=res.params, cov=res.cov,
-                         metrics=res.metrics, ax=ax)
+                         metrics=res.metrics, ax=ax, nobs=res.nobs,
+                         param_labels=res.param_labels)
 
     def _default_anisotropic_fit_p0(self, include_minor2: bool, fit_nugget: bool = True):
         """Build default ``(sill, major, minor1[, minor2], ..., [nugget])`` params."""
@@ -385,6 +386,7 @@ class VariogramModel(_VariogramModelBase):
         for i, template in enumerate(self.structure.components):
             offset = nper * i
             spec = template.to_flat_dict()
+            spec["name"] = template.name           # preserve metadata across the fit
             spec["sill"] = float(params[offset])
             spec["a_major"] = float(params[offset + 1])
             spec["a_minor1"] = float(params[offset + 2])
@@ -549,8 +551,21 @@ class VariogramModel(_VariogramModelBase):
                 ax.plot(xx, model(xxdata, *params))
             ax.set(xlabel=xlabel, ylabel=ylabel)
             ax.legend()
+
+        labels = []
+        for comp in fitted.structure.components:
+            labels.append((comp.display_name, comp.vtype, "sill"))
+            labels.append((comp.display_name, comp.vtype, "a_major"))
+            labels.append((comp.display_name, comp.vtype, "a_minor1"))
+            if include_minor2:
+                labels.append((comp.display_name, comp.vtype, "a_minor2"))
+        if fit_nugget:
+            c0 = fitted.structure.components[0]
+            labels.append((c0.display_name, c0.vtype, "nugget"))
+
         return FitResult(target=fitted, params=np.asarray(params, dtype=float),
-                         cov=cov, ax=ax if makeplot else None)
+                         cov=cov, ax=ax if makeplot else None,
+                         nobs=int(len(y)), param_labels=labels)
 
     def set_vgm(
         self,
@@ -565,6 +580,7 @@ class VariogramModel(_VariogramModelBase):
         plunge: float = 0.0,
         append: bool = True,
         product: bool = False,
+        name: str = None,
     ):
         """Add one nested variogram structure.
 
@@ -586,27 +602,10 @@ class VariogramModel(_VariogramModelBase):
         VariogramModel
             ``self``, so calls can be chained.
         """
-        if a_minor1 is None:
-            a_minor1 = a_major
-        if a_minor2 is None:
-            a_minor2 = a_minor1
-        if a_major <= 0.0 or a_minor1 <= 0.0 or a_minor2 <= 0.0:
-            raise ValueError("a_major, a_minor1 and a_minor2 must be positive")
-        if not append:
-            self.structure.components.clear()
-
-        self.structure.components.append(VgmComponent(
-            vtype=resolve_model(vtype),
-            nugget=float(nugget),
-            sill=float(sill),
-            a_major=float(a_major),
-            a_minor1=float(a_minor1),
-            a_minor2=float(a_minor2),
-            azimuth=float(azimuth),
-            dip=float(dip),
-            plunge=float(plunge),
-            product=bool(product),
-        ))
+        self.structure.set_vgm(
+            vtype, nugget=nugget, sill=sill, a_major=a_major, a_minor1=a_minor1,
+            a_minor2=a_minor2, azimuth=azimuth, dip=dip, plunge=plunge,
+            append=append, product=product, name=name)
         self._clear_fit_state()
         return self
 

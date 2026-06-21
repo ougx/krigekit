@@ -25,6 +25,8 @@ class FitResult:
     optimizer: object = None
     metrics: object = None
     ax: object = None
+    nobs: object = None          # number of fitted data points (for p-value dof)
+    param_labels: object = None  # (component, vtype, param) per param, aligned with ``params``
 
     @property
     def success(self):
@@ -39,24 +41,71 @@ class FitResult:
             return self.target
         return getattr(self.target, "structure", None)
 
-    def summary(self):
-        """Return a labelled parameter table (one row per fitted value)."""
-        import pandas as pd
+    def _labels(self):
+        """Return (component, vtype, param) labels aligned with ``params``.
 
+        Falls back to the isotropic ``sill, range, ..., nugget`` ordering from
+        the target structure when a fit did not attach explicit labels.
+        """
+        if self.param_labels is not None:
+            return list(self.param_labels)
         structure = self._structure()
         if structure is None:
+            return []
+        labels = []
+        for comp in structure.components:
+            labels.append((comp.display_name, comp.vtype, "sill"))
+            labels.append((comp.display_name, comp.vtype, "range"))
+        if (structure.components and self.params is not None
+                and len(self.params) % 2 == 1):
+            c0 = structure.components[0]
+            labels.append((c0.display_name, c0.vtype, "nugget"))
+        return labels
+
+    def summary(self):
+        """Return a labelled parameter table with variance and p-values.
+
+        Columns: ``structure, component, vtype, param, value, variance,
+        std_err, p_value``.  ``variance``/``std_err`` come from the fit
+        covariance (``NaN`` when unavailable); ``p_value`` is a two-sided Wald
+        test that the parameter differs from zero (Student-t when ``nobs`` is
+        known, else normal).  Treat p-values as heuristic -- binned variogram
+        points are not independent.
+        """
+        import numpy as np
+        import pandas as pd
+        from scipy import stats
+
+        labels = self._labels()
+        if not labels:
             raise TypeError("summary() requires a structure-bearing fit target")
-        name = getattr(structure, "name", None)
-        rows = []
-        comps = structure.components
-        if comps:
-            c0 = comps[0]
-            rows.append((name, c0.display_name, c0.vtype, "nugget", c0.nugget))
-        for comp in comps:
-            rows.append((name, comp.display_name, comp.vtype, "sill", comp.sill))
-            rows.append((name, comp.display_name, comp.vtype, "range", comp.a_major))
-        return pd.DataFrame(
-            rows, columns=["structure", "component", "vtype", "param", "value"])
+        n = len(labels)
+        values = np.full(n, np.nan)
+        if self.params is not None:
+            p = np.asarray(self.params, dtype=float)
+            values[:min(n, len(p))] = p[:min(n, len(p))]
+        variance = np.full(n, np.nan)
+        if self.cov is not None:
+            diag = np.diag(np.asarray(self.cov, dtype=float))
+            variance[:min(n, len(diag))] = diag[:min(n, len(diag))]
+        std_err = np.sqrt(np.where(variance >= 0, variance, np.nan))
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tstat = np.abs(values / std_err)
+        nparams = len(self.params) if self.params is not None else n
+        if self.nobs is not None and self.nobs > nparams:
+            pval = 2.0 * stats.t.sf(tstat, self.nobs - nparams)
+        else:
+            pval = 2.0 * stats.norm.sf(tstat)
+        pval = np.where(np.isfinite(std_err) & (std_err > 0), pval, np.nan)
+
+        sname = getattr(self._structure(), "name", None)
+        rows = [(sname, comp, vtype, ptype, values[i], variance[i],
+                 std_err[i], pval[i])
+                for i, (comp, vtype, ptype) in enumerate(labels)]
+        return pd.DataFrame(rows, columns=[
+            "structure", "component", "vtype", "param", "value",
+            "variance", "std_err", "p_value"])
 
 
 def _normalise_model_specs(models):

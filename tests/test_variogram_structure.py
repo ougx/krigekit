@@ -152,7 +152,9 @@ def test_structure_fit_returns_result_and_preserves_names():
     assert res.target is structure and res.success
     np.testing.assert_allclose(res.params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
     assert structure[0].name == "long"            # name survives the fit
+    assert res.nobs == 30
     summary = res.summary()
+    assert {"variance", "std_err", "p_value"} <= set(summary.columns)
     assert set(summary["param"]) == {"nugget", "sill", "range"}
     assert (summary["component"] == "long").all()
 
