@@ -253,6 +253,7 @@ The implementation is split by responsibility:
 | `variogram_kernels.py` | Kernel correlation/variogram functions | `corefunc_fn` |
 | `variogram_component.py` | One flat theoretical component (`VgmComponent`) | `vgm_component` |
 | `variogram_structure.py` | Nested/product theoretical model for one pair (`VgmStructure`) | `vgm_struct` |
+| `variogram_structure_st.py` | Theoretical space-time coupling (`VgmStructureST`, `cs`/`ct`) | `vgm_struct_st` |
 | `variogram_geometry.py` | Rotations and anisotropic lag distance | `vgm_aniso`, `rotation.f90` |
 | `variogram_empirical.py` | Pair clouds, averaging, and directional analysis | Python analysis layer |
 | `variogram_fitting.py` | Generic weighted marginal fitting | Python analysis layer |
@@ -285,9 +286,17 @@ anisotropy fields into its `vgm_aniso` type after transfer.
 `VariogramModel` owns a single `VgmStructure` (`model.structure`) and delegates
 all theoretical evaluation (`covariance`, `variogram`, `calc_covariance`,
 `calc_variogram`) and engine transfer to it -- it keeps no parallel component
-list, and the legacy `_VgmComponent` has been removed. `SpaceTimeVariogramModel`
-still composes two `VariogramModel` marginals; folding it onto a
-`VgmStructureST` is a later phase.
+list, and the legacy `_VgmComponent` has been removed.
+
+`VgmStructureST` (`variogram_structure_st.py`) is the space-time analogue of
+`VgmStructure`: a purely theoretical object holding a spatial structure (`cs`)
+and a temporal structure (`ct`) plus the coupling parameters of a
+product-sum or sum-metric model. It evaluates the joint semivariogram
+(`calc_variogram(spatial_lag, temporal_lag)`) and emits engine specs
+(`to_kriging_specs`), mirroring `vgm_struct_st`'s `cs`/`ct` composition rather
+than extending `vgm_struct`. `SpaceTimeVariogramModel` currently still composes
+two `VariogramModel` marginals and carries the coupling state directly; folding
+its theoretical evaluation onto an owned `VgmStructureST` is the next step.
 
 The space-time coupling methods live **only** on `SpaceTimeVariogramModel` -- the
 old `VariogramModel.__getattr__` chain that lazily forwarded `*_spacetime_*`

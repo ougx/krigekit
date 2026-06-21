@@ -278,6 +278,23 @@ class VgmStructure:
             specs.append(spec)
         return specs
 
+    def to_temporal_specs(self):
+        """Return specs accepted by ``SpaceTimeKriging.set_vgm_temporal``.
+
+        The one-dimensional ``a_major`` value is renamed to ``at_k``; spatial
+        anisotropy fields are omitted because temporal marginals are 1-D.
+        """
+        return [
+            {
+                "vtype": comp.vtype,
+                "nugget": comp.nugget,
+                "sill": comp.sill,
+                "at_k": comp.a_major,
+                "product": comp.product,
+            }
+            for comp in self.components
+        ]
+
     def apply_to(self, kriging, ivar, jvar, replace=True):
         """Apply this structure to a :class:`krigekit.Kriging` object."""
         for spec in self.to_kriging_specs(replace=replace):
