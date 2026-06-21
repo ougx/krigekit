@@ -948,7 +948,7 @@ def test_variogram_system_fit_pair_updates_pair_model():
     system.set_avg_vgm(1, 1, avg)
     fitted, _, params = system.fit_pair(1, 1, return_params=True)
 
-    assert system.models[(1, 1)] is fitted
+    assert system.vgm[1, 1] is fitted
     np.testing.assert_allclose(params, [2.0, 5.0, 0.1], rtol=1e-6, atol=1e-6)
 
 
@@ -979,7 +979,7 @@ def test_variogram_system_fit_lmc_returns_psd_coregionalization_matrix():
     assert np.min(eig) >= -1e-8
     np.testing.assert_allclose(mats[0], [[b11, b12], [b12, b22]], rtol=1e-5, atol=1e-5)
     np.testing.assert_allclose(
-        fitted.models[(1, 2)].variogram(h),
+        fitted.vgm[1, 2].variogram(h),
         calc_vgm("sph", h, psill=b12, rng=true_range),
         rtol=1e-5,
         atol=1e-5,
@@ -1060,12 +1060,12 @@ def test_set_markov_cross_formula_and_psd():
     system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
     system.set_markov_cross(1, 2, corr=rho)
 
-    cross = system.models[(1, 2)].structure.components[0].sill
+    cross = system.vgm[1, 2].components[0].sill
     np.testing.assert_allclose(cross, rho * np.sqrt(s_p * s_s), rtol=1e-12)
     B = np.array([[s_p, cross], [cross, s_s]])
     assert np.min(np.linalg.eigvalsh(B)) >= -1e-12          # valid (PSD)
     # cross adopts the secondary's range
-    assert system.models[(1, 2)].structure.components[0].a_major == 6500.0
+    assert system.vgm[1, 2].components[0].a_major == 6500.0
 
 
 def test_set_markov_cross_estimates_corr_from_collocated_obs():
@@ -1085,7 +1085,7 @@ def test_set_markov_cross_estimates_corr_from_collocated_obs():
 
     np.testing.assert_allclose(system.markov_corr_[(1, 2)], rho, rtol=1e-10)
     expected = rho * np.sqrt(np.var(a) * np.var(b))
-    np.testing.assert_allclose(system.models[(1, 2)].structure.components[0].sill,
+    np.testing.assert_allclose(system.vgm[1, 2].components[0].sill,
                                expected, rtol=1e-10)
 
 
@@ -1098,7 +1098,7 @@ def test_set_markov_cross_stays_valid_where_strong_correlation():
     system.set_vgm(2, 2, vtype="exp", sill=s_s, a_major=6500.0)
     system.set_markov_cross(1, 2, corr=0.95)
 
-    cross = system.models[(1, 2)].structure.components[0].sill
+    cross = system.vgm[1, 2].components[0].sill
     assert abs(cross) <= np.sqrt(s_p * s_s) + 1e-12      # never exceeds the bound
 
 

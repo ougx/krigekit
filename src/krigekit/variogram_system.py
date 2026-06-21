@@ -10,6 +10,7 @@ from .variogram_component import VgmComponent
 from .variogram_kernels import calc_vgm
 from .variogram_model import VariogramModel
 from .variogram_observation import ObservationSet
+from .variogram_structure import VgmStructure
 
 
 class VariogramSystem:
@@ -37,7 +38,7 @@ class VariogramSystem:
             raise ValueError("nvar must be positive")
         self._dynamic = nvar is None
         self.observations = {}
-        self.models = {}
+        self._structures = {}
         self.raw_variograms_ = {}
         self.avg_variograms_ = {}
         self.fit_result_ = None
@@ -77,42 +78,28 @@ class VariogramSystem:
         jvar = ivar if jvar is None else self._check_ivar(jvar)
         return (ivar, jvar) if ivar <= jvar else (jvar, ivar)
 
-    def _get_model(self, ivar, jvar=None, create=True):
-        """Return the pair model, optionally creating an empty one."""
-        key = self._pair_key(ivar, jvar)
-        if key not in self.models:
-            if not create:
-                raise KeyError(f"no variogram model has been set for pair {key}")
-            self.models[key] = VariogramModel()
-        return self.models[key]
-
     # -- storage callbacks used by the ``vgm`` accessor --------------------
     def _vgm_ensure(self, key):
         """Return the structure for a canonical pair, creating it if needed."""
-        if key not in self.models:
-            self.models[key] = VariogramModel()
-        return self.models[key].structure
+        if key not in self._structures:
+            self._structures[key] = VgmStructure()
+        return self._structures[key]
 
     def _vgm_peek(self, key):
         """Return the structure for a canonical pair, or ``None``."""
-        model = self.models.get(key)
-        return None if model is None else model.structure
+        return self._structures.get(key)
 
     def _vgm_assign(self, key, structure):
         """Replace the structure stored for a canonical pair."""
-        model = self.models.get(key)
-        if model is None:
-            model = VariogramModel()
-            self.models[key] = model
-        model.structure = structure
+        self._structures[key] = structure
 
     def _vgm_drop(self, key):
         """Remove a materialized pair entry."""
-        self.models.pop(key, None)
+        self._structures.pop(key, None)
 
     def _vgm_materialized(self):
         """Return ``(key, structure)`` for every materialized pair."""
-        return [(key, model.structure) for key, model in self.models.items()]
+        return list(self._structures.items())
 
     # -- storage callbacks used by the ``obs`` accessor --------------------
     def _obs_ensure(self, ivar):
@@ -171,7 +158,7 @@ class VariogramSystem:
 
     def set_vgm(self, ivar, jvar, vtype, **kwargs):
         """Add one nested structure to the model for ``(ivar, jvar)``."""
-        self._get_model(ivar, jvar).set_vgm(vtype=vtype, **kwargs)
+        self.vgm[ivar, jvar].set_vgm(vtype=vtype, **kwargs)
         return self
 
     def set_raw_vgm(self, ivar, jvar, rawvgm):
@@ -296,36 +283,37 @@ class VariogramSystem:
         safer choice for cokriging because it constrains cross-pair sills.
         """
         key = self._pair_key(ivar, jvar)
-        model = self._get_model(*key, create=False)
+        structure = self.vgm.get(key[0], key[1], create=False)
+        if structure is None or not structure.ncomponent:
+            raise KeyError(f"no variogram model has been set for pair {key}")
         if avgvgm is None:
             avgvgm = self.avg_variograms_.get(key)
         if avgvgm is None:
             avgvgm = self.calc_average(*key)
+        model = VariogramModel()
+        model.structure = structure if inplace else structure.copy()
         fitted, *rest = model.fit(avgvgm, inplace=inplace, **kwargs)
-        if inplace:
-            self.models[key] = fitted
-        return (fitted, *rest)
+        return (fitted.structure, *rest)
 
     def _template_components(self):
-        """Return the shared LMC structure template from existing models."""
-        if not self.models:
+        """Return the shared LMC structure template from configured pairs."""
+        configured = self.vgm.configured_items()
+        if not configured:
             raise RuntimeError("call set_vgm() before fit_lmc()")
-        preferred = self.models.get((1, 1))
-        template_model = preferred if preferred and len(preferred) else None
-        if template_model is None:
-            template_model = next((m for m in self.models.values() if len(m)), None)
-        if template_model is None:
-            raise RuntimeError("call set_vgm() before fit_lmc()")
-        if any(comp.product for comp in template_model.structure.components):
+        preferred = self.vgm.get(1, 1, create=False)
+        template = preferred if (preferred is not None and preferred.ncomponent) else None
+        if template is None:
+            template = next((s for _, s in configured), None)
+        if any(comp.product for comp in template.components):
             raise NotImplementedError("fit_lmc() currently supports additive LMC structures only")
-        return [comp.copy() for comp in template_model.structure.components]
+        return [comp.copy() for comp in template.components]
 
     def _validate_lmc_templates(self, template):
-        """Check pair models are compatible with the shared LMC template."""
-        for key, model in self.models.items():
-            if len(model.structure.components) != len(template):
+        """Check configured pairs are compatible with the shared LMC template."""
+        for key, structure in self.vgm.configured_items():
+            if len(structure.components) != len(template):
                 raise ValueError(f"pair {key} does not match the LMC structure count")
-            for comp, tmpl in zip(model.structure.components, template):
+            for comp, tmpl in zip(structure.components, template):
                 if comp.product or comp.vtype != tmpl.vtype:
                     raise ValueError(
                         f"pair {key} must use the same additive model types "
@@ -344,19 +332,15 @@ class VariogramSystem:
         return np.linalg.cholesky(psd + np.eye(psd.shape[0]) * jitter)
 
     def _initial_lmc_matrices(self, template, fit_nugget):
-        """Build initial nugget and partial-sill matrices from pair models."""
-        nvar = self.nvar or max(max(k) for k in self.models)
+        """Build initial nugget and partial-sill matrices from configured pairs."""
+        nvar = self.nvar or max((max(k) for k in self._structures), default=0)
         mats = [np.zeros((nvar, nvar), dtype=float) for _ in template]
         nugget = np.zeros((nvar, nvar), dtype=float)
-        for i in range(1, nvar + 1):
-            for j in range(i, nvar + 1):
-                model = self.models.get((i, j))
-                if model is None:
-                    continue
-                for k, comp in enumerate(model.structure.components):
-                    mats[k][i - 1, j - 1] = mats[k][j - 1, i - 1] = comp.sill
-                if fit_nugget and model.structure.components:
-                    nugget[i - 1, j - 1] = nugget[j - 1, i - 1] = model.structure.components[0].nugget
+        for (i, j), structure in self.vgm.configured_items():
+            for k, comp in enumerate(structure.components):
+                mats[k][i - 1, j - 1] = mats[k][j - 1, i - 1] = comp.sill
+            if fit_nugget and structure.components:
+                nugget[i - 1, j - 1] = nugget[j - 1, i - 1] = structure.components[0].nugget
         return nugget, mats
 
     def _default_lmc_pairs(self):
@@ -485,7 +469,7 @@ class VariogramSystem:
         fitted.avg_variograms_ = dict(self.avg_variograms_)
         fitted.fit_result_ = result
         if inplace:
-            self.models = fitted.models
+            self._structures = fitted._structures
             self.fit_result_ = result
             fitted = self
         return fitted, result
@@ -496,7 +480,7 @@ class VariogramSystem:
         fitted = VariogramSystem(nvar=nvar)
         for i in range(1, nvar + 1):
             for j in range(i, nvar + 1):
-                model = VariogramModel()
+                structure = fitted.vgm[i, j]
                 for k, comp in enumerate(template):
                     spec = comp.to_flat_dict()
                     ratio = ranges[k] / comp.a_major
@@ -506,8 +490,7 @@ class VariogramSystem:
                     spec["a_minor2"] = comp.a_minor2 * ratio
                     spec["nugget"] = nugget[i - 1, j - 1] if k == 0 else 0.0
                     spec["append"] = k > 0
-                    model.set_vgm(**spec)
-                fitted.models[(i, j)] = model
+                    structure.set_vgm(**spec)
         return fitted
 
     def get_lmc_matrices(self, include_nugget=True):
@@ -557,10 +540,10 @@ class VariogramSystem:
         si = self._check_ivar(secondary)
         if pi == si:
             raise ValueError("primary and secondary must be different variables")
-        model_p = self._get_model(pi, pi, create=False)
-        model_s = self._get_model(si, si, create=False)
-        s_p = [comp.sill for comp in model_p.structure.components]
-        s_s = [comp.sill for comp in model_s.structure.components]
+        structure_p = self.vgm.get(pi, pi, create=False)
+        structure_s = self.vgm.get(si, si, create=False)
+        s_p = [comp.sill for comp in structure_p.components] if structure_p else []
+        s_s = [comp.sill for comp in structure_s.components] if structure_s else []
         if not s_p or not s_s:
             raise RuntimeError("set auto-models for both variables before set_markov_cross()")
         if len(s_p) != len(s_s):
@@ -578,9 +561,9 @@ class VariogramSystem:
             corr = float(np.corrcoef(obs_p.value, obs_s.value)[0, 1])
         corr = float(np.clip(corr, -1.0, 1.0))
 
-        base = model_s if structure == "secondary" else model_p
-        cross = VariogramModel()
-        for k, comp in enumerate(base.structure.components):
+        base = structure_s if structure == "secondary" else structure_p
+        cross = VgmStructure()
+        for k, comp in enumerate(base.components):
             cross.set_vgm(
                 vtype=comp.vtype,
                 nugget=cross_nugget if k == 0 else 0.0,
@@ -594,7 +577,7 @@ class VariogramSystem:
                 product=comp.product,
                 append=k > 0,
             )
-        self.models[self._pair_key(pi, si)] = cross
+        self.vgm[pi, si] = cross
         self.markov_corr_ = getattr(self, "markov_corr_", {})
         self.markov_corr_[self._pair_key(pi, si)] = corr
         return self
@@ -675,7 +658,7 @@ class VariogramSystem:
 
     def __repr__(self):
         """Return a compact debugging representation."""
-        return f"VariogramSystem(nvar={self.nvar}, npairs={len(self.models)})"
+        return f"VariogramSystem(nvar={self.nvar}, npairs={len(self._structures)})"
 
 
 # ---------------------------------------------------------------------------

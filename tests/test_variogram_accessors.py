@@ -101,15 +101,12 @@ def test_clear_entry_and_clear_components():
     assert system.vgm.nmaterialized == 0
 
 
-def test_accessor_shares_storage_with_models_compat():
+def test_accessor_storage_is_stable():
     system = VariogramSystem(nvar=2)
     _configured(system, 1, 2)
-    # the legacy models view and the accessor see the same structure
-    assert system.models[(1, 2)].structure is system.vgm[1, 2]
-    np.testing.assert_array_equal(
-        system.vgm[1, 2].covariance([0.0, 5.0]),
-        system.models[(1, 2)].structure.covariance([0.0, 5.0]),
-    )
+    # the same structure object is returned on every access and via get()
+    assert system.vgm[1, 2] is system.vgm.get(1, 2, create=False)
+    assert system.vgm[1, 2] is system.vgm[2, 1]
 
 
 # --- observation accessor --------------------------------------------------

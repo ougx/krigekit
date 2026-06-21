@@ -305,9 +305,13 @@ A pair is **materialized** once it has a stored structure and **configured**
 only once that structure has at least one component. Reading `vgm[i, j]`
 materializes an empty structure but does *not* configure it, so it never
 becomes an LMC input or a transfer target; selection uses
-`vgm.configured_pairs()`, never materialization. The accessor is a view over
-the system's per-pair storage (each `VariogramModel`'s `structure`), so the
-legacy `system.models[(i, j)].structure` observes the same object.
+`vgm.configured_pairs()`, never materialization. The system stores the
+`VgmStructure` objects directly, so `vgm[i, j]` *is* the canonical per-pair
+store; LMC/empirical fitting (`fit_pair`, `fit_lmc`, `set_markov_cross`) and
+`apply` operate on it. The old per-pair `VariogramModel` wrapper and the
+`system.models` dict are gone (`fit_pair` builds a transient `VariogramModel`
+only to reuse the curve-fitting machinery, writing the fitted components back
+into the canonical structure).
 
 `system.obs[ivar]` (a `_ObservationAccessor`) mirrors this for single indices,
 returning an `ObservationSet` that carries observation data plus the
