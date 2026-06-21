@@ -505,6 +505,36 @@ def test_variogram_model_fit_anisotropy_recovers_major_and_minor_ranges():
     np.testing.assert_allclose(fitted.structure.components[0].a_minor1, 25.0, rtol=1e-5)
 
 
+def test_estimate_aniso_angle_recovers_three_angles_and_ratios():
+    from krigekit.variogram_geometry import rotation_matrix_3d
+
+    truth = VariogramModel()
+    truth.set_vgm("sph", sill=1.0, a_major=60.0, a_minor1=24.0, a_minor2=12.0,
+                  azimuth=35.0, dip=22.0, plunge=12.0)
+    g = np.arange(-30.0, 31.0, 3.0)
+    lags = np.array(np.meshgrid(g, g, g)).reshape(3, -1).T
+    lags = lags[np.linalg.norm(lags, axis=1) > 0]
+    raw = pd.DataFrame({
+        "d0": lags[:, 0], "d1": lags[:, 1], "d2": lags[:, 2],
+        "distance": np.linalg.norm(lags, axis=1),
+        "variogram": truth.calc_variogram(np.zeros_like(lags), lags),
+    })
+
+    (azimuth, dip, plunge), (anis1, anis2) = empirical.estimate_aniso_angle(
+        raw, dim3d=True, r_max=30.0)
+
+    fit_axes = rotation_matrix_3d(azimuth, dip, plunge)
+    true_axes = rotation_matrix_3d(35.0, 22.0, 12.0)
+    for k in range(3):                       # axes recovered (robust to sign)
+        assert abs(float(true_axes[:, k] @ fit_axes[:, k])) > 0.99
+    assert 0.0 < anis2 < anis1 < 1.0         # ordered minor/major ratios
+
+    # 2D path returns one angle and one ratio
+    (azimuth2,), (anis1_2,) = empirical.estimate_aniso_angle(
+        raw[raw["d2"].abs() < 1e-9], dim3d=False, r_max=30.0)
+    assert 0.0 < anis1_2 <= 1.0
+
+
 def test_variogram_model_apply_to_kriging_replays_specs():
     model = VariogramModel()
     model.set_vgm(vtype="exp", sill=1.0, a_major=5.0)

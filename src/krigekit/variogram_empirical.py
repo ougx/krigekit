@@ -13,6 +13,7 @@ from scipy.spatial import cKDTree
 
 from .variogram_binning import calculate_lag_edges
 from .variogram_geometry import (
+    _engine_rotation,
     _great_circle_dist,
     calc_anisotropic_lag,
     calc_lag_vectors,
@@ -996,14 +997,19 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     Returns
     -------
     If ``get_eigens`` is True: ``(eigvals, eigvecs)`` sorted descending.
-    If ``dim3d`` is False: ``((azimuth_deg,), axis_lengths)``.
-    If ``dim3d`` is True:  ``((azimuth_deg, dip_deg), axis_lengths)``.
+    If ``dim3d`` is False: ``((azimuth_deg,), (anis1,))``.
+    If ``dim3d`` is True:  ``((azimuth_deg, dip_deg, plunge_deg), (anis1, anis2))``.
 
     ``azimuth_deg`` is the compass azimuth (0 = North, 90 = East) of the major
-    (maximum-continuity) axis and ``dip_deg`` its tilt below the horizontal
-    plane, **positive downward** -- the same convention as the model ``dip``
-    field and the Fortran engine, so the returned pair can be fed straight into
-    :meth:`VariogramModel.set_vgm` as ``azimuth``/``dip``.
+    (maximum-continuity) axis, ``dip_deg`` its tilt below the horizontal plane
+    (**positive downward**), and ``plunge_deg`` the twist of the minor axes about
+    the major axis -- exactly the ``azimuth`` / ``dip`` / ``plunge`` convention of
+    the model and the Fortran engine, so the angles feed straight into
+    :meth:`VariogramModel.set_vgm`.  ``anis1`` and ``anis2`` are the
+    minor1/major and minor2/major axis-length ratios (the same meaning as the
+    engine's ``anis1`` / ``anis2`` minor-axis ratios), estimated from the
+    eigenvalue spectrum.  ``plunge`` is folded into ``(-90, 90]`` and is the
+    least well-determined angle from sparse clouds.
     """
     if r_max is None:
         r_max = np.quantile(rawvgm[dist], 0.25)
@@ -1033,20 +1039,40 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     if robust:
         w = np.clip(w, *np.quantile(w, [0.05, 0.95]))
 
-    cov = np.cov(binned[dims].values.T, aweights=w)
-    eigvals, eigvecs = np.linalg.eigh(cov)
+    # Second moment about the ORIGIN (lag 0), not the cloud mean.  Variograms
+    # are symmetric -- ``gamma(h) = gamma(-h)`` -- so a half-space pair cloud
+    # (one lag per unordered pair) must be measured around the origin; mean
+    # centring would bias the axes toward the half-space's offset.
+    coords = binned[dims].values.astype(float)
+    weights = w / np.sum(w)
+    moment = (coords * weights[:, None]).T @ coords
+    eigvals, eigvecs = np.linalg.eigh(moment)
     order = np.argsort(eigvals)[::-1]
     eigvals, eigvecs = eigvals[order], eigvecs[:, order]
     if get_eigens:
         return eigvals, eigvecs
 
-    v = _canonical_axis_sign(eigvecs[:, 0], dim3d)
-    azimuth = (90 - np.degrees(np.arctan2(v[1], v[0]))) % 360
-    if dim3d:
-        # tilt below horizontal, positive down (matches the model ``dip`` field)
-        dip = np.degrees(-np.arctan2(v[2], np.hypot(v[0], v[1])))
-        return (azimuth, dip), 2 * np.sqrt(eigvals)
-    return (azimuth,), 2 * np.sqrt(eigvals)
+    lengths = 2.0 * np.sqrt(np.maximum(eigvals, 0.0))
+    major = _canonical_axis_sign(eigvecs[:, 0], dim3d)
+    azimuth = (90 - np.degrees(np.arctan2(major[1], major[0]))) % 360
+    anis1 = float(lengths[1] / lengths[0]) if lengths[0] > 0 else 1.0
+    if not dim3d:
+        return (azimuth,), (anis1,)
+
+    # tilt below horizontal, positive down (matches the model ``dip`` field)
+    dip = np.degrees(-np.arctan2(major[2], np.hypot(major[0], major[1])))
+    # plunge: twist of the minor axes about the major axis, measured against the
+    # zero-plunge reference frame; folded into (-90, 90] for the sign symmetry.
+    reference = _engine_rotation(azimuth, dip, 0.0).as_matrix()
+    minor1_ref, minor2_ref = reference[0], reference[2]
+    minor1 = eigvecs[:, 1]
+    plunge = float(np.degrees(np.arctan2(minor1 @ minor2_ref, minor1 @ minor1_ref)))
+    if plunge > 90.0:
+        plunge -= 180.0
+    elif plunge <= -90.0:
+        plunge += 180.0
+    anis2 = float(lengths[2] / lengths[0]) if lengths[0] > 0 else 1.0
+    return (azimuth, dip, plunge), (anis1, anis2)
 
 
 def estimate_angle_angular_profile(rawvgm, angle="angle_h", dist="distance",
