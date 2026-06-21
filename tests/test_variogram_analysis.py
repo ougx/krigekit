@@ -546,6 +546,36 @@ def test_estimate_aniso_angle_recovers_three_angles_and_ratios():
         empirical.estimate_aniso_angle(raw, dim3d=True, r_max=2.0)
 
 
+def test_fit_aniso_angle_recovers_orientation_on_scattered_cloud():
+    import itertools
+    from krigekit.variogram import fit_aniso_angle, rotation_matrix_3d
+
+    truth = VariogramModel()
+    truth.set_vgm("sph", sill=1.0, a_major=60.0, a_minor1=15.0, a_minor2=8.0,
+                  azimuth=35.0, dip=22.0, plunge=10.0)
+    rng = np.random.default_rng(0)
+    pts = rng.uniform(0.0, 120.0, size=(200, 3))
+    idx = np.array(list(itertools.combinations(range(len(pts)), 2)))
+    lag = pts[idx[:, 0]] - pts[idx[:, 1]]
+    dist = np.linalg.norm(lag, axis=1)
+    keep = dist < 70.0
+    lag, dist = lag[keep], dist[keep]
+    raw = pd.DataFrame({
+        "d0": lag[:, 0], "d1": lag[:, 1], "d2": lag[:, 2], "distance": dist,
+        "variogram": truth.calc_variogram(np.zeros_like(lag), lag),
+    })
+
+    # profile fit recovers the major axis where the PCA seed would struggle
+    angles, (anis1, anis2) = fit_aniso_angle(
+        raw, n_struct=1, starts=[(60.0, 30.0, 0.0), (20.0, 15.0, 0.0)],
+        use_seed=False)
+    fit_axes = rotation_matrix_3d(*angles)
+    true_axes = rotation_matrix_3d(35.0, 22.0, 10.0)
+    assert abs(float(fit_axes[:, 0] @ true_axes[:, 0])) > 0.99   # major axis
+    assert 0.0 < anis2 <= anis1 < 1.0                            # ordered ratios
+    np.testing.assert_allclose([anis1, anis2], [0.25, 0.13], atol=0.07)
+
+
 def test_variogram_model_apply_to_kriging_replays_specs():
     model = VariogramModel()
     model.set_vgm(vtype="exp", sill=1.0, a_major=5.0)

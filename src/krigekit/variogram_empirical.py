@@ -1109,6 +1109,121 @@ def estimate_aniso_angle(rawvgm, x="d0", y="d1", dist="distance", vgm="variogram
     return (azimuth, dip, plunge), (anis1, anis2)
 
 
+def _spherical_unit(scaled_distance):
+    """Unit-sill spherical variogram of a (possibly >1) scaled distance."""
+    h = np.minimum(scaled_distance, 1.0)
+    return 1.5 * h - 0.5 * h ** 3
+
+
+def fit_aniso_angle(rawvgm, n_struct=1, x="d0", y="d1", z="d2", dist="distance",
+                    vgm="variogram", n_bins=16, starts=None, use_seed=True,
+                    max_nfev=500):
+    """Fit the 3-D anisotropy orientation by a model-based profile search.
+
+    Unlike :func:`estimate_aniso_angle` (a fast PCA of the lag cloud), this fits
+    the *model* to the data: for each candidate orientation, ``n_struct``
+    spherical structures' sills and anisotropic ranges are fitted with the
+    orientation held fixed, against a denoised binned cloud, and the orientation
+    giving the lowest residual is kept.  The objective is multi-modal, so the
+    search is multi-started over a coarse ``(azimuth, dip)`` grid plus the
+    :func:`estimate_aniso_angle` seed.
+
+    Returns ``((azimuth, dip, plunge), (anis1, anis2))`` -- the same shape as
+    :func:`estimate_aniso_angle` -- but ``anis1`` / ``anis2`` are the *fitted*
+    minor/major range ratios of the strongest structure (true ratios, not the
+    PCA spread proxy).
+
+    This is far more robust on **scattered, strongly anisotropic** clouds, where
+    the PCA seed can be tens of degrees wrong, at a higher cost.  It is *not*
+    immune to a regular sampling **lattice**: on gridded clouds the lattice
+    biases the residual, and the near-origin PCA seed may be better.  Spherical
+    structures are used as the orientation probe regardless of the eventual model
+    type.
+
+    Parameters
+    ----------
+    rawvgm : pandas.DataFrame
+        Raw variogram cloud with signed lag columns ``x``/``y``/``z`` and a
+        ``vgm`` value column.
+    n_struct : int
+        Number of nested spherical structures to fit while probing orientation.
+    n_bins : int
+        Cells per cutoff radius for the denoising bins (lag cells use the cell
+        mean lag vector, so the result is insensitive to the exact bin size).
+    starts : sequence of (azimuth, dip, plunge), optional
+        Override the default coarse start grid.
+    use_seed : bool
+        Also start from the :func:`estimate_aniso_angle` PCA estimate.
+    """
+    from scipy.optimize import least_squares, minimize
+
+    cut = float(np.nanmax(rawvgm[dist]))
+    size = cut / float(n_bins)
+    cells = np.round(rawvgm[[x, y, z]].to_numpy() / size).astype(int)
+    df = rawvgm.assign(_b0=cells[:, 0], _b1=cells[:, 1], _b2=cells[:, 2])
+    grouped = df.groupby(["_b0", "_b1", "_b2"], sort=False)
+    lag = grouped[[x, y, z]].mean().to_numpy(dtype=float)
+    gamma = grouped[vgm].mean().to_numpy(dtype=float)
+    weight = np.sqrt(grouped[vgm].size().to_numpy(dtype=float))
+    if len(gamma) < 4 * n_struct:
+        raise ValueError("not enough lag cells to fit the requested structures")
+
+    def _scaled(theta, ranges):
+        # rows of the engine rotation are (minor1, major, minor2) in data space
+        u = lag @ _engine_rotation(*theta).as_matrix().T
+        return np.sqrt((u[:, 1] / ranges[0]) ** 2 + (u[:, 0] / ranges[1]) ** 2
+                       + (u[:, 2] / ranges[2]) ** 2)
+
+    def _inner_fit(theta):
+        def residual(p):
+            total = np.zeros(len(gamma))
+            for k in range(n_struct):
+                sill, major, r1, r2 = p[4 * k:4 * k + 4]
+                # nested ratios keep major >= minor1 >= minor2 (no axis swap)
+                total = total + sill * _spherical_unit(
+                    _scaled(theta, [major, major * r1, major * r1 * r2]))
+            return weight * (total - gamma)
+
+        p0, lo, up = [], [], []
+        for k in range(n_struct):
+            p0 += [0.5, cut * 0.3 * (k + 1), 0.6, 0.35]
+            lo += [1e-3, size, 0.05, 0.05]
+            up += [5.0, cut * 1.3, 1.0, 1.0]
+        return least_squares(residual, p0, bounds=(lo, up), max_nfev=max_nfev)
+
+    if starts is None:
+        starts = [(az, dip, 0.0) for az in (0.0, 45.0, 90.0, 135.0)
+                  for dip in (15.0, 45.0)]
+    starts = list(starts)
+    if use_seed:
+        try:
+            starts.insert(0, estimate_aniso_angle(
+                rawvgm, dim3d=True, x=x, y=y, z=z, dist=dist, vgm=vgm)[0])
+        except Exception:
+            pass
+
+    best = None
+    for start in starts:
+        res = minimize(lambda t: _inner_fit(t).cost, start, method="Nelder-Mead",
+                       options=dict(xatol=0.5, fatol=1e-3, maxiter=200))
+        if best is None or res.fun < best.fun:
+            best = res
+
+    azimuth, dip, plunge = best.x
+    azimuth = float(azimuth) % 360.0
+    plunge = float(plunge)
+    if plunge > 90.0:
+        plunge -= 180.0
+    elif plunge <= -90.0:
+        plunge += 180.0
+    params = _inner_fit((azimuth, dip, plunge)).x
+    strongest = int(np.argmax(params[0::4][:n_struct]))
+    r1, r2 = params[4 * strongest + 2], params[4 * strongest + 3]
+    anis1 = float(r1)            # minor1 / major
+    anis2 = float(r1 * r2)       # minor2 / major (<= anis1)
+    return (azimuth, dip, plunge), (anis1, anis2)
+
+
 def estimate_angle_angular_profile(rawvgm, angle="angle_h", dist="distance",
                                    r_profile=None, da=10, a_tol=2.5, close=False,
                                    vgm="variogram", dim3d=False):
