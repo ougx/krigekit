@@ -460,10 +460,14 @@ contains
       call kriging_error('vgm_struct%struct_add_comp', 'Unknown variogram type: '//trim(vtype))
       return
     end if
-    if (present(product) .and. product .and. this%nstruct == 0) then
-      call kriging_error('vgm_struct%add', &
-        'first structure cannot be a product member (product=.true. requires a preceding structure)')
-      return
+    ! Nested present() test: .and. does not short-circuit, so `product` must not
+    ! be referenced in the same expression as present(product).
+    if (present(product)) then
+      if (product .and. this%nstruct == 0) then
+        call kriging_error('vgm_struct%add', &
+          'first structure cannot be a product member (product=.true. requires a preceding structure)')
+        return
+      end if
     end if
     this%nstruct = this%nstruct + 1
     associate(cc => this%structs(this%nstruct))

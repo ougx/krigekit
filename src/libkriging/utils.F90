@@ -42,7 +42,10 @@ end subroutine
 
 subroutine check_duplicate_coordinates_base(ndim, n, coord, has_duplicates, msg)
   integer, intent(in)           :: ndim, n
-  real,    intent(in)           :: coord(ndim, n)
+  ! Assumed-shape so a non-contiguous actual (e.g. an obs(1:ndim,:) row section)
+  ! is passed by descriptor without a copy-in array temporary. The explicit-shape
+  ! form forced such a temporary, which faulted under -fcheck=all debug builds.
+  real,    intent(in)           :: coord(:, :)
   logical, intent(out)          :: has_duplicates
   character(len=*), intent(out) :: msg
 

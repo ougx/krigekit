@@ -2391,7 +2391,12 @@ contains
     prev_nthread  = 0
     nthread_local = 0
     prev_ncache   = self%factor_cache_size
-    if (present(ncache) .and. ncache >= 0) self%factor_cache_size = ncache
+    ! Nested present() test: Fortran .and. does not short-circuit, so a combined
+    ! `present(ncache) .and. ncache >= 0` dereferences ncache even when absent,
+    ! faulting at -O0 (release -O2 happened to elide the read).
+    if (present(ncache)) then
+      if (ncache >= 0) self%factor_cache_size = ncache
+    end if
     ! A positive cache request means caching is enabled.  A shared
     ! set-associative hcache needs at least one complete 4-way bucket, so clamp
     ! undersized defaults and explicit overrides up to that minimum before
@@ -2404,9 +2409,13 @@ contains
     !-- Always snapshot the global thread count so the nthread<=nblock cap
     !   applied below can be restored at 900, even when no nthread was passed.
     prev_nthread = omp_get_max_threads()
-    if (present(nthread) .and. nthread > 0) then
-      call omp_set_num_threads(nthread)
-      nthread_local = nthread
+    if (present(nthread)) then
+      if (nthread > 0) then
+        call omp_set_num_threads(nthread)
+        nthread_local = nthread
+      else
+        nthread_local = prev_nthread
+      end if
     else
       nthread_local = prev_nthread
     end if
