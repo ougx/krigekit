@@ -72,7 +72,13 @@ def _intel_flags(opt_win, opt_linux, debug_win, debug_linux, shared_win, shared_
 FLAGS = {
     "gfortran": {
         "release": ["-O2", "-fdefault-real-8", "-fopenmp", "-cpp", "-fbacktrace", "-ffree-line-length-none"],
-        "debug": ["-O0", "-g", "-fdefault-real-8", "-fopenmp", "-Wall", "-fcheck=all", "-fbacktrace", "-cpp", "-ffree-line-length-none"],
+        # NB: -fcheck=all minus `bounds`. gfortran 16.1.0's bounds instrumentation
+        # SIGSEGVs (no diagnostic) on the polymorphic array-section associate in
+        # kriging::calc_variance; the other checks work. Restore `bounds` once the
+        # toolchain is fixed: -fcheck=all.
+        "debug": ["-O0", "-g", "-fdefault-real-8", "-fopenmp", "-Wall",
+                  "-fcheck=array-temps,do,mem,pointer,recursion",
+                  "-fbacktrace", "-cpp", "-ffree-line-length-none"],
         "shared": [],
         "implib": [],
     },
@@ -97,7 +103,7 @@ def detect_compiler():
     )
 
 def output_name(compiler: str) -> str:
-    return "sparks"
+    return "sparks.exe" if _ON_WINDOWS else "sparks"
 
 
 def get_compiler_version(compiler: str) -> str:

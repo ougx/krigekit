@@ -12,6 +12,7 @@ program sparks
   use gaussian_quadrature
   use kriging                  ! provides t_kriging; replaces hand-rolled solve machinery
   use kriging_err, only: kriging_failed, kriging_last_error
+  use normal_score, only: NS_TAIL_LINEAR, NS_TAIL_POWER, NS_TAIL_HYPERB
   implicit none
 
   character(8), parameter           :: sparks_version = '20260515'
@@ -64,6 +65,10 @@ program sparks
   real            :: ang1, ang2, ang3, anis1, anis2
   logical         :: correct_weight, writexy, neglect_error, writemat, showargs
   logical         :: loocv, anisotropic_search, verbose, blockpntweight, obserror
+  ! marginal transform (normal-score / uniform-score) for the primary variable
+  logical         :: nscore, uscore
+  integer         :: ns_ltail, ns_utail
+  real            :: ns_zmin, ns_zmax, ns_ltpar, ns_utpar
 
   ! local bookkeeping
   character(len=2)  :: opt
@@ -98,6 +103,9 @@ program sparks
   namelist /flags/ &
     correct_weight, writexy, neglect_error, writemat, &
     showargs, loocv, anisotropic_search, verbose, blockpntweight, obserror
+
+  namelist /transform/ &
+    nscore, uscore, ns_zmin, ns_zmax, ns_ltail, ns_utail, ns_ltpar, ns_utpar
 
   allocate (opts, source=(/ &
     option_s("namelist",        "nl", 1, "read all settings from a namelist (.nml) file. all other options are ignored if namelist is set."), &
@@ -140,6 +148,11 @@ program sparks
     option_s("loocv",           "cv", 0, "leave-one-out cross-validation: grid equals observations."), &
     option_s("writemat",        "wm", 0, "write kriging matrix and rhs to files for debugging."), &
     option_s("showargs",        "sa", 0, "print full configuration summary before solving."), &
+    option_s("nscore",          "ns", 0, "normal-score transform the primary variable; results back-transformed automatically. SGSIM expects a unit-sill variogram of the scores."), &
+    option_s("uscore",          "us", 0, "uniform-score (rank) transform the primary variable; results back-transformed."), &
+    option_s("nstail",          "tl", 2, "back-transform tail models: ltail utail (linear|power|hyperbolic). default: linear linear."), &
+    option_s("nstpar",          "tp", 2, "back-transform tail parameters: ltpar utpar (power/hyperbolic). default: 1 1."), &
+    option_s("tbounds",         "tb", 2, "back-transform bounds: zmin zmax. default: observed data min/max."), &
     option_s("help",            "h",  0, "show this help message.") &
   /))
 
@@ -162,6 +175,11 @@ program sparks
   anisotropic_search = .false.; blockpntweight = .false.; obserror = .false.
   blocksize = zero
   vgm_spec1 = ''; vgm_spec2 = ''; vgm_specc = ''
+  nscore = .false.; uscore = .false.
+  ns_ltail = NS_TAIL_LINEAR; ns_utail = NS_TAIL_LINEAR
+  ns_ltpar = one; ns_utpar = one
+  ns_zmin = ieee_value(ns_zmin, ieee_quiet_nan)   ! sentinel: default to data min/max
+  ns_zmax = ieee_value(ns_zmax, ieee_quiet_nan)
 
   ! ---- parse CLI ------------------------------------------------------------
   ! Pass 1: check for -nl / --namelist before anything else.
@@ -252,6 +270,17 @@ program sparks
       case ("as"); anisotropic_search = .true.
       case ("wm"); writemat = .true.
       case ("sa"); showargs = .true.
+      case ("ns"); nscore = .true.
+      case ("us"); uscore = .true.
+      case ("tl")
+        block
+          character(16) :: lt, ut
+          read (optarg, *) lt, ut
+          ns_ltail = tail_code(lt)
+          ns_utail = tail_code(ut)
+        end block
+      case ("tp"); read (optarg, *) ns_ltpar, ns_utpar
+      case ("tb"); read (optarg, *) ns_zmin, ns_zmax
       case ("h"); call showhelp()
       case default; call perr("  Error: unknown command-line option.")
       end select
@@ -320,6 +349,10 @@ program sparks
     if (nmax1==0) call perr("  Error: nmax1 must be > 0 for simulation.")
     if (loocv) call perr("  Error: simulation cannot be used with leave-one-out cross-validation.")
   end if
+
+  ! --- marginal transform
+  if (nscore .and. uscore) &
+    call perr("  Error: --nscore and --uscore are mutually exclusive.")
   if (loocv) nblock = nobs1
 
   ! --- factor file
@@ -398,6 +431,9 @@ program sparks
   call set_obs_(1, obsfile1, nobs1, nmax1, maxdist1, obs1, obs1drift)
   if (nobs2 > 0) call set_obs_(2, obsfile2, nobs2, nmax2, maxdist2, obs2, obs2drift)
 
+  ! ---- marginal transform (must follow set_obs; builds table + transforms) ----
+  if (nscore .or. uscore) call set_transform_()
+
   ! ---- read grid ------------------------------------------------------
   call set_grid_()
 
@@ -437,6 +473,7 @@ contains
     read (ifile, nml=krige_opt, iostat=istat); if (istat > 0) call nml_warn('krige_opt', istat); rewind (ifile)
     read (ifile, nml=variograms, iostat=istat); if (istat > 0) call nml_warn('variograms', istat); rewind (ifile)
     read (ifile, nml=anisotropy, iostat=istat); if (istat > 0) call nml_warn('anisotropy', istat); rewind (ifile)
+    read (ifile, nml=transform, iostat=istat); if (istat > 0) call nml_warn('transform', istat); rewind (ifile)
     read (ifile, nml=flags, iostat=istat); if (istat > 0) call nml_warn('flags', istat)
 
     close (ifile)
@@ -617,6 +654,67 @@ contains
       call stop_if_kriging_failed('setting secondary search')
     end if
   end subroutine set_search_
+
+  ! ===========================================================================
+  ! Marginal transform helpers (normal-score / uniform-score)
+  ! ===========================================================================
+
+  ! Map a tail-model name (linear|power|hyperbolic, abbreviations ok) or a
+  ! numeric code (1|2|4) to the normal_score tail code.
+  integer function tail_code(name) result(code)
+    character(*), intent(in) :: name
+    character(len=16) :: s
+    integer :: ios, ival
+    s = adjustl(name)
+    read (s, *, iostat=ios) ival            ! accept a numeric code directly
+    if (ios == 0) then
+      select case (ival)
+      case (NS_TAIL_LINEAR, NS_TAIL_POWER, NS_TAIL_HYPERB); code = ival; return
+      end select
+    end if
+    select case (trim(s))
+    case ('linear', 'lin', 'l');      code = NS_TAIL_LINEAR
+    case ('power', 'pow', 'p');       code = NS_TAIL_POWER
+    case ('hyperbolic', 'hyp', 'h');  code = NS_TAIL_HYPERB
+    case default
+      code = NS_TAIL_LINEAR
+      call perr('  Error: unknown tail model "'//trim(s)//'" (use linear|power|hyperbolic).')
+    end select
+  end function tail_code
+
+  ! Build the marginal transform for the primary variable and forward-transform
+  ! its observation values. The engine back-transforms results inside solve().
+  ! zmin/zmax are passed only when the user supplied them (NaN sentinel = use the
+  ! observed data range).
+  subroutine set_transform_()
+    logical :: bset
+    bset = (.not. ieee_is_nan(ns_zmin)) .and. (.not. ieee_is_nan(ns_zmax))
+    if (verbose) then
+      if (nscore) then
+        print "(A)", ' Building normal-score transform for the primary variable'
+      else
+        print "(A)", ' Building uniform-score transform for the primary variable'
+      end if
+    end if
+    if (nscore) then
+      if (bset) then
+        call krig%set_nscore(ivar=1, zmin=ns_zmin, zmax=ns_zmax, &
+             ltail=ns_ltail, utail=ns_utail, ltpar=ns_ltpar, utpar=ns_utpar)
+      else
+        call krig%set_nscore(ivar=1, &
+             ltail=ns_ltail, utail=ns_utail, ltpar=ns_ltpar, utpar=ns_utpar)
+      end if
+    else
+      if (bset) then
+        call krig%set_uscore(ivar=1, zmin=ns_zmin, zmax=ns_zmax, &
+             ltail=ns_ltail, utail=ns_utail, ltpar=ns_ltpar, utpar=ns_utpar)
+      else
+        call krig%set_uscore(ivar=1, &
+             ltail=ns_ltail, utail=ns_utail, ltpar=ns_ltpar, utpar=ns_utpar)
+      end if
+    end if
+    call stop_if_kriging_failed('building marginal transform')
+  end subroutine set_transform_
 
   ! ===========================================================================
   ! Output helpers

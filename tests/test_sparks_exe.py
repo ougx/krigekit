@@ -495,6 +495,76 @@ class TestSGSIM:
 
 
 # ===========================================================================
+# 6b. Marginal transforms (-ns normal-score / -us uniform-score)
+# ===========================================================================
+class TestMarginalTransform:
+    _DIM = ("-d", "2", "5", "3", "0", "0")
+    _OBS = ("-of", _data("obs_simple.csv"))
+    _BLK = ("-bf", _data("grid_simple.csv"))
+    _VGM = ("-v1", "sph", "100.0", "1.0", "0.0")   # unit-sill variogram of scores
+    _PATH = ("-pf", _data("path_simple.csv"))
+    _SAM  = ("-sf", _data("sample_simple.csv"))
+
+    def _sgsim(self, sparks, *extra, seed=42):
+        return _run(
+            sparks,
+            *self._DIM, *self._OBS, *self._BLK, *self._VGM,
+            "-s", "-sd", str(seed), "-n1", "5",
+            *self._PATH, *self._SAM, *extra,
+        )
+
+    def test_nscore_sgsim_runs(self, sparks):
+        cp = self._sgsim(sparks, "-ns")
+        assert cp.returncode == 0
+        assert _parse_values(cp.stdout).shape == (3,)
+
+    def test_uscore_sgsim_runs(self, sparks):
+        cp = self._sgsim(sparks, "-us")
+        assert cp.returncode == 0
+        assert _parse_values(cp.stdout).shape == (3,)
+
+    def test_nscore_back_transforms_into_data_range(self, sparks):
+        """Linear tails default zmin/zmax to the data range, so back-transformed
+        simulated values must fall within [min, max] of the observations."""
+        obs = pd.read_csv(_data("obs_simple.csv"))
+        lo, hi = obs["z"].min(), obs["z"].max()
+        vals = _parse_values(self._sgsim(sparks, "-ns").stdout)
+        assert vals.min() >= lo - 1e-6
+        assert vals.max() <= hi + 1e-6
+
+    def test_nscore_differs_from_untransformed(self, sparks):
+        """Enabling the transform must change the realisation."""
+        plain = _parse_values(self._sgsim(sparks).stdout)
+        ns = _parse_values(self._sgsim(sparks, "-ns").stdout)
+        assert not np.allclose(plain, ns)
+
+    def test_nscore_reproducible(self, sparks):
+        v1 = _parse_values(self._sgsim(sparks, "-ns", seed=7).stdout)
+        v2 = _parse_values(self._sgsim(sparks, "-ns", seed=7).stdout)
+        np.testing.assert_array_equal(v1, v2)
+
+    def test_nscore_kriging_backtransform_runs(self, sparks):
+        """nscore with kriging (nsim=0) exercises the quadrature back-transform."""
+        cp = _run(
+            sparks,
+            *self._DIM, *self._OBS, *self._BLK, *self._VGM, "-ns",
+        )
+        assert cp.returncode == 0
+
+    def test_tail_and_bounds_flags_parse(self, sparks):
+        cp = self._sgsim(sparks, "-ns",
+                         "-tl", "power", "hyperbolic",
+                         "-tp", "1.5", "2.0",
+                         "-tb", "0.0", "3.0")
+        assert cp.returncode == 0
+
+    def test_nscore_uscore_mutually_exclusive(self, sparks):
+        cp = self._sgsim(sparks, "-ns", "-us")
+        assert cp.returncode != 0
+        assert "mutually exclusive" in (cp.stdout + cp.stderr).lower()
+
+
+# ===========================================================================
 # 7.  Bounds clipping (-bd)
 # ===========================================================================
 

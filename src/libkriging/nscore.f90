@@ -139,14 +139,23 @@ contains
 
     dmin = self%z(1)
     dmax = self%z(k)
-    self%zmin = merge(zmin, dmin, present(zmin))
-    self%zmax = merge(zmax, dmax, present(zmax))
+    ! NB: use if(present(...)) rather than merge(opt, default, present(opt)) --
+    ! merge evaluates BOTH arguments, so referencing a non-present optional in
+    ! the true-branch is illegal and segfaults when the caller omits it.
+    self%zmin = dmin
+    if (present(zmin)) self%zmin = zmin
+    self%zmax = dmax
+    if (present(zmax)) self%zmax = zmax
     if (self%zmin > dmin) self%zmin = dmin       ! must bracket the data
     if (self%zmax < dmax) self%zmax = dmax
-    self%ltail = merge(ltail, NS_TAIL_LINEAR, present(ltail))
-    self%utail = merge(utail, NS_TAIL_LINEAR, present(utail))
-    self%ltpar = merge(ltpar, 1.0, present(ltpar))
-    self%utpar = merge(utpar, 1.0, present(utpar))
+    self%ltail = NS_TAIL_LINEAR
+    if (present(ltail)) self%ltail = ltail
+    self%utail = NS_TAIL_LINEAR
+    if (present(utail)) self%utail = utail
+    self%ltpar = 1.0
+    if (present(ltpar)) self%ltpar = ltpar
+    self%utpar = 1.0
+    if (present(utpar)) self%utpar = utpar
     if (self%ltpar <= 0.0) self%ltpar = 1.0
     if (self%utpar <= 0.0) self%utpar = 1.0
 

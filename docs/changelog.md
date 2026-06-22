@@ -2,6 +2,42 @@
 
 ## 0.3.1 (unreleased)
 
+### Added - SPARKS marginal transforms (normal-score / uniform-score)
+
+The SPARKS CLI can now apply a marginal transform to the primary variable for
+simulation: `-ns`/`--nscore` (normal-score / Gaussian anamorphosis) or
+`-us`/`--uscore` (uniform/rank score). The transform table is built from the
+observations, the values are forward-transformed before solving, and estimates
+or simulated realizations are back-transformed automatically (Gauss-Hermite
+quadrature for kriging, direct mapping for SGSIM). Back-transform tails are
+configurable with `-tl`/`--nstail` (linear|power|hyperbolic), `-tp`/`--nstpar`,
+and `-tb`/`--tbounds`; all are also exposed through a new `&transform` namelist
+group. `--nscore` and `--uscore` are mutually exclusive. With a transform the
+supplied variogram should be that of the scores (unit sill for SGSIM).
+
+### Fixed - Non-present optional dereferences (engine)
+
+Several guards combined `present(opt)` with a use of `opt` in a single
+expression (`if (present(ncache) .and. ncache >= 0)`, `present(nthread) ...`,
+`present(product) .and. product ...`, and `merge(zmin, dmin, present(zmin))` in
+the normal-score builder). Fortran does not short-circuit `.and.`, and `merge`
+evaluates both arms, so an absent optional was dereferenced — undefined
+behavior that happened to be elided at `-O2` but crashed at `-O0` (e.g. the
+SPARKS CLI, which calls `solve(nthread)` without `ncache`). These are now
+nested `present()` tests. No behavior change for callers that already pass the
+arguments (Python/C-API).
+
+### Fixed - SPARKS build and debug builds
+
+- `build_sparks.py` now emits `sparks.exe` on Windows (was producing an
+  extensionless binary that shadowed stale builds and could not be launched).
+- `check_duplicate_coordinates_base` takes an assumed-shape `coord(:,:)`,
+  avoiding a copy-in array temporary for the non-contiguous observation section.
+- Debug builds use `-fcheck=array-temps,do,mem,pointer,recursion` (i.e.
+  `-fcheck=all` without `bounds`): gfortran 16.1.0's bounds instrumentation
+  segfaults without a diagnostic on the polymorphic array-section `associate` in
+  `calc_variance`. Restore `-fcheck=all` once the toolchain is fixed.
+
 ## 0.3.0
 
 ### Added - Anisotropy orientation fitting
