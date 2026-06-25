@@ -22,11 +22,11 @@ if __name__ == "__main__":
 
     lower = 0.0
     k = Kriging(ndim=2, nvar=1, nsim=1, write_mat=True, verbose=True)
-    k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
+    k.set_obs(ivar=1, coord=coord, value=value)
     k.set_vgm(ivar=1, jvar=1, **_VGM)
     k.set_grid(coord=grid)
     k.set_sim()
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=10)
     k.solve()
     est, _ = k.get_results()
     print("Done-------")

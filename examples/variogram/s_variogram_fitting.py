@@ -238,10 +238,10 @@ plt.show()
 # kriging can produce small values outside ``[0, 1]``.
 
 k = Kriging()
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_grid(coord=grid_coord)
 model.apply_to(k, ivar=1, jvar=1)
-k.set_search(ivar=1, anis1=search_anis1, azimuth=AZIMUTH)
+k.set_search(ivar=1, anis1=search_anis1, azimuth=AZIMUTH, nmax=20)
 k.solve()
 out = k.get_result_df()
 

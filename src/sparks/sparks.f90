@@ -136,7 +136,7 @@ program sparks
     option_s("varioc",          "vc", 4, "cross-variogram (primary x secondary). same format as vario1."), &
     option_s("bounds",          "bd", 2, "lower and upper bounds for simulated/estimated values."), &
     option_s("blocksize",       "bs", 1, "blocks dimensions for gaussian quadrature (block_type=-4)."), &
-    option_s("maxdist",         "md", 2, "max search distance: two values for primary and covariate."), &
+    option_s("maxdist",         "md", 2, "max search distance: two values for primary and covariate; <=0 is unlimited."), &
     option_s("correct",         "cw", 0, "remove negative weights and renormalise to sum to 1."), &
     option_s("anisosearch",     "as", 0, "neighbour search in rotated/scaled (anisotropic) coordinates."), &
     option_s("obserror",        "oe", 0, "observation error variance is present in the input file."), &
@@ -428,8 +428,8 @@ program sparks
   call set_vgm_()
 
   ! ---- read obs ------------------------------------------------------
-  call set_obs_(1, obsfile1, nobs1, nmax1, maxdist1, obs1, obs1drift)
-  if (nobs2 > 0) call set_obs_(2, obsfile2, nobs2, nmax2, maxdist2, obs2, obs2drift)
+  call set_obs_(1, obsfile1, nobs1, obs1, obs1drift)
+  if (nobs2 > 0) call set_obs_(2, obsfile2, nobs2, obs2, obs2drift)
 
   ! ---- marginal transform (must follow set_obs; builds table + transforms) ----
   if (nscore .or. uscore) call set_transform_()
@@ -532,9 +532,8 @@ contains
     end do
   end subroutine set_vgm_
 
-  subroutine set_obs_(ivar, obsfile, nobs, nmax, maxdist, obs, obsdrift)
-    integer, intent(in) :: ivar, nobs, nmax
-    real, intent(in) :: maxdist
+  subroutine set_obs_(ivar, obsfile, nobs, obs, obsdrift)
+    integer, intent(in) :: ivar, nobs
     character(len=*), intent(in) :: obsfile
     real, intent(out) :: obs(:, :)
     real, intent(out) :: obsdrift(:, :)
@@ -546,9 +545,9 @@ contains
       call read_data(obsfile, nobs, ndim+1, obs, ioerr)
     end if
     if (obserror) then
-   call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), variance=obs(ndim + 2, :), nmax=nmax, maxdist=maxdist, sk_mean=sk_mean)
+      call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), variance=obs(ndim + 2, :), sk_mean=sk_mean)
     else
-      call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), nmax=nmax, maxdist=maxdist, sk_mean=sk_mean)
+      call krig%set_obs(ivar=ivar, coord=obs(1:ndim, :), value=obs(ndim + 1, :), sk_mean=sk_mean)
     end if
     call stop_if_kriging_failed('setting observations')
     if (ndrift > 0) then
@@ -647,10 +646,34 @@ contains
   end subroutine set_sim_
 
   subroutine set_search_()
-    call krig%set_search(1, anis1, anis2, ang1, ang2, ang3)
+    if (nmax1 > 0) then
+      if (maxdist1 > 0.0) then
+        call krig%set_search(1, anis1, anis2, ang1, ang2, ang3, nmax=nmax1, maxdist=maxdist1)
+      else
+        call krig%set_search(1, anis1, anis2, ang1, ang2, ang3, nmax=nmax1)
+      end if
+    else
+      if (maxdist1 > 0.0) then
+        call krig%set_search(1, anis1, anis2, ang1, ang2, ang3, maxdist=maxdist1)
+      else
+        call krig%set_search(1, anis1, anis2, ang1, ang2, ang3)
+      end if
+    end if
     call stop_if_kriging_failed('setting primary search')
     if (nobs2 > 0) then
-      call krig%set_search(2, anis1, anis2, ang1, ang2, ang3)
+      if (nmax2 > 0) then
+        if (maxdist2 > 0.0) then
+          call krig%set_search(2, anis1, anis2, ang1, ang2, ang3, nmax=nmax2, maxdist=maxdist2)
+        else
+          call krig%set_search(2, anis1, anis2, ang1, ang2, ang3, nmax=nmax2)
+        end if
+      else
+        if (maxdist2 > 0.0) then
+          call krig%set_search(2, anis1, anis2, ang1, ang2, ang3, maxdist=maxdist2)
+        else
+          call krig%set_search(2, anis1, anis2, ang1, ang2, ang3)
+        end if
+      end if
       call stop_if_kriging_failed('setting secondary search')
     end if
   end subroutine set_search_

@@ -79,14 +79,13 @@ simulator.set_obs(
     ivar=1,
     coord=np.empty((0, 2)),
     value=np.empty(0),
-    nmax=48,
 )
 simulator.set_grid(coord=grid)
 for spec in TRUE_COMPONENTS:
     engine_spec = {key: value for key, value in spec.items() if key != "name"}
     simulator.set_vgm(ivar=1, jvar=1, **engine_spec)
 simulator.set_sim()
-simulator.set_search(ivar=1, anis1=ANIS1, azimuth=AZIMUTH)
+simulator.set_search(ivar=1, anis1=ANIS1, azimuth=AZIMUTH, nmax=48)
 simulator.solve()
 
 simulations = np.asarray(simulator.get_results()[0])

@@ -67,7 +67,7 @@ class TestVariogramTypes:
         value = np.array([1.0, 2.0, 1.5])
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=3)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, vtype=vtype, nugget=0.0, sill=0.2, a_major=10.0)
 
         assert f"    {vtype}  sill=" in k.get_info()
@@ -77,7 +77,7 @@ class TestVariogramTypes:
         value = np.array([1.0, 2.0, 1.5])
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=3)
+        k.set_obs(ivar=1, coord=coord, value=value)
 
         with pytest.raises(RuntimeError, match="unknown vtype"):
             k.set_vgm(ivar=1, jvar=1, vtype="bad", nugget=0.0, sill=0.2, a_major=10.0)
@@ -88,10 +88,10 @@ class TestVaryingVariogram:
 
     def _solve_with_vgm(self, coord, value, grid, vgm):
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **vgm)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         return k.get_results()
 
@@ -101,11 +101,11 @@ class TestVaryingVariogram:
         vgm_short = dict(vtype="sph", nugget=0.0, sill=0.12, a_major=500.0)
 
         k = Kriging(ndim=2, nvar=1, varying_vgm=True, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_grid(coord=_INTERIOR_GRID)
         k.set_vgm_block(ib=1, ivar=1, jvar=1, **vgm_long)
         k.set_vgm_block(ib=2, ivar=1, jvar=1, **vgm_short)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est_varying, var_varying = k.get_results()
 
@@ -124,7 +124,7 @@ class TestVaryingVariogram:
         coord, value = pc2d_obs
 
         k = Kriging(ndim=2, nvar=1, nsim=1, varying_vgm=True, verbose=0, seed=42)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_grid(coord=_INTERIOR_GRID)
         k.set_vgm_block(ib=1, ivar=1, jvar=1, **_VGM_LONG)
         k.set_vgm_block(ib=2, ivar=1, jvar=1, **_VGM_SHORT)
@@ -132,7 +132,7 @@ class TestVaryingVariogram:
             randpath=np.array([1, 2], dtype=np.int32),
             sample=np.zeros((_INTERIOR_GRID.shape[0], )),
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         sims, var = k.get_results()
 
@@ -372,11 +372,11 @@ class TestExactMatch:
         coord, value = pc2d_obs
         obs_err = 0.01
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX,
+        k.set_obs(ivar=1, coord=coord, value=value,
                   variance=np.full(len(value), obs_err))
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=coord[[5]])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
         assert est[0] != pytest.approx(value[5], rel=1e-4), "kriging estimate is NOT equal to the obs value"
@@ -408,11 +408,11 @@ class TestExactMatch:
         """
         coord, value = pc2d_obs
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_NUG)
         k.set_vgm(ivar=1, jvar=1, **_VGM_SPH)
         k.set_grid(coord=coord[[7]])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
         assert est[0] == pytest.approx(value[7], rel=1e-4)
@@ -426,10 +426,10 @@ class TestExactMatch:
         value = rng.uniform(0, 1, size=n)
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=n)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=200.0)
         k.set_grid(coord=coord)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=n)
         k.solve()
         est, var = k.get_results()
 

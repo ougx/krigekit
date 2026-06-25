@@ -110,7 +110,7 @@ FLAGS = {
         "release": ["-O2", "-fdefault-real-8", "-fopenmp", "-cpp",
                     "-fbacktrace", "-ffree-line-length-none"],
         "debug":   ["-O0", "-g", "-fdefault-real-8", "-fopenmp", "-Wall",
-                    "-fcheck=all", "-fbacktrace", "-cpp", "-DDEBUG",
+                    "-fbacktrace", "-cpp", "-DDEBUG",
                     "-ffree-line-length-none"],
         "shared":  ["-shared", "-fPIC"],
         "implib":  [],

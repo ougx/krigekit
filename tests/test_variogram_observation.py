@@ -71,8 +71,8 @@ def test_is_collocated_with():
 
 def test_clear_resets_everything():
     coord, value = _xy()
-    obs = ObservationSet().set(coord, value, variance=np.ones(5), nmax=8)
-    obs.set_search(anis1=0.5)
+    obs = ObservationSet().set(coord, value, variance=np.ones(5))
+    obs.set_search(nmax=8, anis1=0.5)
     obs.clear()
     assert not obs.configured
     assert obs.nmax is None and obs.search_anis1 == 1.0
@@ -91,14 +91,16 @@ def test_apply_to_emits_engine_calls():
             self.drift = (ivar, drift)
 
     coord, value = _xy(5)
-    obs = ObservationSet().set(coord, value, variance=np.ones(5), nmax=12,
-                               maxdist=300.0, sk_mean=1.5, drift=np.ones(5))
+    obs = ObservationSet().set(coord, value, variance=np.ones(5),
+                               sk_mean=1.5, drift=np.ones(5))
+    obs.set_search(nmax=12, maxdist=300.0)
     rec = _Recorder()
     obs.apply_to(rec, ivar=2)
     ivar, c, v, kwargs = rec.obs
     assert ivar == 2
-    assert kwargs["nmax"] == 12 and kwargs["maxdist"] == 300.0
+    assert "nmax" not in kwargs and "maxdist" not in kwargs
     assert kwargs["sk_mean"] == 1.5
+    assert obs.nmax == 12 and obs.maxdist == 300.0
     assert rec.drift[0] == 2 and rec.drift[1].shape == (5, 1)
 
     with pytest.raises(RuntimeError):

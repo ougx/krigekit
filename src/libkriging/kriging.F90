@@ -1,4 +1,4 @@
-﻿!==============================================================================
+!==============================================================================
 ! Module: kriging
 !
 ! Purpose
@@ -315,16 +315,21 @@ contains
   ! If all observations fit within nmax, need_search=.false. and no tree is
   ! built; distances are computed directly in search_neighbors.
   !============================================================================
-  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, sector_search)
+  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, nmax, maxdist, sector_search)
     use rotation,       only: calc_rotmat, sub_rotate
     use kdtree2_module, only: kdtree2_create
     class(t_kriging)   :: self
     integer, intent(in) :: ivar
-    real,    intent(in) :: anis1, anis2, azimuth, dip, plunge
+    real,    intent(in), optional :: anis1, anis2, azimuth, dip, plunge
+    integer, intent(in), optional :: nmax
+    real,    intent(in), optional :: maxdist
     logical, intent(in), optional :: sector_search
-    character(len=*), parameter :: subname = "t_kriging%set_search"
 
+    ! local
+    character(len=*), parameter :: subname = "t_kriging%set_search"
     real, allocatable :: rcoord(:,:)   ! rotated coordinates for anisotropic tree
+    real              :: anis1_, anis2_, azimuth_, dip_, plunge_
+
     if (.not. associated(self%obs)) then
       call kriging_error(subname, 'Call initialize() before set_search.')
       return
@@ -354,7 +359,23 @@ contains
         call kriging_error(subname, 'set_sim() needs to be called before set_search().')
         return
       end if
+      ! SGSIM requires an explicit nmax: defaulting to all obs + prior blocks
+      ! would build prohibitively large neighbourhoods.
+      if (.not. present(nmax)) then
+        call kriging_error(subname, '`nmax` must be set for all observations for SGSIM.')
+        return
+      end if
     end if
+    anis1_ = 1.0
+    anis2_ = 1.0
+    azimuth_ = 0.0
+    dip_ = 0.0
+    plunge_ = 0.0
+    if (present(anis1))   anis1_   = anis1
+    if (present(anis2))   anis2_   = anis2
+    if (present(azimuth)) azimuth_ = azimuth
+    if (present(dip))     dip_     = dip
+    if (present(plunge))  plunge_  = plunge
     associate( &
       ndim               => self%ndim, &
       obs                => self%obs(ivar), &
@@ -362,9 +383,26 @@ contains
       anisotropic_search => self%obs(ivar)%anisotropic_search)
 
       if (present(sector_search)) obs%sector_search = sector_search
+      if (present(nmax)) then
+        if (nmax < 1) then
+          call kriging_error(subname, 'nmax must be larger than 0.')
+          return
+        end if
+        obs%nmax = nmax
+        ! Cross-validation removes the target observation from its own
+        ! neighbourhood, so request one extra candidate when a finite nmax is used.
+        if (self%cross_validation) obs%nmax = obs%nmax + 1
+      end if
+      if (present(maxdist)) then
+        if (maxdist <= 0.0) then
+          call kriging_error(subname, 'maxdist must be positive.')
+          return
+        end if
+        obs%maxdist = maxdist**2
+      end if
 
       !-- Activate anisotropic search only when there is meaningful anisotropy
-      anisotropic_search = (abs(anis1 - 1.0) > EPSLON .or. abs(anis2 - 1.0) > EPSLON) &
+      anisotropic_search = (abs(anis1_ - 1.0) > EPSLON .or. abs(anis2_ - 1.0) > EPSLON) &
                            .and. self%anisotropic_search
 
       !-- Determine effective nmax, accounting for SGSIM's extended obs array.
@@ -388,7 +426,7 @@ contains
       if (need_search) then
         if (anisotropic_search) then
           !-- compute 3×3 rotation+scale matrix from variogram angles
-          obs%rotmat = calc_rotmat(azimuth, dip, plunge, anis1, anis2)
+          obs%rotmat = calc_rotmat(azimuth_, dip_, plunge_, anis1_, anis2_)
           !-- Project coordinates into anisotropically scaled space before indexing
           allocate(rcoord, mold = obs%coord)
           call sub_rotate(obs%rotmat, ndim, size(obs%coord, 2), obs%coord, rcoord)
@@ -437,6 +475,12 @@ contains
         end do
       end do
     end if
+    do iv = 1, self%nvar
+      if (.not. self%obs(iv)%set_search) then
+        call self%set_search(iv)
+        if (kriging_failed()) return
+      end if
+    end do
     call self%prepare_common(subname)
   end subroutine prepare
 

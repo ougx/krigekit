@@ -25,8 +25,8 @@ grid_coord = ...   # estimation grid,            shape (ngrid, ndim)
 
 k = Kriging(ndim=3, nvar=2, std_ck=True)
 
-k.set_obs(ivar=1, coord=obs1_coord, value=obs1_value, nmax=50)
-k.set_obs(ivar=2, coord=obs2_coord, value=obs2_value, nmax=50)
+k.set_obs(ivar=1, coord=obs1_coord, value=obs1_value)
+k.set_obs(ivar=2, coord=obs2_coord, value=obs2_value)
 
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.00, sill=0.12, a_major=5000)
 k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.00, sill=0.068, a_major=5000)
@@ -34,8 +34,8 @@ k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.05, sill=0.04, a_major=5000)
 
 k.set_grid(coord=grid_coord)
 
-k.set_search(ivar=1)
-k.set_search(ivar=2)
+k.set_search(ivar=1, nmax=50)
+k.set_search(ivar=2, nmax=50)
 
 k.solve()
 est, var = k.get_results()   # est shape: (ngrid, nvar)
@@ -144,14 +144,14 @@ pred <- predict(g, grid)
 ```python
 # Python / krigekit
 k = Kriging(ndim=3, nvar=2, std_ck=True)   # std_ck=True matches gstat
-k.set_obs(ivar=1, coord=obs1[["x","y","z"]].values, value=obs1.z, nmax=50)
-k.set_obs(ivar=2, coord=obs2[["x","y","z"]].values, value=obs2.z, nmax=50)
+k.set_obs(ivar=1, coord=obs1[["x","y","z"]].values, value=obs1.z)
+k.set_obs(ivar=2, coord=obs2[["x","y","z"]].values, value=obs2.z)
 k.set_vgm(ivar=1, jvar=1, **m1_params)
 k.set_vgm(ivar=2, jvar=2, **m2_params)
 k.set_vgm(ivar=1, jvar=2, **mc_params)
 k.set_grid(coord=grid[["x","y","z"]].values)
-k.set_search(ivar=1)
-k.set_search(ivar=2)
+k.set_search(ivar=1, nmax=50)
+k.set_search(ivar=2, nmax=50)
 k.solve()
 est, var = k.get_results()
 # est[:, 0] ≈ pred["var1.pred"]
@@ -167,10 +167,10 @@ When `ndrift > 0`, call `set_obs_drift` for each variable's observations and
 ```python
 k = Kriging(ndim=3, nvar=2, ndrift=1, std_ck=True)
 
-k.set_obs(ivar=1, coord=obs1_coord, value=obs1_value, nmax=50)
+k.set_obs(ivar=1, coord=obs1_coord, value=obs1_value)
 k.set_obs_drift(ivar=1, drift=obs1_elevation)   # shape (n1, 1)
 
-k.set_obs(ivar=2, coord=obs2_coord, value=obs2_value, nmax=50)
+k.set_obs(ivar=2, coord=obs2_coord, value=obs2_value)
 k.set_obs_drift(ivar=2, drift=obs2_elevation)   # shape (n2, 1)
 
 k.set_vgm(...)   # set variograms as usual
@@ -179,8 +179,8 @@ k.set_grid(coord=grid_coord)
 # ivar=None broadcasts the same drift to all target variables
 k.set_grid_drift(drift=grid_elevation, ivar=None)   # shape (ngrid, 1)
 
-k.set_search(ivar=1)
-k.set_search(ivar=2)
+k.set_search(ivar=1, nmax=50)
+k.set_search(ivar=2, nmax=50)
 k.solve()
 ```
 

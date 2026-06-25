@@ -28,10 +28,10 @@ obs_value = rng.normal(10.0, 2.0, 50)
 grid_coord = np.mgrid[0:101:10, 0:101:10].reshape(2, -1).T
 
 k = Kriging(ndim=2, nvar=1, store_weight=True)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=16)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95, a_major=40.0)
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=16)
 k.solve()
 
 est, var = k.get_results()
@@ -71,10 +71,10 @@ before calling `solve()`.
 new_obs_value = obs_value + 1.5
 
 k2 = Kriging(ndim=2, nvar=1, use_old_weight=True)
-k2.set_obs(ivar=1, coord=obs_coord, value=new_obs_value, nmax=16)
+k2.set_obs(ivar=1, coord=obs_coord, value=new_obs_value)
 k2.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95, a_major=40.0)
 k2.set_grid(coord=grid_coord)
-k2.set_search(ivar=1)
+k2.set_search(ivar=1, nmax=16)
 k2.set_weights(weights)
 k2.solve()
 
@@ -95,10 +95,10 @@ To persist weights across Python sessions, pass both `store_weight=True` and a
 weight_file = "ok_weights.fac"
 
 k = Kriging(ndim=2, nvar=1, store_weight=True, weight_file=weight_file)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=16)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95, a_major=40.0)
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=16)
 k.solve()
 ```
 
@@ -106,7 +106,7 @@ Read the saved weights back with `use_old_weight=True`.
 
 ```python
 k_replay = Kriging(ndim=2, nvar=1, use_old_weight=True, weight_file=weight_file)
-k_replay.set_obs(ivar=1, coord=obs_coord, value=new_obs_value, nmax=16)
+k_replay.set_obs(ivar=1, coord=obs_coord, value=new_obs_value)
 k_replay.set_grid(coord=grid_coord)
 k_replay.solve()
 

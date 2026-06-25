@@ -37,6 +37,7 @@ extensions = [
 autoapi_dirs    = ["../src"]
 autoapi_type    = "python"
 autoapi_root    = "autoapi"   # default; keeps generated pages separate from docs/api/
+autoapi_python_class_content = "both"  # include class and __init__ docstrings
 autoapi_options = [
     "members",
     "undoc-members",

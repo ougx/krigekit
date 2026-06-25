@@ -51,7 +51,7 @@ class TestBlockKriging:
         """Block kriging must return arrays of length nblock."""
         d = block_data
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid_block(
             coord=d["sub_coords"],
@@ -59,7 +59,7 @@ class TestBlockKriging:
             nblockpnt=d["nblockpnt"],
             pointweight=d["sub_weights"],
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
         assert est.shape == (d["nblock"],), f"Expected ({d['nblock']},), got {est.shape}"
@@ -69,7 +69,7 @@ class TestBlockKriging:
         """Block kriging variance must be non-negative."""
         d = block_data
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid_block(
             coord=d["sub_coords"],
@@ -77,7 +77,7 @@ class TestBlockKriging:
             nblockpnt=d["nblockpnt"],
             pointweight=d["sub_weights"],
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         _, var = k.get_results()
         assert np.all(var >= -1e-10), f"Negative block variance: {var.min():.4f}"
@@ -94,7 +94,7 @@ class TestBlockKriging:
 
         # Block kriging variance
         kb = Kriging(ndim=2, nvar=1, verbose=0)
-        kb.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        kb.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         kb.set_vgm(ivar=1, jvar=1, **_VGM)
         kb.set_grid_block(
             coord=d["sub_coords"],
@@ -102,16 +102,16 @@ class TestBlockKriging:
             nblockpnt=d["nblockpnt"],
             pointweight=d["sub_weights"],
         )
-        kb.set_search(ivar=1)
+        kb.set_search(ivar=1, nmax=_NMAX)
         kb.solve()
         _, var_block = kb.get_results()
 
         # Point kriging variance at the block centroid
         kp = Kriging(ndim=2, nvar=1, verbose=0)
-        kp.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        kp.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         kp.set_vgm(ivar=1, jvar=1, **_VGM)
         kp.set_grid(coord=d["block_centroid"])
-        kp.set_search(ivar=1)
+        kp.set_search(ivar=1, nmax=_NMAX)
         kp.solve()
         _, var_point = kp.get_results()
 
@@ -130,7 +130,7 @@ class TestBlockKriging:
 
         # Block estimate
         kb = Kriging(ndim=2, nvar=1, verbose=0)
-        kb.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        kb.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         kb.set_vgm(ivar=1, jvar=1, **_VGM)
         kb.set_grid_block(
             coord=d["sub_coords"],
@@ -138,16 +138,16 @@ class TestBlockKriging:
             nblockpnt=d["nblockpnt"],
             pointweight=d["sub_weights"],
         )
-        kb.set_search(ivar=1)
+        kb.set_search(ivar=1, nmax=_NMAX)
         kb.solve()
         est_block, _ = kb.get_results()
 
         # Point estimate at centroid
         kp = Kriging(ndim=2, nvar=1, verbose=0)
-        kp.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        kp.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         kp.set_vgm(ivar=1, jvar=1, **_VGM)
         kp.set_grid(coord=d["block_centroid"])
-        kp.set_search(ivar=1)
+        kp.set_search(ivar=1, nmax=_NMAX)
         kp.solve()
         est_point, _ = kp.get_results()
 
@@ -167,7 +167,7 @@ class TestBlockKriging:
         const_value = 2.71828 * np.ones(d["coord"].shape[0])
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=d["coord"], value=const_value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=d["coord"], value=const_value)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid_block(
             coord=d["sub_coords"],
@@ -175,7 +175,7 @@ class TestBlockKriging:
             nblockpnt=d["nblockpnt"],
             # no pointweight → uniform 1/16 per sub-node
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, _ = k.get_results()
         assert est[0] == pytest.approx(2.71828, rel=1e-3), (
@@ -188,10 +188,10 @@ class TestBlockKriging:
 
         def _solve_with_grid_block(coord, block_type, **kwargs):
             k = Kriging(ndim=2, nvar=1, verbose=0)
-            k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+            k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
             k.set_vgm(ivar=1, jvar=1, **_VGM)
             k.set_grid_block(coord=coord, block_type=block_type, **kwargs)
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=_NMAX)
             k.solve()
             return k.get_results()
 
@@ -224,7 +224,7 @@ class TestBlockKriging:
         ])
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid_block(
             coord=centers,
@@ -232,7 +232,7 @@ class TestBlockKriging:
             nblockpnt=np.ones(centers.shape[0], dtype=np.int32),
             blocksize=blocksize,
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
 
@@ -254,7 +254,7 @@ class TestBlockKriging:
         center = np.array([[5.0, 5.0, 5.0]])
 
         k = Kriging(ndim=3, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=5)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(
             ivar=1,
             jvar=1,
@@ -271,7 +271,7 @@ class TestBlockKriging:
             nblockpnt=np.array([1], dtype=np.int32),
             blocksize=np.array([2.0, 4.0, 6.0]),
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=5)
         k.solve()
         est, var = k.get_results()
 
@@ -285,7 +285,7 @@ class TestBlockKriging:
 
         def _block_var(localnugget=None):
             k = Kriging(ndim=2, nvar=1, verbose=0)
-            k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+            k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
             k.set_vgm(ivar=1, jvar=1, **_VGM)
             k.set_grid_block(
                 coord=d["sub_coords"],
@@ -294,7 +294,7 @@ class TestBlockKriging:
                 pointweight=d["sub_weights"],
                 localnugget=localnugget,
             )
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=_NMAX)
             k.solve()
             _, var = k.get_results()
             return var[0]
@@ -311,7 +311,7 @@ class TestBlockKriging:
 
         def _block_var(rs):
             k = Kriging(ndim=2, nvar=1, verbose=0)
-            k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+            k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
             k.set_vgm(ivar=1, jvar=1, **_VGM)
             k.set_grid_block(
                 coord=d["sub_coords"],
@@ -320,7 +320,7 @@ class TestBlockKriging:
                 pointweight=d["sub_weights"],
                 rangescale=np.full(d["nblock"], rs),
             )
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=_NMAX)
             k.solve()
             _, var = k.get_results()
             return var[0]
@@ -343,7 +343,7 @@ class TestBlockKriging:
         two_nblockpnt   = np.array([n_sub, n_sub], dtype=np.int32)
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=d["coord"], value=d["value"], nmax=_NMAX)
+        k.set_obs(ivar=1, coord=d["coord"], value=d["value"])
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid_block(
             coord=two_sub_coords,
@@ -351,7 +351,7 @@ class TestBlockKriging:
             nblockpnt=two_nblockpnt,
             pointweight=two_weights,
         )
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
 

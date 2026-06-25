@@ -39,11 +39,11 @@ the data.  Pass `unbias=0` and a `sk_mean`:
 from krigekit import Kriging
 
 k = Kriging(ndim=2, nvar=1, unbias=0)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20,
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
           sk_mean=float(obs_value.mean()))
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.1, sill=0.9, a_major=40.0)
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=20)
 k.solve()
 est, var = k.get_results()
 ```
@@ -57,14 +57,14 @@ clockwise from North (degrees):
 from krigekit import Kriging
 
 k = Kriging(ndim=2, nvar=1)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1,
           vtype="sph",
           nugget=0.05, sill=0.95,
           a_major=80.0, a_minor1=30.0,  # 8:3 anisotropy ratio
           azimuth=30.0)                  # NNE–SSW orientation
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=20)
 k.solve()
 est, var = k.get_results()
 ```
@@ -76,8 +76,7 @@ A smaller `nmax` is faster but may reduce accuracy in sparse areas.
 `maxdist` adds a hard distance cutoff:
 
 ```python
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
-          nmax=15, maxdist=50.0)
+k.set_search(ivar=1, nmax=15, maxdist=50.0)
 ```
 
 ### Sector search
@@ -88,7 +87,7 @@ When `sector_search=True` is passed to `set_search`, the search space is divided
 - **2D space**: Divided into 4 quadrants.
 - **3D space** (and **Space-Time** kriging): Divided into 8 octants.
 
-Under sector search, `nmax` (set in `set_obs`) acts as a limit **per sector** rather than a global limit. The search selects up to `nmax` closest neighbours from each quadrant/octant. This results in a maximum of `4 * nmax` neighbours in 2D, or `8 * nmax` in 3D/ST, ensuring a balanced spatial distribution around the estimation point.
+Under sector search, `nmax` acts as a limit **per sector** rather than a global limit. The search selects up to `nmax` closest neighbours from each quadrant/octant. This results in a maximum of `4 * nmax` neighbours in 2D, or `8 * nmax` in 3D/ST, ensuring a balanced spatial distribution around the estimation point.
 
 #### Comparison example
 
@@ -118,10 +117,10 @@ obs_value = np.array([10.0, 10.5, 9.8, 10.2, 10.1, 20.0, 15.0, 25.0])
 
 # 1. Standard search (selects 4 closest, all in Q1)
 k_std = Kriging(ndim=2, nvar=1, store_weight=True)
-k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=4)
+k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k_std.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
 k_std.set_grid(coord=target)
-k_std.set_search(ivar=1, sector_search=False)
+k_std.set_search(ivar=1, nmax=4, sector_search=False)
 k_std.solve()
 
 w_std = k_std.get_weights()
@@ -130,10 +129,10 @@ print("Standard selected indices:", w_std["inear"][0, 0, :w_std["nnear"][0, 0]])
 
 # 2. Sector search (selects up to 1 per quadrant)
 k_sec = Kriging(ndim=2, nvar=1, store_weight=True)
-k_sec.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+k_sec.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k_sec.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
 k_sec.set_grid(coord=target)
-k_sec.set_search(ivar=1, sector_search=True)
+k_sec.set_search(ivar=1, nmax=1, sector_search=True)
 k_sec.solve()
 
 w_sec = k_sec.get_weights()
@@ -167,11 +166,11 @@ Use `append=False` on `set_vgm` to replace the previous variogram model:
 k = Kriging(ndim=2, nvar=1)
 
 for obs_c, obs_v in dataset_sequence:
-    k.set_obs(ivar=1, coord=obs_c, value=obs_v, nmax=20)
+    k.set_obs(ivar=1, coord=obs_c, value=obs_v)
     k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0,
               append=False)     # ← reset variogram each iteration
     k.set_grid(coord=grid_coord)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=20)
     k.solve()
     est, var = k.get_results()
 ```
@@ -183,10 +182,10 @@ to CV mode:
 
 ```python
 k = Kriging(ndim=2, nvar=1)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.1, sill=0.9, a_major=40.0)
 k.set_grid_cv(ivar=1)           # estimation targets = leave-one-out positions
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=20)
 k.solve()
 cv_est, cv_var = k.get_results()
 ```

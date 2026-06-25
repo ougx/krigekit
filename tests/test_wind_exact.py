@@ -169,7 +169,7 @@ class TestExactInterpolation:
     def _build(self, coord4, value):
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=3000.0)
-        k.set_obs(1, coord4, value, nmax=12)
+        k.set_obs(1, coord4, value)
         _attach_vgm(k, nugget=0.0)
         return k
 
@@ -178,7 +178,7 @@ class TestExactInterpolation:
         coord4, value = wind_1day
         k = self._build(coord4, value)
         k.set_grid(coord4[[0], :3], coord4[[0], 3])
-        k.set_search(1)
+        k.set_search(1, nmax=12)
         k.solve()
         est, var = k.get_results()
 
@@ -248,10 +248,10 @@ class TestPredictionQuality:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=3000.0)
-        k.set_obs(1, coord4, value, nmax=20)
+        k.set_obs(1, coord4, value)
         _attach_vgm(k, nugget=0.5)      # small nugget for interior prediction
         k.set_grid(gcoord, day_times)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         return k.get_results()
 
@@ -284,10 +284,10 @@ class TestPredictionQuality:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=3000.0)
-        k.set_obs(1, coord4, value, nmax=20)
+        k.set_obs(1, coord4, value)
         _attach_vgm(k, nugget=0.5)
         k.set_grid(np.zeros((1, 3)), day_times[:1])
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, _ = k.get_results()
 
@@ -315,10 +315,10 @@ class TestVarianceOrdering:
         def _var_at(gc, gt, nugget=0.5):
             k = SpaceTimeKriging(nvar=1)
             k.set_st_model("sum_metric", "linear", at=3000.0)
-            k.set_obs(1, coord4, value, nmax=20, maxdist=1e9)
+            k.set_obs(1, coord4, value)
             _attach_vgm(k, nugget=nugget)
             k.set_grid(gc, gt)
-            k.set_search(1)
+            k.set_search(1, nmax=20, maxdist=1e9)
             k.solve()
             _, var = k.get_results()
             return var[0]
@@ -345,10 +345,10 @@ class TestVarianceOrdering:
         def _v(xk, yk):
             k = SpaceTimeKriging(nvar=1)
             k.set_st_model("sum_metric", "linear", at=3000.0)
-            k.set_obs(1, coord4, value, nmax=20)
+            k.set_obs(1, coord4, value)
             _attach_vgm(k, nugget=0.5)
             k.set_grid(np.array([[xk, yk, 0.0]]), np.array([t0]))
-            k.set_search(1)
+            k.set_search(1, nmax=20)
             k.solve()
             _, var = k.get_results()
             return var[0]

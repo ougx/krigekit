@@ -42,7 +42,6 @@ system = IndicatorVariogramSystem(categories=["A", "B", "C"])
 system.set_categorical_obs(
     obs_coord,             # (nobs, 2) array
     obs_labels,            # string or integer category per sample
-    nmax=20,
 )
 system.set_indicator_vgm(
     vtype="sph", nugget=0.02,
@@ -55,7 +54,7 @@ system.apply(ik)               # transfers indicators + K² structures
 
 ik.set_grid(coord=grid_coord)
 for k in range(1, 4):
-    ik.set_search(ivar=k, anis1=100.0/500.0)
+    ik.set_search(ivar=k, anis1=100.0/500.0, nmax=20)
 
 ik.solve()
 
@@ -74,7 +73,7 @@ draws a category by inverting the local conditional CDF.
 
 ```python
 system = IndicatorVariogramSystem(categories=["A", "B", "C"])
-system.set_categorical_obs(obs_coord, obs_labels, nmax=20)
+system.set_categorical_obs(obs_coord, obs_labels)
 system.set_indicator_vgm(vtype="sph", nugget=0.02,
                          a_major=500.0, a_minor1=100.0,
                          sill_strategy="theoretical", cross_strategy="closure")
@@ -85,7 +84,7 @@ ik.set_grid(coord=grid_coord)
 ik.set_sim()                  # must be called after set_grid
 
 for k in range(1, 4):
-    ik.set_search(ivar=k, anis1=100.0/500.0)
+    ik.set_search(ivar=k, anis1=100.0/500.0, nmax=20)
 
 ik.solve()
 
@@ -169,7 +168,7 @@ secondary variable and its cross-models are set on the engine directly.
 
 ```python
 system = IndicatorVariogramSystem(categories=["A", "B", "C"])
-system.set_categorical_obs(obs_coord, obs_labels, nmax=20)
+system.set_categorical_obs(obs_coord, obs_labels)
 system.set_indicator_vgm(vtype="sph", a_major=500, a_minor1=100,
                          sill_strategy="theoretical", cross_strategy="closure")
 
@@ -183,7 +182,7 @@ for k in range(1, 4):                           # indicator–secondary cross-mo
 
 ik.set_grid(coord=grid_coord)
 for k in range(1, 5):
-    ik.set_search(ivar=k, anis1=100.0/500.0)
+    ik.set_search(ivar=k, anis1=100.0/500.0, nmax=20)
 
 ik.solve()
 probs, var = ik.get_results()   # shape (ngrid, 3) — secondary excluded

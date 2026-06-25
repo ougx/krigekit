@@ -38,6 +38,22 @@ arguments (Python/C-API).
   segfaults without a diagnostic on the polymorphic array-section `associate` in
   `calc_variance`. Restore `-fcheck=all` once the toolchain is fixed.
 
+### Changed - Search limits belong to `set_search`
+
+`nmax` and `maxdist` are now configured by `set_search` rather than `set_obs`
+in both the Python API and the Fortran engine. Indicator categorical observation
+setup follows the same split: `IndicatorVariogramSystem.set_categorical_obs`
+encodes categories only, and indicator search limits are passed to
+`IndicatorKriging.set_search`. This keeps observation loading focused on
+coordinates, values, variances, and means, while neighbour-search limits live
+with the search tree/settings.
+
+Calling `set_search` is optional when all observations should be used:
+`prepare()` now applies the default search configuration automatically and
+normalizes `nmax` to the observation count before neighbour and weight arrays
+are sized. Existing code that passed `nmax` or `maxdist` to `set_obs` should
+move those arguments to `set_search`.
+
 ## 0.3.0
 
 ### Added - Anisotropy orientation fitting
@@ -335,12 +351,12 @@ realisations.  It requires `nsim > 0`; fit the variogram on the normal scores
 
 ```python
 k = Kriging(nsim=20, seed=42)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_nscore(ivar=1)   # optional: zmin, zmax, ltail, utail, ltpar, utpar, weights
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
 k.set_sim()
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=30)
 k.solve()
 sims, _ = k.get_results()   # realisations back-transformed to data units
 ```
@@ -379,7 +395,7 @@ Extends `Kriging` — all setup, solve, and results methods are inherited.
 
 **New methods:**
 
-- `set_categorical_obs(coord, categories, category_labels, nmax, maxdist)` —
+- `set_categorical_obs(coord, categories, category_labels)` —
   converts raw category labels into K binary indicator datasets in one call,
   automatically computing `I_k = (categories == label_k)` for each indicator
 - `set_indicator_vgm(vtype, nugget, sill, a_major, ...)` — sets all K² variogram
@@ -402,7 +418,7 @@ from krigekit import IndicatorKriging
 
 ik = IndicatorKriging(ncat=4, ndim=2, nsim=50, seed=42)
 ik.set_categorical_obs(coord=obs_coord, categories=obs_cats,
-                       category_labels=["A", "B", "C", "D"], nmax=20)
+                       category_labels=["A", "B", "C", "D"])
 ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
                      a_major=500, a_minor1=80, azimuth=90,
                      cross="proportional",
@@ -410,7 +426,7 @@ ik.set_indicator_vgm(vtype="sph", nugget=0.02, sill=0.19,
 ik.set_grid(coord=grid_coord)
 ik.set_sim()
 for k in range(1, 5):
-    ik.set_search(ivar=k, anis1=80/500, azimuth=90)
+    ik.set_search(ivar=k, anis1=80/500, azimuth=90, nmax=20)
 ik.solve()
 sims, _ = ik.get_results()        # shape (ngrid, 4, 50) — one-hot
 cat_idx = np.argmax(sims, axis=1) # shape (ngrid, 50)
@@ -612,10 +628,9 @@ New C API function:
   Using `update_obs_value` is the correct API when only values change.
 - `set_obs` rejects duplicate observation coordinate tuples for each variable.
   For space-time observations, the time coordinate is part of the tuple.
-- `set_search` must be called after `set_obs`; it caps `obs%nmax` at `n`
-  (the actual observation count).  Skipping `set_search` after a repeated
-  `set_obs` would leave `obs%nmax = HUGE(int)`, causing integer overflow in
-  `prepare()`.
+- `prepare()` applies default search settings when `set_search` is skipped,
+  so the all-observations case normalizes `obs%nmax` to the actual observation
+  count before neighbour and weight arrays are sized.
 
 ### Co-kriging improvements
 

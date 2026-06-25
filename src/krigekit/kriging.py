@@ -15,10 +15,10 @@ Then use this module:
 
     # Spatial ordinary kriging
     k = Kriging(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=coord, value=value, nmax=20)
+    k.set_obs(ivar=1, coord=coord, value=value)
     k.set_grid(coord=grid_coord)
     k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0, sill=1.0, a_major=1000, a_minor1=500, a_minor2=500)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=20)
     k.solve()
     est, var = k.get_results()
     del k    # release memory
@@ -159,7 +159,7 @@ _krige_set_obs     = _status_cfun("krige_set_obs", [
     ctypes.c_int64,                              # handle
     _c_int, _c_int, _c_int,                      # ivar, nobs, ndim_c
     _ptr_dbl, _ptr_dbl, _ptr_dbl,                # coord, value, variance
-    _c_int, _c_double, _c_double,                # nmax, maxdist, sk_mean
+    _c_double,                                   # sk_mean
 ])
 _krige_set_obs_drift = _status_cfun("krige_set_obs_drift", [
     ctypes.c_int64,                              # handle
@@ -252,6 +252,7 @@ _krige_set_sim     = _status_cfun("krige_set_sim", [
 _krige_set_search  = _status_cfun("krige_set_search", [
     ctypes.c_int64, _c_int,                      # handle, ivar
     _c_double, _c_double, _c_double, _c_double, _c_double,  # anis1, anis2, az, dip, plunge
+    _c_int, _c_double,                            # nmax, maxdist
     _c_int,                                      # sector_search
 ])
 _krige_set_grad    = _status_cfun("krige_set_grad", [
@@ -436,10 +437,10 @@ class Kriging:
     Typical workflow
     ----------------
     >>> k = Kriging(ndim=2, nvar=1)
-    >>> k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=20)
+    >>> k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     >>> k.set_grid(coord=grid_coord)
     >>> k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0, sill=1.0, a_major=1000, a_minor1=500, a_minor2=50)
-    >>> k.set_search(ivar=1)
+    >>> k.set_search(ivar=1, nmax=20)
     >>> k.solve()
     >>> estimate, variance = k.get_results()
     >>> del k    # release memory
@@ -617,8 +618,6 @@ class Kriging:
         coord: np.ndarray,
         value: np.ndarray,
         variance: Optional[np.ndarray] = None,
-        nmax: Optional[int] = None,
-        maxdist: Optional[float] = None,
         sk_mean: float = 0.0,
     ):
         """
@@ -641,14 +640,9 @@ class Kriging:
         variance : ndarray, shape (nobs,), optional
             Per-observation measurement error variance added to the diagonal
             of the covariance matrix. Defaults to zeros (no measurement error).
-        nmax : int, optional
-            Maximum number of neighbours. Default: use all observations.
-        maxdist : float, optional
-            Maximum search distance. Default: unlimited.
         sk_mean : float
             Global mean for simple kriging (unbias=0). Default 0.0.
         """
-        import sys
         coord_f  = _coord_to_fortran(coord)        # (nobs, ndim) -> (ndim, nobs) F-order
         value_f  = _farray(np.asarray(value, dtype=np.float64).ravel())
         nobs     = coord_f.shape[1]
@@ -667,17 +661,14 @@ class Kriging:
         else:
             var_f = _farray(np.zeros(nobs))
 
-        # nmax/maxdist: pass huge values when not specified (Fortran treats as "unlimited")
-        c_nmax    = _c_int(nmax    if nmax    is not None else np.iinfo(np.int32).max)
-        c_maxdist = _c_double(maxdist if maxdist is not None else sys.float_info.max)
         c_sk_mean = _c_double(sk_mean)
         _krige_set_obs(_h(self._handle),
             _c_int(ivar), _c_int(nobs), _c_int(ndim_c),
             _dptr(coord_f), _dptr(value_f), _dptr(var_f),
-            c_nmax, c_maxdist, c_sk_mean
+            c_sk_mean
         )
         self._nobs[ivar-1] = nobs
-        self._nmax[ivar-1] = min(nobs, nmax) if nmax is not None else nobs + (self._nblock if self.nsim>0 else 0)
+        self._nmax[ivar-1] = nobs + (self._nblock if self.nsim > 0 else 0)
         # Cache the value range so set_nscore()/set_uscore() can default zmin/zmax.
         # nobs == 0 is valid for unconditional simulation, so guard the reduction.
         if not hasattr(self, "_obs_value_range"):
@@ -1356,44 +1347,57 @@ class Kriging:
         azimuth: float = 0.0,
         dip: float = 0.0,
         plunge: float = 0.0,
+        nmax: Optional[int] = None,
+        maxdist: Optional[float] = None,
         sector_search: bool = False,
-     ):
-         """
-         Build the KD-tree and configure the search ellipse for variable ``ivar``.
-         Call once per variable after :meth:`set_obs` (and :meth:`set_sim` for SGSIM).
+    ):
+        """
+        Build the KD-tree and configure the search ellipse for variable ``ivar``.
+        Call once per variable after :meth:`set_obs` (and :meth:`set_sim` for SGSIM).
 
-         Parameters
-         ----------
-         ivar : int
-             Variable index (1-based).
-         anis1 : float
-             Horizontal anisotropy ratio (minor / major range). 1.0 = isotropic.
-         anis2 : float
-             Vertical anisotropy ratio (vertical / major range). 1.0 = isotropic.
-         azimuth : float
-             Azimuth of the major axis (degrees, clockwise from North).
-         dip : float
-             Dip angle of the major axis below horizontal (degrees, positive downward).
-         plunge : float
-             Plunge angle (degrees).
-         sector_search : bool
-             Enable sector (quadrant in 2D, octant in 3D) search limiting candidates per sector.
-             If ``True``, the search space is divided into quadrants/octants centered on
-             the prediction location. Candidates are sorted by distance, and at most
-             ``nmax`` (from :meth:`set_obs`) are selected from each sector.
-             This ensures a balanced spatial distribution of neighbours and prevents
-             clustering artifacts. The maximum total neighbours selected is ``4 * nmax``
-             in 2D or ``8 * nmax`` in 3D.
-             If search anisotropy is enabled, coordinates are rotated and scaled
-             according to the anisotropy parameters before sector assignment.
-         """
-         _krige_set_search(_h(self._handle),
-             _c_int(ivar),
-             _c_double(anis1), _c_double(anis2),
-             _c_double(azimuth), _c_double(dip), _c_double(plunge),
-             _c_int(int(sector_search)),
-         )
-         self._set_search[ivar-1] = True
+        Parameters
+        ----------
+        ivar : int
+            Variable index (1-based).
+        anis1 : float
+            Horizontal anisotropy ratio (minor / major range). 1.0 = isotropic.
+        anis2 : float
+            Vertical anisotropy ratio (vertical / major range). 1.0 = isotropic.
+        azimuth : float
+            Azimuth of the major axis (degrees, clockwise from North).
+        dip : float
+            Dip angle of the major axis below horizontal (degrees, positive downward).
+        plunge : float
+            Plunge angle (degrees).
+        nmax : int, optional
+            Maximum number of neighbours. Default: use all observations.
+        maxdist : float, optional
+            Maximum search distance. Default: unlimited.
+        sector_search : bool
+            Enable sector (quadrant in 2D, octant in 3D) search limiting candidates per sector.
+            If ``True``, the search space is divided into quadrants/octants centered on
+            the prediction location. Candidates are sorted by distance, and at most
+            ``nmax`` are selected from each sector.
+            This ensures a balanced spatial distribution of neighbours and prevents
+            clustering artifacts. The maximum total neighbours selected is ``4 * nmax``
+            in 2D or ``8 * nmax`` in 3D.
+            If search anisotropy is enabled, coordinates are rotated and scaled
+            according to the anisotropy parameters before sector assignment.
+        """
+        _krige_set_search(_h(self._handle),
+            _c_int(ivar),
+            _c_double(anis1), _c_double(anis2),
+            _c_double(azimuth), _c_double(dip), _c_double(plunge),
+            _c_int(nmax if nmax is not None else -1),
+            _c_double(maxdist if maxdist is not None else -1.0),
+            _c_int(int(sector_search)),
+        )
+        nobs = int(self._nobs[ivar-1])
+        if nmax is not None:
+            self._nmax[ivar-1] = min(nobs, int(nmax))
+        elif self._nmax[ivar-1] == 0:
+            self._nmax[ivar-1] = nobs + (self._nblock if self.nsim > 0 else 0)
+        self._set_search[ivar-1] = True
 
     # ------------------------------------------------------------------
     def set_grad(
@@ -2205,13 +2209,12 @@ def ordinary_kriging(
         nmax = len(obs_coord) + len(grid_coord)
     ndim = obs_coord.shape[1]   # (nobs, ndim) -> ndim is axis 1
     k = Kriging(ndim=ndim, nvar=1)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
-              nmax=nmax, maxdist=maxdist)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_grid(coord=grid_coord, rangescale=rangescale, localnugget=localnugget)
     for spec in ([vgm_spec] if isinstance(vgm_spec, dict) else list(vgm_spec)):
         k.set_vgm(ivar=1, jvar=1, **spec)
     k.set_search(ivar=1, anis1=search_anis1, anis2=search_anis2,
-                 azimuth=search_azimuth)
+                 azimuth=search_azimuth, nmax=nmax, maxdist=maxdist)
     k.solve(nthread=nthread, ncache=ncache)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
     return est, var
@@ -2278,7 +2281,7 @@ def cokriging(
     k = Kriging(ndim=ndim, nvar=nvar, std_ck=std_ck)
 
     for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
-        k.set_obs(ivar=i, coord=coord, value=value, nmax=nmax)
+        k.set_obs(ivar=i, coord=coord, value=value)
 
     k.set_grid(coord=grid_coord, rangescale=rangescale, localnugget=localnugget)
 
@@ -2287,7 +2290,7 @@ def cokriging(
             k.set_vgm(ivar=iv, jvar=jv, **s)
 
     for i in range(1, nvar + 1):
-        k.set_search(ivar=i)
+        k.set_search(ivar=i, nmax=nmax)
 
     k.solve(nthread=nthread, ncache=ncache)
     est, var = k.get_results()   # est is already (ngrid,) for kriging
@@ -2345,13 +2348,13 @@ def sequential_gaussian_simulation(
         nmax = len(obs_coord) + len(grid_coord)
 
     k = Kriging(ndim=ndim, nvar=1, nsim=nsim, seed=seed)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=nmax)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_grid(coord=grid_coord, rangescale=rangescale, localnugget=localnugget)
     for spec in ([vgm_spec] if isinstance(vgm_spec, dict) else list(vgm_spec)):
         k.set_vgm(ivar=1, jvar=1, **spec)
     # set_sim with no args: Python generates random path and N(0,1) samples
     k.set_sim(randpath, sample)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=nmax)
     k.solve(nthread=nthread, ncache=ncache)
 
     sims, _ = k.get_results()   # shape (nsim, ngrid)

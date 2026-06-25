@@ -568,13 +568,12 @@ contains
   !============================================================================
   ! set_obs_base -- shared observation setup.
   !============================================================================
-  subroutine set_obs_base(self, ivar, coord, value, variance, nmax, maxdist, sk_mean)
+  subroutine set_obs_base(self, ivar, coord, value, variance, sk_mean)
     use utils, only: check_duplicate_coordinates_base
     class(t_kriging_base), intent(inout) :: self
     integer, intent(in)                 :: ivar
     real,    intent(in)                 :: coord(:,:), value(:)
-    real,    intent(in), optional       :: variance(:), maxdist, sk_mean
-    integer, intent(in), optional       :: nmax
+    real,    intent(in), optional       :: variance(:), sk_mean
     integer :: i
     logical :: has_duplicates
     character(1024) :: msg
@@ -634,15 +633,13 @@ contains
         end if
       end if
 
-      obs%nmax          = huge(0)
+      obs%nmax          = obs%n
       obs%maxdist       = huge(0.0)
       obs%rotmat        = kriging_identity_rotmat3()
       obs%time_vtype_id = 0
       obs%time_nugget   = 0.0
       obs%time_sill     = 1.0
       obs%time_at       = 1.0
-      if (present(nmax))    obs%nmax    = nmax
-      if (present(maxdist)) obs%maxdist = maxdist**2
       if (present(sk_mean)) obs%sk_mean = sk_mean
     end associate
 
@@ -1418,15 +1415,22 @@ contains
   subroutine set_grid_cv_base(self)
     class(t_kriging_base), intent(inout) :: self
     real :: fill_nan
+    integer :: ivar
     character(len=*), parameter :: subname = "t_kriging_base%set_grid_cv"
 
     if (.not. primary_obs_ready(self, subname)) return
 
-    self%cross_validation = .true.
+    if (.not. self%cross_validation) then
+      self%cross_validation = .true.
+      do ivar = 1, self%nvar
+        if (self%obs(ivar)%set_search) then
+          self%obs(ivar)%nmax = self%obs(ivar)%nmax + 1
+        end if
+      end do
+    end if
     fill_nan = IEEE_VALUE(0.0, IEEE_QUIET_NAN)
     call self%set_grid_point_common(self%obs(1)%coord, value_fill=fill_nan, variance_fill=fill_nan)
     if (kriging_failed()) return
-    if (self%obs(1)%nmax > 0) self%obs(1)%nmax = self%obs(1)%nmax + 1
     call self%finish_grid_setup_common(copy_cv_drift=.true., value_fill=fill_nan, variance_fill=fill_nan)
   end subroutine set_grid_cv_base
 
@@ -1870,8 +1874,11 @@ contains
       ! SSYSV path: copy LDLᵀ factors. Allocate destination lazily —
       ! hcache slots and ctx%cache only pay this memory when SSYTRF fires.
       m = npp + p
-      if (.not. allocated(dst%Afac) .or. size(dst%Afac, 1) < m) then
-        if (allocated(dst%Afac)) deallocate(dst%Afac, dst%ipiv)
+      if (.not. allocated(dst%Afac)) then
+        allocate(dst%Afac(m, m))
+        allocate(dst%ipiv(m))
+      else if (size(dst%Afac, 1) < m) then
+        deallocate(dst%Afac, dst%ipiv)
         allocate(dst%Afac(m, m))
         allocate(dst%ipiv(m))
       end if
@@ -1908,8 +1915,11 @@ contains
     if (src%used_ssysv) then
       ! SSYSV path: copy LDLᵀ factors into self (lazy allocation).
       associate(m => src%npp + src%p)
-      if (.not. allocated(self%Afac) .or. size(self%Afac, 1) < m) then
-        if (allocated(self%Afac)) deallocate(self%Afac, self%ipiv)
+      if (.not. allocated(self%Afac)) then
+        allocate(self%Afac(m, m))
+        allocate(self%ipiv(m))
+      else if (size(self%Afac, 1) < m) then
+        deallocate(self%Afac, self%ipiv)
         allocate(self%Afac(m, m))
         allocate(self%ipiv(m))
       end if
@@ -2808,7 +2818,7 @@ contains
           if (ncand_limit > 0) allocate(ctx%results(ncand_limit))
         end block
       end if
-      allocate(ctx%nnear (ng))
+      allocate(ctx%nnear (ng));          ctx%nnear = 0
       allocate(ctx%inear (mmax, ng))
       allocate(ctx%sqdist(mmax, ng));    ctx%sqdist = 0.0
       allocate(ctx%weight(mmax, ng, nv))
@@ -2981,10 +2991,6 @@ contains
         call kriging_error(subname, 'Call set_obs() for every variable before solve().')
         return
       end if
-      if (.not. self%obs(ivar)%set_search) then
-        call kriging_error(subname, 'set_search() needs to be called before solve().')
-        return
-      end if
     end do
     if (self%ndrift > 0) then
       if (.not. allocated(self%block%drift)) then
@@ -3150,7 +3156,7 @@ contains
 
     nm = self%mmax
     if (nm <= 0) then
-      call kriging_error(subname, 'call set_obs() before alloc_weight_store() so nmax is set')
+      call kriging_error(subname, 'call set_search() before alloc_weight_store() so nmax is set')
       return
     end if
 
@@ -3367,7 +3373,7 @@ contains
     ng = self%ngroups
     nm = self%mmax
     if (nm <= 0) then
-      call kriging_error(subname, 'call set_obs() before set_weights() so nmax is set')
+      call kriging_error(subname, 'call set_search() before set_weights() so nmax is set')
       return
     end if
     if (size(nnear_in, 1) /= ng .or. size(nnear_in, 2) /= nb) then
@@ -3741,8 +3747,11 @@ contains
         m = npp + p
         !-- Lazy allocation: Afac/ipiv are not pre-allocated in fcache_alloc
         !   so the common Cholesky path pays zero extra memory.
-        if (.not. allocated(ctx%cache%Afac) .or. size(ctx%cache%Afac, 1) < m) then
-          if (allocated(ctx%cache%Afac)) deallocate(ctx%cache%Afac, ctx%cache%ipiv)
+        if (.not. allocated(ctx%cache%Afac)) then
+          allocate(ctx%cache%Afac(m, m))
+          allocate(ctx%cache%ipiv(m))
+        else if (size(ctx%cache%Afac, 1) < m) then
+          deallocate(ctx%cache%Afac, ctx%cache%ipiv)
           allocate(ctx%cache%Afac(m, m))
           allocate(ctx%cache%ipiv(m))
         end if

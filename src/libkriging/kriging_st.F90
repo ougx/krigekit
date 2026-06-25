@@ -318,37 +318,47 @@ contains
   ! Spatial search anisotropy is independent of variogram anisotropy.
   ! The time axis is mapped to km-equivalent units via t_kd = t * time_at,
   ! which is consistent with the sum-metric distance h_ST = sqrt(h_S^2 + (at*dt)^2).
-  ! maxdist on set_obs therefore acts as a radius in km-equivalent space.
+  ! maxdist acts as a search radius in km-equivalent space.
   !
   ! If all observations fit within nmax, need_search=.false. and no tree is
   ! built; distances are computed directly in search_neighbors.
   !=============================================================================
-  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, time_at, sector_search)
+  subroutine set_search(self, ivar, anis1, anis2, azimuth, dip, plunge, time_at, nmax, maxdist, sector_search)
     class(t_kriging_st), intent(inout) :: self
     integer,             intent(in)    :: ivar
     real,    intent(in), optional      :: anis1, anis2, azimuth, dip, plunge
     real,    intent(in), optional      :: time_at
+    integer, intent(in), optional      :: nmax
+    real,    intent(in), optional      :: maxdist
     logical, intent(in), optional      :: sector_search
 
+    ! local
+    character(len=*), parameter :: subname = "t_kriging_st%set_search"
     real    :: a1, a2, az, dp, pl, ta
     real, allocatable :: tcoord(:,:)
 
     if (.not. associated(self%obs)) then
-      call kriging_error('set_search', 'call initialize() before set_search()')
+      call kriging_error(subname, 'call initialize() before set_search()')
       return
     end if
-    if (.not. kriging_check_index('set_search', 'ivar', ivar, 1, self%nvar)) return
+    if (.not. kriging_check_index(subname, 'ivar', ivar, 1, self%nvar)) return
     if (self%obs(ivar)%n == 0) then
-      call kriging_error('set_search', 'set_obs() needs to be called before set_search().')
+      call kriging_error(subname, 'set_obs() needs to be called before set_search().')
       return
     end if
     if (self%nsim > 0) then
       if (self%block%n == 0) then
-        call kriging_error('set_search', 'set_grid() needs to be called before set_search().')
+        call kriging_error(subname, 'set_grid() needs to be called before set_search().')
         return
       end if
       if (ivar == 1 .and. size(self%obs(ivar)%coord, 2) == self%obs(ivar)%n) then
-        call kriging_error('set_search', 'set_sim() needs to be called before set_search().')
+        call kriging_error(subname, 'set_sim() needs to be called before set_search().')
+        return
+      end if
+      ! SGSIM requires an explicit nmax: defaulting to all obs + prior blocks
+      ! would build prohibitively large neighbourhoods.
+      if (.not. present(nmax)) then
+        call kriging_error(subname, '`nmax` must be set for all observations for SGSIM.')
         return
       end if
     end if
@@ -368,12 +378,30 @@ contains
     if (present(plunge))  pl = plunge
     if (present(time_at)) ta = time_at
     if (ta <= EPSLON) then
-      call kriging_error('set_search', 'time_at must be positive.')
+      call kriging_error(subname, 'time_at (linear scaler transforming time to distance) must be positive.')
       return
     end if
 
     associate(obs => self%obs(ivar))
       if (present(sector_search)) obs%sector_search = sector_search
+      if (present(nmax)) then
+        if (nmax < 1) then
+          call kriging_error(subname, 'nmax must be larger than 0.')
+          return
+        end if
+        obs%nmax = nmax
+        ! Cross-validation removes the target observation from its own
+        ! neighbourhood, so request one extra candidate when a finite nmax is used.
+        if (self%cross_validation) obs%nmax = obs%nmax + 1
+      end if
+      if (present(maxdist)) then
+        if (maxdist <= 0.0) then
+          call kriging_error(subname, 'maxdist must be positive.')
+          return
+        end if
+        obs%maxdist = maxdist**2
+      end if
+
       obs%rotmat  = calc_rotmat(az, dp, pl, a1, a2)
       obs%time_at = ta
       obs%anisotropic_search = (abs(a1-1.0) > EPSLON .or. abs(a2-1.0) > EPSLON) &
@@ -446,6 +474,13 @@ contains
         end do
       end do
     end if
+
+    do ivar = 1, self%nvar
+      if (.not. self%obs(ivar)%set_search) then
+        call self%set_search(ivar)
+        if (kriging_failed()) return
+      end if
+    end do
 
     call self%prepare_common(subname)
   end subroutine prepare

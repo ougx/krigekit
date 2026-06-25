@@ -133,8 +133,8 @@ def walker_all():
 
 def _build_cok(coord_v, val_v, coord_u, val_u, grid, nmax=20, **args):
     k = Kriging(ndim=2, nvar=2, **args)
-    k.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=nmax)
-    k.set_obs(ivar=2, coord=coord_u, value=val_u, nmax=nmax)
+    k.set_obs(ivar=1, coord=coord_v, value=val_v)
+    k.set_obs(ivar=2, coord=coord_u, value=val_u)
     for spec in _VGM_VV:
         k.set_vgm(ivar=1, jvar=1, **spec)
     for spec in _VGM_UU:
@@ -142,8 +142,8 @@ def _build_cok(coord_v, val_v, coord_u, val_u, grid, nmax=20, **args):
     for spec in _VGM_VU:
         k.set_vgm(ivar=1, jvar=2, **spec)
     k.set_grid(coord=grid)
-    k.set_search(ivar=1)
-    k.set_search(ivar=2)
+    k.set_search(ivar=1, nmax=nmax)
+    k.set_search(ivar=2, nmax=nmax)
     k.solve()
     return k
 
@@ -157,8 +157,8 @@ def test_negative_cross_nugget_and_sill_are_accepted():
         [1.0, 1.0],
     ])
     k = Kriging(ndim=2, nvar=2, std_ck=True)
-    k.set_obs(ivar=1, coord=coord, value=[0.0, 1.0, 0.5, 1.5], nmax=4)
-    k.set_obs(ivar=2, coord=coord, value=[1.5, 0.5, 1.0, 0.0], nmax=4)
+    k.set_obs(ivar=1, coord=coord, value=[0.0, 1.0, 0.5, 1.5])
+    k.set_obs(ivar=2, coord=coord, value=[1.5, 0.5, 1.0, 0.0])
 
     # Both coregionalization matrices are positive definite:
     # nugget [[0.2, -0.1], [-0.1, 0.2]]
@@ -168,8 +168,8 @@ def test_negative_cross_nugget_and_sill_are_accepted():
     k.set_vgm(1, 2, "sph", nugget=-0.1, sill=-0.2, a_major=2.0)
 
     k.set_grid(coord=np.array([[0.5, 0.5]]))
-    k.set_search(ivar=1)
-    k.set_search(ivar=2)
+    k.set_search(ivar=1, nmax=4)
+    k.set_search(ivar=2, nmax=4)
     k.solve()
 
     estimate, variance = k.get_results()
@@ -487,11 +487,11 @@ class TestCoKrigingTextbook:
         """
         _, _, coord_u, val_u = walker_all
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord_u, value=val_u, nmax=20)
+        k.set_obs(ivar=1, coord=coord_u, value=val_u)
         for spec in _VGM_UU:
             k.set_vgm(ivar=1, jvar=1, **spec)
         k.set_grid(coord=_GRID)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=20)
         k.solve()
         _, var = k.get_results()
         assert var.mean() <= _TOTAL_SILL_U, (
@@ -512,11 +512,11 @@ class TestCoKrigingTextbook:
 
         # Ordinary kriging on U alone (U auto-variogram only)
         k_ok = Kriging(ndim=2, nvar=1)
-        k_ok.set_obs(ivar=1, coord=coord_u, value=val_u, nmax=20)
+        k_ok.set_obs(ivar=1, coord=coord_u, value=val_u)
         for spec in _VGM_UU:
             k_ok.set_vgm(ivar=1, jvar=1, **spec)
         k_ok.set_grid(coord=_GRID)
-        k_ok.set_search(ivar=1)
+        k_ok.set_search(ivar=1, nmax=20)
         k_ok.solve()
         _, var_ok = k_ok.get_results()
 
@@ -526,8 +526,8 @@ class TestCoKrigingTextbook:
         # estimation variance we swap variable roles: set U as primary (ivar=1)
         # and V as secondary (ivar=2), with the same LMC.
         k_cok = Kriging(ndim=2, nvar=2)
-        k_cok.set_obs(ivar=1, coord=coord_u, value=val_u, nmax=20)  # U = primary
-        k_cok.set_obs(ivar=2, coord=coord_v, value=val_v, nmax=20)  # V = secondary
+        k_cok.set_obs(ivar=1, coord=coord_u, value=val_u)  # U = primary
+        k_cok.set_obs(ivar=2, coord=coord_v, value=val_v)  # V = secondary
         for spec in _VGM_UU:
             k_cok.set_vgm(ivar=1, jvar=1, **spec)
         for spec in _VGM_VV:
@@ -535,8 +535,8 @@ class TestCoKrigingTextbook:
         for spec in _VGM_VU:
             k_cok.set_vgm(ivar=1, jvar=2, **spec)
         k_cok.set_grid(coord=_GRID)
-        k_cok.set_search(ivar=1)
-        k_cok.set_search(ivar=2)
+        k_cok.set_search(ivar=1, nmax=20)
+        k_cok.set_search(ivar=2, nmax=20)
         k_cok.solve()
         _, var_cok = k_cok.get_results()
 
@@ -565,18 +565,18 @@ class TestCoKrigingTextbook:
 
         # --- Reference: ordinary kriging on V alone ---
         k_ok = Kriging(ndim=2, nvar=1)
-        k_ok.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
+        k_ok.set_obs(ivar=1, coord=coord_v, value=val_v)
         for spec in _VGM_VV:
             k_ok.set_vgm(ivar=1, jvar=1, **spec)
         k_ok.set_grid(coord=_GRID)
-        k_ok.set_search(ivar=1)
+        k_ok.set_search(ivar=1, nmax=20)
         k_ok.solve()
         est_ok, var_ok = k_ok.get_results()
 
         # --- Co-kriging: secondary maxdist so small no U obs are ever found ---
         k_cok = Kriging(ndim=2, nvar=2)
-        k_cok.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
-        k_cok.set_obs(ivar=2, coord=coord_u, value=val_u, nmax=20, maxdist=0.5)
+        k_cok.set_obs(ivar=1, coord=coord_v, value=val_v)
+        k_cok.set_obs(ivar=2, coord=coord_u, value=val_u)
         for spec in _VGM_VV:
             k_cok.set_vgm(ivar=1, jvar=1, **spec)
         for spec in _VGM_UU:
@@ -584,8 +584,8 @@ class TestCoKrigingTextbook:
         for spec in _VGM_VU:
             k_cok.set_vgm(ivar=1, jvar=2, **spec)
         k_cok.set_grid(coord=_GRID)
-        k_cok.set_search(ivar=1)
-        k_cok.set_search(ivar=2)
+        k_cok.set_search(ivar=1, nmax=20)
+        k_cok.set_search(ivar=2, nmax=20, maxdist=0.5)
         k_cok.solve()
         est_cok, var_cok = k_cok.get_results()
 
@@ -729,8 +729,8 @@ class TestCoKrigingTextbook:
 
         # Co-kriging with zero cross-variogram (cross-vgm = 0 by default)
         k_cok = Kriging(ndim=2, nvar=2, std_ck=True)
-        k_cok.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
-        k_cok.set_obs(ivar=2, coord=coord_u, value=val_u, nmax=20)
+        k_cok.set_obs(ivar=1, coord=coord_v, value=val_v)
+        k_cok.set_obs(ivar=2, coord=coord_u, value=val_u)
         for spec in _VGM_VV:
             k_cok.set_vgm(ivar=1, jvar=1, **spec)
         for spec in _VGM_UU:
@@ -738,18 +738,18 @@ class TestCoKrigingTextbook:
         k_cok.set_vgm(ivar=1, jvar=2, vtype="nug", nugget=0.0)
         # cross-variogram (1,2) intentionally not set → zero
         k_cok.set_grid(coord=_GRID)
-        k_cok.set_search(ivar=1)
-        k_cok.set_search(ivar=2)
+        k_cok.set_search(ivar=1, nmax=20)
+        k_cok.set_search(ivar=2, nmax=20)
         k_cok.solve()
         est_cok, var_cok = k_cok.get_results()
 
         # Reference: ordinary kriging on V alone
         k_v = Kriging(ndim=2, nvar=1)
-        k_v.set_obs(ivar=1, coord=coord_v, value=val_v, nmax=20)
+        k_v.set_obs(ivar=1, coord=coord_v, value=val_v)
         for spec in _VGM_VV:
             k_v.set_vgm(ivar=1, jvar=1, **spec)
         k_v.set_grid(coord=_GRID)
-        k_v.set_search(ivar=1)
+        k_v.set_search(ivar=1, nmax=20)
         k_v.solve()
         est_v, var_v = k_v.get_results()   # shapes: (nblock,), (nblock,)
 
@@ -789,10 +789,10 @@ class TestAnalyticalBenchmarks:
         coord = np.asarray(coords, dtype=float)[:, np.newaxis]  # (n, 1)
         tgt   = np.array([[float(target_x)]])                    # (1, 1)
         k = Kriging(ndim=1, nvar=1)
-        k.set_obs(1, coord=coord, value=np.asarray(values, dtype=float), nmax=nmax)
+        k.set_obs(1, coord=coord, value=np.asarray(values, dtype=float))
         k.set_vgm(1, 1, **vgm_spec)
         k.set_grid(tgt)
-        k.set_search(1)
+        k.set_search(1, nmax=nmax)
         k.solve()
         est, var = k.get_results()
         return float(est[0]), float(var[0])
@@ -808,14 +808,14 @@ class TestAnalyticalBenchmarks:
         cu = np.asarray(coords_u, dtype=float)[:, np.newaxis]
         tgt = np.array([[float(target_x)]])
         k = Kriging(ndim=1, nvar=2, std_ck=True)
-        k.set_obs(1, coord=cv, value=np.asarray(vals_v, dtype=float), nmax=nmax)
-        k.set_obs(2, coord=cu, value=np.asarray(vals_u, dtype=float), nmax=nmax)
+        k.set_obs(1, coord=cv, value=np.asarray(vals_v, dtype=float))
+        k.set_obs(2, coord=cu, value=np.asarray(vals_u, dtype=float))
         k.set_vgm(1, 1, **spec_vv)
         k.set_vgm(2, 2, **spec_uu)
         k.set_vgm(1, 2, **spec_vu)
         k.set_grid(tgt)
-        k.set_search(1)
-        k.set_search(2)
+        k.set_search(1, nmax=nmax)
+        k.set_search(2, nmax=nmax)
         k.solve()
         est, var = k.get_results()
         return float(est[0, 0]), float(var[0, 0, 0])

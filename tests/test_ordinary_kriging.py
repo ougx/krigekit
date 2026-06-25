@@ -36,10 +36,10 @@ class TestKrigingClass:
         """estimate and variance have shape (ngrid,) for kriging (nsim=0)."""
         coord, value = simple_obs
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=5)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_SIMPLE)
         k.set_grid(coord=simple_grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=5)
         k.solve()
         est, var = k.get_results()
         assert est.shape == (simple_grid.shape[0],)
@@ -49,10 +49,10 @@ class TestKrigingClass:
         """Kriging variance must be >= 0 at all grid nodes."""
         coord, value = simple_obs
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=5)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_SIMPLE)
         k.set_grid(coord=simple_grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=5)
         k.solve()
         _, var = k.get_results()
         assert np.all(var >= 0.0), f"Negative variance found: {var.min()}"
@@ -65,10 +65,10 @@ class TestKrigingClass:
         vv = _VGM_SIMPLE.copy()
         vv["nugget"] = 0.0
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=5)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **vv)
         k.set_grid(coord=grid_at_obs)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=5)
         k.solve()
         est, _ = k.get_results()
         assert est[0] == pytest.approx(value[0], rel=1e-4)
@@ -81,10 +81,10 @@ class TestKrigingClass:
         coord, _ = simple_obs
         const_value = 3.14 * np.ones(coord.shape[0])
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord, value=const_value, nmax=5)
+        k.set_obs(ivar=1, coord=coord, value=const_value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_SIMPLE)
         k.set_grid(coord=simple_grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=5)
         k.solve()
         est, _ = k.get_results()
         assert est == pytest.approx(3.14, rel=1e-4)
@@ -197,13 +197,13 @@ class TestMaxDist:
 
     def _solve(self, maxdist=None, nmax=3):
         k = Kriging(ndim=2, nvar=1)
-        kw = dict(ivar=1, coord=self._COORD, value=self._VALUE, nmax=nmax)
+        kw = dict(ivar=1, nmax=nmax)
         if maxdist is not None:
             kw["maxdist"] = maxdist
-        k.set_obs(**kw)
+        k.set_obs(ivar=1, coord=self._COORD, value=self._VALUE)
         k.set_vgm(ivar=1, jvar=1, **self._VGM)
         k.set_grid(coord=self._TARGET)
-        k.set_search(ivar=1)
+        k.set_search(**kw)
         k.solve()
         est, var = k.get_results()
         return float(est[0]), float(var[0])
@@ -242,10 +242,10 @@ class TestMaxDist:
         value  = np.array([1.0, 2.0])
         target = np.array([[100.0, 0.0]])   # far from all obs
         k = Kriging(ndim=2, nvar=1, neglect_error=False)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=2, maxdist=1.0)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=5.0)
         k.set_grid(coord=target)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=2, maxdist=1.0)
         with pytest.raises(Exception):
             k.solve()
 
@@ -258,10 +258,10 @@ class TestMaxDist:
         coord_near  = self._COORD[:2]
         value_near  = self._VALUE[:2]
         k = Kriging(ndim=2, nvar=1)
-        k.set_obs(ivar=1, coord=coord_near, value=value_near, nmax=2)
+        k.set_obs(ivar=1, coord=coord_near, value=value_near)
         k.set_vgm(ivar=1, jvar=1, **self._VGM)
         k.set_grid(coord=self._TARGET)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=2)
         k.solve()
         est_trimmed, var_trimmed = k.get_results()
 

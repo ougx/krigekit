@@ -53,14 +53,14 @@ class ObservationSet:
         return 0 if self.drift is None else self.drift.shape[1]
 
     # -- configuration ------------------------------------------------------
-    def set(self, coord, value, times=None, variance=None, nmax=None,
-            maxdist=None, sk_mean=None, drift=None):
+    def set(self, coord, value, times=None, variance=None, sk_mean=None,
+            drift=None):
         """Set observation data, validating shapes.
 
         ``coord``/``value`` are required.  ``times``, ``variance`` and ``drift``
         are per-observation and replace any previous values (``None`` clears
-        them).  ``nmax``, ``maxdist`` and ``sk_mean`` are updated only when
-        provided, so they survive a data-only re-:meth:`set`.
+        them).  ``sk_mean`` is updated only when provided, so it survives a
+        data-only re-:meth:`set`.
         """
         coord = np.asarray(coord, dtype=float)
         value = np.asarray(value, dtype=float).reshape(-1)
@@ -92,10 +92,6 @@ class ObservationSet:
         self.times = times
         self.variance = variance
         self.drift = drift
-        if nmax is not None:
-            self.nmax = int(nmax)
-        if maxdist is not None:
-            self.maxdist = float(maxdist)
         if sk_mean is not None:
             self.sk_mean = float(sk_mean)
         return self
@@ -161,10 +157,6 @@ class ObservationSet:
         kwargs = {}
         if self.variance is not None:
             kwargs["variance"] = self.variance
-        if self.nmax is not None:
-            kwargs["nmax"] = self.nmax
-        if self.maxdist is not None:
-            kwargs["maxdist"] = self.maxdist
         if self.sk_mean is not None:
             kwargs["sk_mean"] = self.sk_mean
         kriging.set_obs(ivar, self.coord, self.value, **kwargs)

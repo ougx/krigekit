@@ -20,11 +20,11 @@ scores:
 from krigekit import Kriging
 
 k = Kriging(nsim=0)  # use nsim > 0 for SGSIM
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_nscore(ivar=1)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=30)
 k.solve()
 estimate, variance = k.get_results()
 ```
@@ -39,11 +39,11 @@ continuous uniform distribution `[0, 1]`:
 
 ```python
 k = Kriging(nsim=0)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_uscore(ivar=1)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0 / 12.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=30)
 k.solve()
 estimate, variance = k.get_results()
 ```

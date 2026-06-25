@@ -192,7 +192,7 @@ ik = IndicatorKriging(
     neglect_error=True, std_ck=True, seed=SEED,
 )
 isys = IndicatorVariogramSystem(categories=cat_labels)
-isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_categorical_obs(obs_coord, obs_cats)
 isys.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
     a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
@@ -202,7 +202,7 @@ isys.apply(ik)
 ik.set_grid(coord=grid_coord)
 ik.set_sim()
 for k in range(1, ncat + 1):
-    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH)
+    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH, nmax=NMAX)
 ik.solve()
 
 sims_same, _ = ik.get_results()
@@ -244,7 +244,7 @@ ik = IndicatorKriging(
     neglect_error=True, std_ck=True, seed=SEED,
 )
 isys = IndicatorVariogramSystem(categories=cat_labels)
-isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_categorical_obs(obs_coord, obs_cats)
 isys.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
     a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
@@ -254,7 +254,7 @@ isys.apply(ik)
 ik.set_grid(coord=grid_coord)
 ik.set_sim()
 for k in range(1, ncat + 1):
-    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH)
+    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH, nmax=NMAX)
 ik.solve()
 
 sims_prop, _ = ik.get_results()

@@ -16,7 +16,7 @@ obs_value = data["pc"].values
 grid_coord = grid[["x","y"]].values
 
 print("2. set_obs...")
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=62)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 print("   OK")
 
 print("3. set_grid...")
@@ -28,7 +28,7 @@ k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=0.12, a_major=5000.0)
 print("   OK")
 
 print("5. set_search...")
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=62)
 print("   OK")
 print(k)
 print("6. solve...")

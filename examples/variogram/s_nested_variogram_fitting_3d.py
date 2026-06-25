@@ -171,6 +171,6 @@ plt.show()
 # ---------------------------------------------
 
 k = Kriging(ndim=3, nvar=1, verbose=0)
-k.set_obs(ivar=1, coord=grid, value=value, nmax=24)
+k.set_obs(ivar=1, coord=grid, value=value)
 model.apply_to(k, ivar=1, jvar=1)
 print(f"\nTransferred {k._nvgm_struct[0, 0]} nested structures to the kriging engine")

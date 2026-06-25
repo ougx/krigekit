@@ -40,11 +40,11 @@ _NMAX = 5
 
 def _build_and_solve(coord, value, grid, **kwargs):
     k = Kriging(ndim=2, nvar=1, **kwargs)
-    k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+    k.set_obs(ivar=1, coord=coord, value=value)
     k.set_grid(coord=grid)
     if not k.use_old_weight:
         k.set_vgm(ivar=1, jvar=1, **_VGM)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
     k.solve()
     return k
 
@@ -231,8 +231,9 @@ class TestUpdateObsValueWeightReuse:
         w = k_store.get_weights()
 
         k_reuse = Kriging(ndim=2, nvar=1, use_old_weight=True)
-        k_reuse.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k_reuse.set_obs(ivar=1, coord=coord, value=value)
         k_reuse.set_grid(coord=simple_grid)
+        k_reuse.set_search(ivar=1, nmax=_NMAX)
         k_reuse.set_weights(w)
         k_reuse.update_obs_value(ivar=1, value=value2)
         k_reuse.solve()
@@ -286,14 +287,14 @@ class TestUpdateObsValueCokriging:
 
     def _build(self, coord, v1, v2, grid, **kwargs):
         k = Kriging(ndim=2, nvar=2, **kwargs)
-        k.set_obs(ivar=1, coord=coord, value=v1, nmax=_NMAX)
-        k.set_obs(ivar=2, coord=coord, value=v2, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=v1)
+        k.set_obs(ivar=2, coord=coord, value=v2)
         k.set_grid(coord=grid)
         if not k.use_old_weight:
             for vgm in self._VGM_CK:
                 k.set_vgm(**vgm)
-            k.set_search(ivar=1)
-            k.set_search(ivar=2)
+            k.set_search(ivar=1, nmax=_NMAX)
+            k.set_search(ivar=2, nmax=_NMAX)
         k.solve()
         return k
 

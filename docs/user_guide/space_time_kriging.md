@@ -120,12 +120,12 @@ from krigekit import SpaceTimeKriging
 k = SpaceTimeKriging(nvar=1)
 k.set_st_model("sum_metric", transform="exp", at=5.0,
                time_nugget=0.0, time_sill=0.5)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95,
           a_major=2000.0, a_minor1=2000.0, a_minor2=400.0)
 k.set_vgm_joint_sills(1, 1, 0.3)    # sum-metric only
 k.set_grid(coord=grid_xy, time=grid_t)
-k.set_search(ivar=1, time_at=5.0)
+k.set_search(ivar=1, time_at=5.0, nmax=30)
 k.solve()
 est, var = k.get_results(copy=True)
 del k
@@ -208,7 +208,7 @@ k_ps_val = -p_ps / (sill_s * sill_t)   # = 0.957
 
 k = SpaceTimeKriging(nvar=1)
 k.set_st_model("product_sum", k_ps=k_ps_val)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=50)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph",
           nugget=0.0005, sill=sill_s,
           a_major=a_s, a_minor1=a_s, a_minor2=a_s / 5)    # 5× vertical anisotropy
@@ -264,7 +264,7 @@ the L2 distance in search space correctly prioritises nearby observations.
 For the **sum-metric** model, pass the joint temporal scale `at` directly:
 
 ```python
-k.set_search(ivar=1, time_at=at)
+k.set_search(ivar=1, time_at=at, nmax=50)
 ```
 
 For the **product-sum** model, match the rate at which each marginal loses
@@ -524,13 +524,13 @@ kriging — switch the grid to CV mode and leave all other calls unchanged:
 ```python
 k = SpaceTimeKriging(nvar=1, cross_validation=True)
 k.set_st_model("product_sum", k_ps=k_ps_val)
-k.set_obs(ivar=1, coord=obs_coord, value=V, nmax=50)
+k.set_obs(ivar=1, coord=obs_coord, value=V)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=NUGGET, sill=sill_s,
           a_major=a_s, a_minor1=a_s, a_minor2=a_s / Z_SCALE)
 k.set_vgm_temporal(ivar=1, jvar=1, vtype="gau",
                    nugget=NUGGET, sill=sill_t, at_k=a_t)
 k.set_grid_cv()                 # predict at observation locations
-k.set_search(ivar=1, time_at=time_at_search)
+k.set_search(ivar=1, time_at=time_at_search, nmax=50)
 k.solve()
 cv_est, _ = k.get_results(copy=True)
 ```

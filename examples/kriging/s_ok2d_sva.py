@@ -77,13 +77,13 @@ gc = grid[["x", "y"]].to_numpy(float)  # grid coordinates
 def krige_sva(oc, ov, gc, gaz, gamaj, gamin):
     """Krige *ov* onto *gc* with a per-block SVA variogram."""
     k = Kriging(ndim=2, nvar=1, varying_vgm=True)
-    k.set_obs(ivar=1, coord=oc, value=ov, nmax=NMAX)
+    k.set_obs(ivar=1, coord=oc, value=ov)
     k.set_grid(coord=gc)
     for ib in range(len(gaz)):
         k.set_vgm_block(ib + 1, 1, 1, vtype="sph", nugget=NUGGET, sill=SILL,
                         a_major=float(gamaj[ib]), a_minor1=float(gamin[ib]),
                         azimuth=float(gaz[ib]))
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=NMAX)
     k.solve()
     est, var = k.get_results()
     del k
@@ -93,10 +93,10 @@ def krige_sva(oc, ov, gc, gaz, gamaj, gamin):
 def krige_global(oc, ov, gc, vgm):
     """Krige *ov* onto *gc* with a single stationary variogram *vgm*."""
     k = Kriging(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=oc, value=ov, nmax=NMAX)
+    k.set_obs(ivar=1, coord=oc, value=ov)
     k.set_vgm(ivar=1, jvar=1, **vgm)
     k.set_grid(coord=gc)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=NMAX)
     k.solve()
     est, var = k.get_results()
     del k

@@ -16,13 +16,13 @@ probabilities.
 Typical workflow — estimation
 ------------------------------
 >>> system = IndicatorVariogramSystem(categories=[1, 2, 3])
->>> system.set_categorical_obs(obs_coord, obs_cat, nmax=20)
+>>> system.set_categorical_obs(obs_coord, obs_cat)
 >>> system.set_indicator_vgm(vtype="sph", a_major=1000,
 ...                          sill_strategy="theoretical", cross_strategy="closure")
 >>> ik = IndicatorKriging(ncat=3, ndim=2)
 >>> system.apply(ik)                # transfers indicators + K x K structures
 >>> ik.set_grid(coord=grid_coord)
->>> for k in range(1, 4): ik.set_search(ivar=k)
+>>> for k in range(1, 4): ik.set_search(ivar=k, nmax=20)
 >>> ik.solve()
 >>> probs, var = ik.get_results()   # probs.shape == (ngrid, ncat)
 >>> del ik
@@ -30,14 +30,14 @@ Typical workflow — estimation
 Typical workflow — SIS
 -----------------------
 >>> system = IndicatorVariogramSystem(categories=[1, 2, 3])
->>> system.set_categorical_obs(obs_coord, obs_cat, nmax=20)
+>>> system.set_categorical_obs(obs_coord, obs_cat)
 >>> system.set_indicator_vgm(vtype="sph", sill=0.2, a_major=500,
 ...                          sill_strategy="uniform", cross_strategy="uniform")
 >>> ik = IndicatorKriging(ncat=3, ndim=2, nsim=100)
 >>> system.apply(ik)
 >>> ik.set_grid(coord=grid_coord)
 >>> ik.set_sim()    # generates U(0,1) draws in Python and passes to Fortran
->>> for k in range(1, 4): ik.set_search(ivar=k)
+>>> for k in range(1, 4): ik.set_search(ivar=k, nmax=20)
 >>> ik.solve()
 >>> sims, _ = ik.get_results()     # sims.shape == (ngrid, ncat, nsim)
 ...                                 # each [:, :, i] is a one-hot encoded realisation
@@ -103,7 +103,7 @@ class IndicatorKriging(Kriging):
     Co-kriging MIS example (K=3 categories + 1 secondary variable)::
 
         system = IndicatorVariogramSystem(categories=[1, 2, 3])
-        system.set_categorical_obs(coord, cats, nmax=20)
+        system.set_categorical_obs(coord, cats)
         system.set_indicator_vgm(vtype="sph", a_major=1000,
                                  sill_strategy="theoretical",
                                  cross_strategy="closure")
@@ -113,7 +113,7 @@ class IndicatorKriging(Kriging):
         ik.set_vgm(ivar=4, jvar=4, ...)             # secondary auto/cross models
         ik.set_grid(coord=grid_coord)
         for k in range(1, 5):
-            ik.set_search(ivar=k)
+            ik.set_search(ivar=k, nmax=20)
         ik.solve()
         probs, var = ik.get_results()   # shape (ngrid, 3) — secondary excluded
     """
@@ -272,4 +272,3 @@ class IndicatorKriging(Kriging):
             super().set_sim(randpath=randpath, sample=s)
         else:
             super().set_sim(randpath=randpath)
-

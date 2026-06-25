@@ -45,10 +45,10 @@ class TestPersistentFactorCache:
                     azimuth=0.0)
 
         k = Kriging(ndim=1, nvar=1, pf_cache=True)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=2)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **spec)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=2)
         k.solve()
 
         f = k.get_factor()
@@ -64,6 +64,50 @@ class TestPersistentFactorCache:
         expected_rhsB = np.array([[1.25, 1.25, 1.0]])
         np.testing.assert_allclose(f["matA"], expected_matA, rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(f["rhsB"], expected_rhsB, rtol=1e-6, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Search configuration
+# ---------------------------------------------------------------------------
+
+class TestSearchConfiguration:
+
+    def test_nmax_can_be_set_on_set_search(self):
+        k = Kriging(ndim=2, nvar=1, store_weight=True)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
+        k.set_vgm(ivar=1, jvar=1, **_VGM)
+        k.set_grid(coord=_SMALL_GRID[:1])
+        k.set_search(ivar=1, nmax=2)
+        k.solve()
+
+        w = k.get_weights()
+        assert w["nnear"][0, 0] == 2
+
+    def test_solve_without_set_search_uses_all_observations(self):
+        k_default = Kriging(ndim=2, nvar=1, store_weight=True)
+        k_default.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
+        k_default.set_vgm(ivar=1, jvar=1, **_VGM)
+        k_default.set_grid(coord=_SMALL_GRID[:1])
+        k_default.solve()
+        est_default, var_default = k_default.get_results()
+        w_default = k_default.get_weights()
+
+        k_explicit = Kriging(ndim=2, nvar=1, store_weight=True)
+        k_explicit.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
+        k_explicit.set_vgm(ivar=1, jvar=1, **_VGM)
+        k_explicit.set_grid(coord=_SMALL_GRID[:1])
+        k_explicit.set_search(ivar=1, nmax=len(_SMALL_COORD))
+        k_explicit.solve()
+        est_explicit, var_explicit = k_explicit.get_results()
+
+        assert w_default["nnear"][0, 0] == len(_SMALL_COORD)
+        np.testing.assert_allclose(est_default, est_explicit)
+        np.testing.assert_allclose(var_default, var_explicit)
+
+    def test_set_obs_rejects_search_limits(self):
+        k = Kriging(ndim=2, nvar=1, store_weight=True)
+        with pytest.raises(TypeError):
+            k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=2)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +168,7 @@ class TestInputValidation:
     def test_set_grid_block_nblockpnt_sum_mismatch_raises(self):
         """Block maps must not claim more sub-nodes than coord provides."""
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         with pytest.raises(ValueError, match=r"sum\(nblockpnt\).*coord rows"):
             k.set_grid_block(
                 coord=_SMALL_COORD[:3],
@@ -135,7 +179,7 @@ class TestInputValidation:
     def test_set_sim_randpath_wrong_length_raises(self):
         """SGSIM path length is checked before calling the C API."""
         k = Kriging(ndim=2, nvar=1, nsim=1, verbose=0, seed=11)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_grid(coord=_SMALL_GRID)
         with pytest.raises(ValueError, match="randpath length"):
             k.set_sim(randpath=np.array([1], dtype=np.int32))
@@ -143,7 +187,7 @@ class TestInputValidation:
     def test_set_sim_randpath_must_be_permutation(self):
         """SGSIM path must be a 1-based permutation of the block numbers."""
         k = Kriging(ndim=2, nvar=1, nsim=1, verbose=0, seed=11)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_grid(coord=_SMALL_GRID)
         with pytest.raises(ValueError, match="1-based permutation"):
             k.set_sim(randpath=np.array([1, 1], dtype=np.int32))
@@ -151,7 +195,7 @@ class TestInputValidation:
     def test_set_sim_sample_wrong_shape_raises(self):
         """SGSIM sample matrix must match (nsim, nblocks)."""
         k = Kriging(ndim=2, nvar=1, nsim=2, verbose=0, seed=11)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_grid(coord=_SMALL_GRID)
         with pytest.raises(ValueError, match="sample shape"):
             k.set_sim(
@@ -169,16 +213,18 @@ class TestInputValidation:
         """set_search depends on observations and should report status cleanly."""
         k = Kriging(ndim=2, nvar=1, verbose=0)
         with pytest.raises(RuntimeError, match="Observation|set_obs"):
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=4)
 
-    def test_solve_without_search_raises_runtime_error(self):
-        """solve should refuse to continue until every variable has search set."""
+    def test_solve_without_search_uses_default_all_observations(self):
+        """solve should default to using every observation when search is unset."""
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=_SMALL_GRID)
-        with pytest.raises(RuntimeError, match="set_search"):
-            k.solve()
+        k.solve()
+        est, var = k.get_results()
+        assert np.all(np.isfinite(est))
+        assert np.all(np.isfinite(var))
 
     def test_obs_drift_before_obs_raises_runtime_error(self):
         """Drift setup before observations should be reported through ierr."""
@@ -191,10 +237,10 @@ class TestOperationalModes:
 
     def _solve(self, **kwargs):
         k = Kriging(ndim=2, nvar=1, verbose=0, **kwargs)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=_SMALL_GRID)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=4)
         k.solve()
         return k.get_results()
 
@@ -227,10 +273,10 @@ class TestSimpleKriging:
         true_mean = value.mean()
 
         k = Kriging(ndim=2, nvar=1, unbias=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=10, sk_mean=float(true_mean))
+        k.set_obs(ivar=1, coord=coord, value=value, sk_mean=float(true_mean))
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=10)
         k.solve()
         est, var = k.get_results()
         assert est.shape == (1,)
@@ -251,10 +297,10 @@ class TestBoundsClipping:
 
         upper = 7.0
         k = Kriging(ndim=2, nvar=1, bounds=(0.0, upper))
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=10)
         k.solve()
         est, _ = k.get_results()
         assert est.max() <= upper + 1e-6, \
@@ -268,10 +314,10 @@ class TestBoundsClipping:
 
         lower = 0.0
         k = Kriging(ndim=2, nvar=1, bounds=(lower, 10.0))
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=10)
         k.solve()
         est, _ = k.get_results()
         assert est.min() >= lower - 1e-6, \
@@ -297,12 +343,12 @@ class TestDrift:
         grid_drift = np.column_stack([grid[:, 0],  grid[:, 1]])    # (ngrid, 2)
 
         k = Kriging(ndim=2, nvar=1, ndrift=2, unbias=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=29)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_obs_drift(ivar=1, drift=obs_drift)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=50000, a_major=5.0, a_minor1=3.0, a_minor2=3.0)
         k.set_grid(coord=grid)
         k.set_grid_drift(drift=grid_drift)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=29)
         k.solve()
         est, var = k.get_results()
         assert est.shape == (grid.shape[0],)
@@ -314,7 +360,7 @@ class TestDrift:
         """set_obs_drift with wrong ndrift column count should be reported by Fortran ierr."""
         coord, value = head2d_obs
         k = Kriging(ndim=2, nvar=1, ndrift=2, unbias=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=10)
+        k.set_obs(ivar=1, coord=coord, value=value)
         # drift has 3 columns but ndrift=2 was declared; Fortran returns ierr.
         wrong_drift = np.ones((coord.shape[0], 3))   # (nobs, 3) but ndrift=2
         with pytest.raises(RuntimeError, match="size\\(drift, 1\\) /= ndrift"):
@@ -345,18 +391,18 @@ class TestObjectReuse:
         k = Kriging(ndim=2, nvar=1, verbose=0)
 
         # Run 1: all 62 observations
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est1, var1 = k.get_results()
 
         # Run 2: last 32 observations only
-        k.set_obs(ivar=1, coord=coord[30:], value=value[30:], nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord[30:], value=value[30:])
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est2, var2 = k.get_results()
 
@@ -369,18 +415,18 @@ class TestObjectReuse:
         coord, value = pc2d_obs
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
 
         k.set_grid(coord=_INTERIOR_GRID[:1])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est1, _ = k.get_results()
 
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=_INTERIOR_GRID[1:])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est2, _ = k.get_results()
 
@@ -401,10 +447,10 @@ class TestObjectReuse:
 
         def _do_run(obs_coord, obs_val):
             k = Kriging(ndim=2, nvar=1, verbose=0)
-            k.set_obs(ivar=1, coord=obs_coord, value=obs_val, nmax=_NMAX)
+            k.set_obs(ivar=1, coord=obs_coord, value=obs_val)
             k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
             k.set_grid(coord=grid)
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=_NMAX)
             k.solve(1)
             return k.get_results()
 
@@ -427,17 +473,17 @@ class TestObjectReuse:
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
 
-        k.set_obs(ivar=1, coord=coord[:10], value=value[:10], nmax=10)
+        k.set_obs(ivar=1, coord=coord[:10], value=value[:10])
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=10)
         k.solve()
         est_small, _ = k.get_results()
 
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D, append=False)
         k.set_grid(coord=grid)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est_full, var_full = k.get_results()
 
@@ -452,10 +498,10 @@ class TestObjectReuse:
         grid = _INTERIOR_GRID
         k = Kriging(ndim=2, nvar=1, verbose=0)
         for sl in [slice(None), slice(30), slice(15, 45)]:
-            k.set_obs(ivar=1, coord=coord[sl], value=value[sl], nmax=_NMAX)
+            k.set_obs(ivar=1, coord=coord[sl], value=value[sl])
             k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D, append=False)
             k.set_grid(coord=grid)
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=_NMAX)
             k.solve()
             _, var = k.get_results()
             assert np.all(var >= 0), (
@@ -472,19 +518,19 @@ class TestObjectReuse:
         grid = _INTERIOR_GRID
 
         k1 = Kriging(ndim=2, nvar=1, verbose=0)
-        k1.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k1.set_obs(ivar=1, coord=coord, value=value)
         k1.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)  # sill = 0.12
         k1.set_grid(coord=grid)
-        k1.set_search(ivar=1)
+        k1.set_search(ivar=1, nmax=_NMAX)
         k1.solve()
         _, var_one = k1.get_results()
 
         k2 = Kriging(ndim=2, nvar=1, verbose=0)
-        k2.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value)
         k2.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)  # first call
         k2.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)  # second call → sill = 0.24
         k2.set_grid(coord=grid)
-        k2.set_search(ivar=1)
+        k2.set_search(ivar=1, nmax=_NMAX)
         k2.solve()
         _, var_two = k2.get_results()
 
@@ -510,10 +556,10 @@ class TestNthread:
         """Return a ready-to-solve Kriging object (not yet solved)."""
         coord, value = pc2d_obs
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=coord[5:15])   # 10 estimation points
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         return k
 
     def test_nthread_1_is_bitwise_reproducible(self, pc2d_obs):
@@ -582,10 +628,10 @@ class TestNcache:
     def _make_kriging(self, pc2d_obs):
         coord, value = pc2d_obs
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=coord[5:20])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         return k
 
     def test_ncache_variants_match_default(self, pc2d_obs):
@@ -607,10 +653,10 @@ class TestNcache:
     def test_positive_undersized_cache_enables_minimum_pool(self, ncache):
         """Positive values below one bucket are promoted to caching enabled."""
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE, nmax=4)
+        k.set_obs(ivar=1, coord=_SMALL_COORD, value=_SMALL_VALUE)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_grid(coord=np.vstack([_SMALL_GRID, [[0.5, 0.5]]]))
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=4)
         k.solve(nthread=1, ncache=ncache)
 
         stats = k.solver_stats

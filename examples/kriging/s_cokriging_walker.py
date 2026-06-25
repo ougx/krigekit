@@ -108,11 +108,11 @@ plt.show()
 # are absent.
 
 k_ok = Kriging(ndim=2, nvar=1)
-k_ok.set_obs(ivar=1, coord=coord_u, value=val_u, nmax=20)
+k_ok.set_obs(ivar=1, coord=coord_u, value=val_u)
 for spec in _VGM_UU:
     k_ok.set_vgm(ivar=1, jvar=1, **spec)
 k_ok.set_grid(coord=grid_coord)
-k_ok.set_search(ivar=1)
+k_ok.set_search(ivar=1, nmax=20)
 k_ok.solve()
 est_ok, var_ok = k_ok.get_results()
 del k_ok
@@ -127,8 +127,8 @@ print(f"OK      — mean variance = {var_ok.mean():,.0f}")
 # U and V; the LMC requires symmetric specification (set for ivar ≤ jvar).
 
 k_cok = Kriging(ndim=2, nvar=2)
-k_cok.set_obs(ivar=1, coord=coord_u, value=val_u, nmax=20)  # U = primary
-k_cok.set_obs(ivar=2, coord=coord_v, value=val_v, nmax=20)  # V = secondary
+k_cok.set_obs(ivar=1, coord=coord_u, value=val_u)  # U = primary
+k_cok.set_obs(ivar=2, coord=coord_v, value=val_v)  # V = secondary
 for spec in _VGM_UU:
     k_cok.set_vgm(ivar=1, jvar=1, **spec)
 for spec in _VGM_VV:
@@ -136,8 +136,8 @@ for spec in _VGM_VV:
 for spec in _VGM_UV:
     k_cok.set_vgm(ivar=1, jvar=2, **spec)
 k_cok.set_grid(coord=grid_coord)
-k_cok.set_search(ivar=1)
-k_cok.set_search(ivar=2)
+k_cok.set_search(ivar=1, nmax=20)
+k_cok.set_search(ivar=2, nmax=20)
 k_cok.solve()
 
 # get_results() returns (ngrid, nvar) estimate and (ngrid, nvar, nvar) covariance

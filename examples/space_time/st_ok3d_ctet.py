@@ -533,13 +533,13 @@ for yr in KRIGE_YEARS:
         print(f"Kriging {yr}... with nmax {nmax}", end=" ", flush=True)
         k = SpaceTimeKriging(nvar=1, verbose=False)
         k.set_st_model("product_sum", k_ps=k_ps_val)
-        k.set_obs(ivar=1, coord=obs_coord, value=V, nmax=nmax)
+        k.set_obs(ivar=1, coord=obs_coord, value=V)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=NUGGET, sill=sill_s,
                   a_major=a_s, a_minor1=a_s, a_minor2=a_s / Z_SCALE)
         k.set_vgm_temporal(ivar=1, jvar=1, vtype="gau",
                            nugget=NUGGET, sill=sill_t, at_k=a_t)
         k.set_grid(coord=grid_xyz, time=np.full(len(grid_xyz), yr + 0.5))
-        k.set_search(ivar=1, time_at=time_at_search)
+        k.set_search(ivar=1, time_at=time_at_search, nmax=nmax)
         k.solve()
         est, _ = k.get_results(copy=True)
         del k

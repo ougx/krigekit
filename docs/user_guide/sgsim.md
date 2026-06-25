@@ -20,11 +20,11 @@ obs_value  = rng.normal(5.0, 1.0, 60)
 grid_coord = np.mgrid[0:101:2, 0:101:2].reshape(2, -1).T
 
 k = Kriging(nsim=20, seed=42)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
 k.set_sim()
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=30)
 k.solve()
 sims, _ = k.get_results()          # shape (ngrid, 20)
 ```
@@ -58,12 +58,12 @@ KrigeKit performs this transform inside the engine. Enable it with
 
 ```python
 k = Kriging(nsim=20, seed=42)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=30)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_nscore(ivar=1)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=40.0)
 k.set_grid(coord=grid_coord)
 k.set_sim()
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=30)
 k.solve()
 sims, _ = k.get_results()          # back-transformed to data units
 ```

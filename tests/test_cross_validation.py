@@ -59,14 +59,53 @@ class TestCrossValidationMode:
         value = rng.uniform(0, 1, 15)
 
         k = Kriging(ndim=2, nvar=1, cross_validation=True)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=15)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid_cv()
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=15)
         k.solve()
         est, var = k.get_results()
         assert est.shape == (coord.shape[0],)
         assert np.all(var >= 0.0)
+
+    def test_cross_validation_without_set_search_uses_all_other_observations(self):
+        rng   = np.random.default_rng(15)
+        coord = rng.uniform(0, 100, (15, 2))
+        value = rng.uniform(0, 1, 15)
+
+        k_default = Kriging(ndim=2, nvar=1, cross_validation=True)
+        k_default.set_obs(ivar=1, coord=coord, value=value)
+        k_default.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k_default.set_grid_cv()
+        k_default.solve()
+        est_default, var_default = k_default.get_results()
+
+        k_explicit = Kriging(ndim=2, nvar=1, cross_validation=True)
+        k_explicit.set_obs(ivar=1, coord=coord, value=value)
+        k_explicit.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k_explicit.set_grid_cv()
+        k_explicit.set_search(ivar=1, nmax=len(coord))
+        k_explicit.solve()
+        est_explicit, var_explicit = k_explicit.get_results()
+
+        np.testing.assert_allclose(est_default, est_explicit)
+        np.testing.assert_allclose(var_default, var_explicit)
+
+    @pytest.mark.parametrize("initial_cv", [False, True])
+    def test_cross_validation_search_before_grid_keeps_requested_nmax(self, initial_cv):
+        rng   = np.random.default_rng(16)
+        coord = rng.uniform(0, 100, (15, 2))
+        value = rng.uniform(0, 1, 15)
+
+        k = Kriging(ndim=2, nvar=1, cross_validation=initial_cv, store_weight=True)
+        k.set_obs(ivar=1, coord=coord, value=value)
+        k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
+        k.set_search(ivar=1, nmax=2)
+        k.set_grid_cv()
+        k.solve()
+
+        weights = k.get_weights()
+        assert np.all(weights["nnear"][0, :] == 2)
 
     def test_cross_validation_residuals_unbiased(self):
         """Mean cross-validation residual should be near zero for a correct model."""
@@ -75,10 +114,10 @@ class TestCrossValidationMode:
         value = rng.uniform(0, 1, 20)
 
         k = Kriging(ndim=2, nvar=1, cross_validation=True)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=20)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid_cv()
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=20)
         k.solve()
         est, _ = k.get_results()
         residuals = value - est
@@ -240,11 +279,11 @@ class TestExactMatch:
         C0      = _VGM_PC2D['sill']   # total sill = C(0) for zero-nugget model
         obs_err = 0.01
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX,
+        k.set_obs(ivar=1, coord=coord, value=value,
                   variance=np.full(len(value), obs_err))
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=coord[[5]])
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         est, var = k.get_results()
         # Variance must be positive and close to obs_err (within one factor of C0/(C0+obs_err))
@@ -288,10 +327,10 @@ class TestExactMatch:
         value = rng.uniform(0, 1, size=n)
 
         k = Kriging(ndim=2, nvar=1, verbose=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=n)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=200.0)
         k.set_grid(coord=coord)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=n)
         k.solve()
         est, var = k.get_results()
 

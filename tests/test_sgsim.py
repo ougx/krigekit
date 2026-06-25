@@ -81,11 +81,11 @@ class TestSGSIM:
         coord = rng.uniform(0.0, 100.0, size=(12, 2))
         value = np.exp(rng.normal(0.0, 1.0, size=12))
         k = Kriging(nsim=1, seed=5)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=12)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_grid(coord=coord.copy())            # grid exactly on observations
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=40.0)
         k.set_sim()
-        k.set_search()
+        k.set_search(nmax=12)
         k.solve()
         est, _ = k.get_results()
         del k
@@ -124,11 +124,11 @@ class TestSGSIM:
         path, sample      = sgsim_path_sample   # shapes: (4800,), (1, 4800)
 
         k = Kriging(ndim=2, nvar=1, nsim=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=20)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_vgm(ivar=1, jvar=1, **_VGM_PC2D)
         k.set_grid(coord=grid_coord)
         k.set_sim(randpath=path, sample=sample)
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=20)
         k.solve()
         sims, _ = k.get_results()
         sims_matrix, _ = k.get_results(squeeze=False)
@@ -154,12 +154,12 @@ class TestSGSIM:
         grid = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
 
         k = Kriging(ndim=3, nvar=1, nsim=4, seed=11)
-        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=48)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)))
         k.set_grid(coord=grid)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0,
                   a_major=30.0, a_minor1=12.0, a_minor2=8.0, azimuth=30.0, dip=20.0)
         k.set_sim()
-        k.set_search(ivar=1, anis1=12.0 / 30.0, anis2=8.0 / 30.0, azimuth=30.0, dip=20.0)
+        k.set_search(ivar=1, anis1=12.0 / 30.0, anis2=8.0 / 30.0, azimuth=30.0, dip=20.0, nmax=48)
         k.solve()
         sims, _ = k.get_results()
         sims = np.asarray(sims)
@@ -182,11 +182,11 @@ class TestSGSIM:
         """
         grid = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
-        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=4)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)))
         k.set_grid(coord=grid)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
         k.set_sim()
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=4)
         k.solve()
         val, var = k.get_results()
         val, var = np.asarray(val), np.asarray(var)
@@ -208,11 +208,11 @@ class TestSGSIM:
             k.set_search(ivar=1)
 
         k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
-        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=4)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)))
         k.set_grid(coord=grid)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=10.0)
         with pytest.raises(RuntimeError, match="set_sim"):
-            k.set_search(ivar=1)
+            k.set_search(ivar=1, nmax=4)
 
     def test_unconditional_tiny_grid_below_dimension(self):
         """A grid with fewer nodes than dimensions must not break the k-d tree.
@@ -222,11 +222,11 @@ class TestSGSIM:
         """
         grid = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])  # 2 nodes in 3-D
         k = Kriging(ndim=3, nvar=1, nsim=1, seed=1)
-        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=1)
+        k.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)))
         k.set_grid(coord=grid)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=1.0, a_major=10.0)
         k.set_sim()
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=1)
         k.solve()
         sims = np.asarray(k.get_results()[0])
         assert sims.shape == (2,)
@@ -238,8 +238,8 @@ class TestSGSIM:
         grid = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]])
 
         k = Kriging(ndim=2, nvar=2, nsim=2, seed=123)
-        k.set_obs(ivar=1, coord=coord, value=np.array([1.0, 2.0, 1.5]),  nmax=3)
-        k.set_obs(ivar=2, coord=coord, value=np.array([10.0, 20.0, 15.0]), nmax=3)
+        k.set_obs(ivar=1, coord=coord, value=np.array([1.0, 2.0, 1.5]))
+        k.set_obs(ivar=2, coord=coord, value=np.array([10.0, 20.0, 15.0]))
         k.set_grid(coord=grid)
         nobs = len(coord)
         nnew = len(grid)
@@ -249,8 +249,8 @@ class TestSGSIM:
             randpath=np.array([1, 2, 3], dtype=np.int32),
             sample=np.ones((nnew, nv, nsim), order="F"),
         )
-        k.set_search(ivar=1)
-        k.set_search(ivar=2)
+        k.set_search(ivar=1, nmax=3)
+        k.set_search(ivar=2, nmax=3)
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=1.0)
         k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.0, sill=0.25, a_major=1.0)
         k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.0, sill=1.0, a_major=1.0)

@@ -61,12 +61,12 @@ def _gh_backtransform_moments(k, mu, var):
 
 def _run(coord, value, grid, nsim=1, seed=42, **us_kw):
     k = Kriging(nsim=nsim, seed=seed)
-    k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+    k.set_obs(ivar=1, coord=coord, value=value)
     k.set_uscore(ivar=1, **us_kw)
     k.set_grid(coord=grid)
     k.set_vgm(ivar=1, jvar=1, **_VGM)
     k.set_sim()
-    k.set_search()
+    k.set_search(nmax=len(value))
     k.solve()
     est, _ = k.get_results()
     del k
@@ -78,7 +78,7 @@ class TestUscoreApi:
     def test_allows_ordinary_kriging(self):
         coord, value = _skewed_data()
         k = Kriging(nsim=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_uscore(ivar=1)
         score = k.transform_value_to_score(value, ivar=1)
         back = k.transform_score_to_value(score, ivar=1)
@@ -95,12 +95,12 @@ class TestUscoreApi:
         coord, value = _skewed_data()
         grid = _grid(4, 4)
         k = Kriging(nsim=1, seed=3)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_quantile(ivar=1)
         k.set_grid(coord=grid)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_sim()
-        k.set_search()
+        k.set_search(nmax=len(value))
         k.solve()
         est, _ = k.get_results()
         assert np.all(np.isfinite(est))
@@ -109,7 +109,7 @@ class TestUscoreApi:
     def test_rejects_stacked_transforms(self):
         coord, value = _skewed_data()
         k = Kriging(nsim=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_nscore(ivar=1)
         with pytest.raises(RuntimeError):
             k.set_uscore(ivar=1)
@@ -118,7 +118,7 @@ class TestUscoreApi:
     def test_value_score_round_trip_api(self):
         coord, value = _skewed_data(n=30, seed=12)
         k = Kriging(nsim=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_uscore(ivar=1)
         score = k.transform_value_to_score(value, ivar=1)
         assert score.shape == value.shape
@@ -142,7 +142,7 @@ class TestUscoreApi:
         )
 
         k = Kriging(nsim=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_uscore(ivar=1)
         score = k.transform_value_to_score(query, ivar=1)
         np.testing.assert_allclose(score, expected_score, rtol=1e-6, atol=1e-6)
@@ -158,7 +158,7 @@ class TestUscoreApi:
         ).ravel()
 
         k = Kriging(nsim=1)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_uscore(ivar=1)
         back = k.transform_score_to_value(score, ivar=1)
         np.testing.assert_allclose(back, expected_value, rtol=1e-6, atol=1e-6)
@@ -167,7 +167,7 @@ class TestUscoreApi:
     def test_ivar_two_value_score_round_trip_api(self):
         coord, value = _skewed_data(n=30, seed=13)
         k = Kriging(nvar=2, nsim=1)
-        k.set_obs(ivar=2, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=2, coord=coord, value=value)
         k.set_uscore(ivar=2)
         score = k.transform_value_to_score(value, ivar=2)
         assert np.all((score > 0.0) & (score < 1.0))
@@ -209,11 +209,11 @@ class TestUscoreKriging:
     def test_exact_conditioning_at_observations(self):
         coord, value = _skewed_data(n=40, seed=15)
         k = Kriging(nsim=0)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_uscore(ivar=1)
         k.set_grid(coord=coord.copy())
         k.set_vgm(ivar=1, jvar=1, **_VGM)
-        k.set_search()
+        k.set_search(nmax=len(value))
         k.solve()
         est, var = k.get_results()
         np.testing.assert_allclose(est, value, rtol=1e-2, atol=1e-2)
@@ -225,15 +225,15 @@ class TestUscoreKriging:
         grid = np.array([[50.0, 50.0]])
 
         kt = Kriging(nsim=0)
-        kt.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        kt.set_obs(ivar=1, coord=coord, value=value)
         kt.set_uscore(ivar=1)
         score_value = kt.transform_value_to_score(value, ivar=1)
 
         ks = Kriging(nsim=0)
-        ks.set_obs(ivar=1, coord=coord, value=score_value, nmax=len(value))
+        ks.set_obs(ivar=1, coord=coord, value=score_value)
         ks.set_grid(coord=grid)
         ks.set_vgm(ivar=1, jvar=1, **_VGM)
-        ks.set_search()
+        ks.set_search(nmax=len(value))
         ks.solve()
         score_est, score_var = ks.get_results()
 
@@ -242,11 +242,11 @@ class TestUscoreKriging:
         )
 
         kb = Kriging(nsim=0)
-        kb.set_obs(ivar=1, coord=coord, value=value, nmax=len(value))
+        kb.set_obs(ivar=1, coord=coord, value=value)
         kb.set_uscore(ivar=1)
         kb.set_grid(coord=grid)
         kb.set_vgm(ivar=1, jvar=1, **_VGM)
-        kb.set_search()
+        kb.set_search(nmax=len(value))
         kb.solve()
         est, var = kb.get_results()
 

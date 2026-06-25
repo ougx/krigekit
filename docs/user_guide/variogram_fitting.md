@@ -36,14 +36,19 @@ variables:
 
 ## Basic workflow
 
-```python
-from krigekit import Kriging, VariogramModel
+When you want the fitted object to transfer both observations and variogram
+parameters to kriging, use `VariogramSystem` even for a single variable:
 
-model = VariogramModel()
-model.set_obs(obs_coord, obs_value)
+```python
+from krigekit import Kriging, VariogramSystem
+
+model = VariogramSystem(nvar=1)
+model.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 
 # A template with one spherical structure.
 model.set_vgm(
+    1,
+    1,
     vtype="sph",
     nugget=0.05,
     sill=0.95,
@@ -53,23 +58,24 @@ model.set_vgm(
 raw = model.calc_experimental(cutoff=2000.0, verbose=False)
 avg = model.calc_average(h_width=100.0)
 
-model.fit(weight_col=("variogram", "count"), inplace=True)
-model.plot()
+model.fit(method="pair", ivar=1, weight_col=("variogram", "count"), inplace=True)
 
 k = Kriging()
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
 k.set_grid(coord=grid_coord)
-model.apply_to(k, ivar=1, jvar=1)
-k.set_search(ivar=1)
+model.apply(k)
+k.set_search(ivar=1, nmax=24)
 k.solve()
 estimate, variance = k.get_results()
 ```
 
 `calc_experimental()` stores the raw variogram cloud on the model.
-`calc_average()` bins that cloud by lag distance. `fit()` uses the cached
-averaged table unless a table is passed explicitly. By default it returns
-`(fitted_model, covariance)` and leaves the template structures unchanged;
-`inplace=True` replaces the template structures with the fitted values.
+`calc_average()` bins that cloud by lag distance. `fit(method="pair", ...)`
+uses the cached averaged table unless a table is passed explicitly, and
+`inplace=True` replaces the template structure with the fitted values.
+`VariogramSystem.apply()` validates the target `Kriging` object, then transfers
+the stored observations and fitted variogram structures.  `set_search()` still
+belongs to the kriging object because it configures the engine-side neighbor
+search used during solving.
 
 ### When anisotropy is applied
 
@@ -461,10 +467,10 @@ model.plot_map(
 
 # Transfer the fitted structures, including anisotropy, to kriging.
 k = Kriging(ndim=2, nvar=1)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_grid(coord=grid_coord)
 model.apply_to(k, ivar=1, jvar=1)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=24)
 k.solve()
 ```
 

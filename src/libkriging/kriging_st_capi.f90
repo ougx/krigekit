@@ -165,14 +165,14 @@ contains
   ! krige_st_set_obs — coord(ndim+1, nobs): rows 1:ndim spatial, ndim+1 = time
   !=============================================================================
   integer(c_int) function krige_st_set_obs(handle, ivar, nobs, ndim, &
-      coord, value, variance, nmax, maxdist, sk_mean) &
+      coord, value, variance, sk_mean) &
       bind(C, name='krige_st_set_obs') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
-    integer(c_int),      intent(in), value :: ivar, nobs, ndim, nmax
+    integer(c_int),      intent(in), value :: ivar, nobs, ndim
     real(c_double),      intent(in)        :: coord(ndim+1, nobs)
     real(c_double),      intent(in)        :: value(nobs)
     real(c_double),      intent(in)        :: variance(nobs)
-    real(c_double),      intent(in), value :: maxdist, sk_mean
+    real(c_double),      intent(in), value :: sk_mean
     type(t_kriging_st), pointer :: obj
     call kriging_clear_error()
     call get_obj(handle, obj)
@@ -182,8 +182,6 @@ contains
     end if
     call obj%set_obs(int(ivar), real(coord), real(value), &
       variance = real(variance), &
-      nmax     = int(nmax), &
-      maxdist  = real(maxdist), &
       sk_mean  = real(sk_mean))
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_obs
@@ -460,12 +458,13 @@ contains
   ! krige_st_set_search — adds time_at (spatial omits it)
   !=============================================================================
   integer(c_int) function krige_st_set_search(handle, ivar, &
-      time_at, anis1, anis2, azimuth, dip, plunge, sector_search) &
+      time_at, anis1, anis2, azimuth, dip, plunge, nmax, maxdist, sector_search) &
       bind(C, name='krige_st_set_search') result(ierr)
     integer(c_intptr_t), intent(in), value :: handle
-    integer(c_int),      intent(in), value :: ivar
+    integer(c_int),      intent(in), value :: ivar, nmax
     real(c_double),      intent(in), value :: time_at
     real(c_double),      intent(in), value :: anis1, anis2, azimuth, dip, plunge
+    real(c_double),      intent(in), value :: maxdist
     integer(c_int),      intent(in), value :: sector_search
     type(t_kriging_st), pointer :: obj
     real :: f_time_at, f_anis1, f_anis2, f_azimuth, f_dip, f_plunge
@@ -486,10 +485,28 @@ contains
     !   a non-polymorphic concrete value), so this ensures the correct value
     !   is used for both the KD-tree build and the search.
     obj%obs(int(ivar))%time_at = real(time_at)
-    call obj%set_search(int(ivar), &
-      anis1=f_anis1, anis2=f_anis2, &
-      azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
-      sector_search=l(sector_search))
+    if (nmax >= 0_c_int .and. maxdist >= 0.0_c_double) then
+      call obj%set_search(int(ivar), &
+        anis1=f_anis1, anis2=f_anis2, &
+        azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
+        nmax=int(nmax), maxdist=real(maxdist), &
+        sector_search=l(sector_search))
+    else if (nmax >= 0_c_int) then
+      call obj%set_search(int(ivar), &
+        anis1=f_anis1, anis2=f_anis2, &
+        azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
+        nmax=int(nmax), sector_search=l(sector_search))
+    else if (maxdist >= 0.0_c_double) then
+      call obj%set_search(int(ivar), &
+        anis1=f_anis1, anis2=f_anis2, &
+        azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
+        maxdist=real(maxdist), sector_search=l(sector_search))
+    else
+      call obj%set_search(int(ivar), &
+        anis1=f_anis1, anis2=f_anis2, &
+        azimuth=f_azimuth, dip=f_dip, plunge=f_plunge, &
+        sector_search=l(sector_search))
+    end if
     ierr = int(kriging_ierr(), c_int)
   end function krige_st_set_search
 

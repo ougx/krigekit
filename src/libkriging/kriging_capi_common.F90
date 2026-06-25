@@ -694,7 +694,10 @@ contains
       return
     end if
     idx = int(handle)
-    if (.not. allocated(registry) .or. idx < 1 .or. idx > size(registry)) then
+    if (.not. allocated(registry)) then
+      call kriging_error('kriging_capi', 'Invalid kriging object handle')
+      return
+    else if (idx < 1 .or. idx > size(registry)) then
       call kriging_error('kriging_capi', 'Invalid kriging object handle')
       return
     end if

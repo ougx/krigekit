@@ -111,10 +111,10 @@ plt.show()
 # without accounting for the elevation gradient.
 
 k_ok = Kriging()
-k_ok.set_obs(ivar=1, coord=obs_coord, value=obs_wl, nmax=NMAX)
+k_ok.set_obs(ivar=1, coord=obs_coord, value=obs_wl)
 k_ok.set_vgm(ivar=1, jvar=1, **VGM_OK)
 k_ok.set_grid(coord=grid_coord)
-k_ok.set_search()
+k_ok.set_search(nmax=NMAX)
 k_ok.solve()
 est_ok, var_ok = k_ok.get_results()
 del k_ok
@@ -130,12 +130,12 @@ del k_ok
 # data variance.
 
 k_ked = Kriging(ndrift=1)
-k_ked.set_obs(ivar=1, coord=obs_coord, value=obs_wl, nmax=NMAX)
+k_ked.set_obs(ivar=1, coord=obs_coord, value=obs_wl)
 k_ked.set_obs_drift(ivar=1, drift=obs_dem.reshape(-1, 1))  # shape (nobs, 1)
 k_ked.set_vgm(ivar=1, jvar=1, **VGM_KED)
 k_ked.set_grid(coord=grid_coord)
 k_ked.set_grid_drift(drift=grid_dem.reshape(-1, 1))        # shape (ngrid, 1)
-k_ked.set_search()
+k_ked.set_search(nmax=NMAX)
 k_ked.solve()
 est_ked, var_ked = k_ked.get_results()
 del k_ked

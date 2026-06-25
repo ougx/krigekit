@@ -15,11 +15,11 @@ grid = pd.read_csv("../../test_data/grid2d.csv")
 
 # nsim is the number of realizations
 k = Kriging(nsim=3, bounds=[0,1]) 
-k.set_obs(ivar=1, coord=data[["x", "y"]], value=data["pc"], nmax=100) 
+k.set_obs(ivar=1, coord=data[["x", "y"]], value=data["pc"])
 k.set_grid(coord=grid[["x", "y"]])
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=0.12, a_major=5000.0)
 k.set_sim()
-k.set_search()
+k.set_search(nmax=100)
 k.solve()
 df = k.get_result_df()
 del k
@@ -48,11 +48,11 @@ ax.cax.colorbar(im, label="Coarse Fraction")
 # Let's change seed number and see how different the results are.
 
 k = Kriging(nsim=3, bounds=[0,1], seed=1000) 
-k.set_obs(ivar=1, coord=data[["x", "y"]], value=data["pc"], nmax=100) 
+k.set_obs(ivar=1, coord=data[["x", "y"]], value=data["pc"])
 k.set_grid(coord=grid[["x", "y"]])
 k.set_vgm(ivar=1, jvar=1, vtype="sph", sill=0.12, a_major=5000.0)
 k.set_sim()
-k.set_search()
+k.set_search(nmax=100)
 k.solve()
 df = k.get_result_df()
 del k

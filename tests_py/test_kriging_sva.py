@@ -77,10 +77,10 @@ NMAX = 20   # neighbours per block
 def _build_base_ok():
     """Ordinary kriging with the global variogram (reference results)."""
     k = Kriging(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k.set_vgm(ivar=1, jvar=1, spec=_VGM_GLOBAL)
     k.set_grid(coord=_GRID)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=NMAX)
     k.solve()
     return k.get_results()   # (est, var)
 
@@ -88,11 +88,11 @@ def _build_base_ok():
 def _build_sva_uniform():
     """SVA kriging with the same global variogram on every block."""
     k = KrigingSVA(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k.set_grid(coord=_GRID)
     k.allocate_sva()
     k.set_vgm_block_all(ivar=1, jvar=1, spec=_VGM_GLOBAL)
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=NMAX)
     k.solve()
     return k.get_results()
 
@@ -100,7 +100,7 @@ def _build_sva_uniform():
 def _build_sva_split():
     """SVA kriging: short range for left half, long range for right half."""
     k = KrigingSVA(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k.set_grid(coord=_GRID)
     k.allocate_sva()
 
@@ -110,7 +110,7 @@ def _build_sva_split():
         spec = _VGM_SHORT if x < mid_x else _VGM_LONG
         k.set_vgm_block(ib=ib, ivar=1, jvar=1, spec=spec)
 
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=NMAX)
     k.solve()
     return k.get_results()
 
@@ -200,7 +200,7 @@ def test_error_paths():
     # 3a: set_vgm_block before allocate_sva must raise
     print("  3a: set_vgm_block before allocate_sva ...")
     k = KrigingSVA(ndim=2, nvar=1)
-    k.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k.set_grid(coord=_GRID)
     try:
         k.set_vgm_block(ib=1, ivar=1, jvar=1, spec=_VGM_GLOBAL)
@@ -212,7 +212,7 @@ def test_error_paths():
     # 3b: allocate_sva before set_grid must raise
     print("  3b: allocate_sva before set_grid ...")
     k2 = KrigingSVA(ndim=2, nvar=1)
-    k2.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k2.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     try:
         k2.allocate_sva()
         assert False, "Expected an error but none was raised"
@@ -223,7 +223,7 @@ def test_error_paths():
     # 3c: out-of-range block index must raise
     print("  3c: set_vgm_block with ib out of range ...")
     k3 = KrigingSVA(ndim=2, nvar=1)
-    k3.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k3.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k3.set_grid(coord=_GRID)
     k3.allocate_sva()
     try:
@@ -236,11 +236,11 @@ def test_error_paths():
     # 3d: solve without setting all block variograms must raise
     print("  3d: solve with missing block variograms ...")
     k4 = KrigingSVA(ndim=2, nvar=1)
-    k4.set_obs(ivar=1, coord=_COORD, value=_VALUE, nmax=NMAX)
+    k4.set_obs(ivar=1, coord=_COORD, value=_VALUE)
     k4.set_grid(coord=_GRID)
     k4.allocate_sva()
     k4.set_vgm_block(ib=1, ivar=1, jvar=1, spec=_VGM_GLOBAL)   # only block 1
-    k4.set_search(ivar=1)
+    k4.set_search(ivar=1, nmax=NMAX)
     try:
         k4.solve()
         assert False, "Expected an error but none was raised"

@@ -49,7 +49,7 @@ gx, gy, gz = np.meshgrid(axis, axis, axis, indexing="ij")
 grid = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
 
 sim = Kriging(ndim=3, nvar=1, nsim=1, seed=2024)
-sim.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)), nmax=48)
+sim.set_obs(ivar=1, coord=np.empty((0, 3)), value=np.empty((0,)))
 sim.set_grid(coord=grid)
 sim.set_vgm(ivar=1, jvar=1, **TRUE)
 sim.set_sim()
@@ -58,6 +58,7 @@ sim.set_search(
     anis1=TRUE["a_minor1"] / TRUE["a_major"],
     anis2=TRUE["a_minor2"] / TRUE["a_major"],
     azimuth=TRUE["azimuth"], dip=TRUE["dip"],
+    nmax=48
 )
 sim.solve()
 field = np.asarray(sim.get_results()[0])

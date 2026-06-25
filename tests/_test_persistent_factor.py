@@ -119,7 +119,7 @@ kg.set_obs(ivar=1, coord=x_new[:, None], value=z)
 kg.set_obs_drift(ivar=1, drift=x_new[:, None])   # restore drift after set_obs
 f_new_coord = kg.get_factor()
 assert not f_new_coord['valid'], "set_obs (new coords) must invalidate factor"
-kg.set_search(ivar=1)          # required after set_obs to cap nmax at n
+kg.set_search(ivar=1)          # explicit rebuild after set_obs
 kg.set_grid(coord=x_grid[:, None])
 kg.set_grid_drift(drift=x_grid[:, None])
 kg.solve()

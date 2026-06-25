@@ -619,11 +619,10 @@ def test_variogram_model_apply_to_kriging_replays_specs():
         ivar=1,
         coord=np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         value=np.array([1.0, 2.0, 1.5]),
-        nmax=3,
     )
     model.apply_to(k, ivar=1, jvar=1)
     k.set_grid(coord=np.array([[0.5, 0.5]]))
-    k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=3)
     k.solve()
     est, var = k.get_results()
 

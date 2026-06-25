@@ -244,7 +244,7 @@ ik = IndicatorKriging(
 # Indicator block (observations + 4 × 4 proportional sills) built with the
 # indicator variogram system, then transferred to the co-kriging engine.
 isys = IndicatorVariogramSystem(categories=cat_labels)
-isys.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys.set_categorical_obs(obs_coord, obs_cats)
 isys.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
     a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
@@ -253,7 +253,7 @@ isys.set_indicator_vgm(
 isys.apply(ik)
 
 # Covariate observations (ivar = ncat + 1)
-ik.set_obs(ivar=ncat + 1, coord=obs_coord, value=y, nmax=NMAX)
+ik.set_obs(ivar=ncat + 1, coord=obs_coord, value=y)
 
 # Covariate auto-variogram (5, 5)
 ik.set_vgm(
@@ -277,7 +277,7 @@ ik.set_grid(coord=grid_coord)
 ik.set_sim()
 
 for k in range(1, nvar + 1):
-    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH)
+    ik.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH, nmax=NMAX)
 
 ik.solve()
 
@@ -313,7 +313,7 @@ ik_plain = IndicatorKriging(
     neglect_error=True, std_ck=True, seed=SEED,
 )
 isys_plain = IndicatorVariogramSystem(categories=cat_labels)
-isys_plain.set_categorical_obs(obs_coord, obs_cats, nmax=NMAX)
+isys_plain.set_categorical_obs(obs_coord, obs_cats)
 isys_plain.set_indicator_vgm(
     vtype="sph", nugget=NUGGET, sill=SILL,
     a_major=A_MAJOR, a_minor1=A_MINOR, a_minor2=A_MINOR, azimuth=AZIMUTH,
@@ -323,7 +323,7 @@ isys_plain.apply(ik_plain)
 ik_plain.set_grid(coord=grid_coord)
 ik_plain.set_sim()
 for k in range(1, ncat + 1):
-    ik_plain.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH)
+    ik_plain.set_search(ivar=k, anis1=ANIS1, azimuth=AZIMUTH, nmax=NMAX)
 ik_plain.solve()
 
 sims_plain = ik_plain.get_results()[0]   # (ngrid, ncat, NSIM) when nvar == ncat

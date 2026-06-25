@@ -192,9 +192,6 @@ def aug_obs_drift(k_idx: int, x: np.ndarray, Q: float) -> np.ndarray:
 # The three events are encoded as three variables (``nvar=3``).  Setting
 # ``unbias=0`` tells krigekit that the user-supplied drift completely
 # describes the trend — no automatic unbiasedness constraint is added on top.
-# ``nmax=N_TOT`` ensures every neighbourhood can draw from all 60 observations
-# across all events, which is necessary for the shared :math:`1/T` column to
-# pool cross-event information.
 #
 # Cross-variograms between events are set to zero (nugget and sill both 0),
 # so the co-kriging weights assigned to other events' observations are driven
@@ -216,8 +213,7 @@ for i in range(1, M + 1):
 for k, ev in enumerate(EVENTS):
     km.set_obs(ivar=k+1,
                coord=obs[k]['x'][:, None],
-               value=obs[k]['z'],
-               nmax=N_TOT)
+               value=obs[k]['z'])
     km.set_obs_drift(ivar=k+1,
                      drift=aug_obs_drift(k, obs[k]['x'], ev['Q']))
 

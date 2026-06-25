@@ -120,10 +120,10 @@ def _ok1d(obs_x, obs_z, target_x, vgm_spec, *,
     tgt   = np.array([[float(target_x)]])
 
     k = Kriging(ndim=1, nvar=1, store_weight=store_weight, **kw)
-    k.set_obs(1, coord=coord, value=np.asarray(obs_z, dtype=float), nmax=_NMAX)
+    k.set_obs(1, coord=coord, value=np.asarray(obs_z, dtype=float))
     k.set_vgm(1, 1, **vgm_spec)
     k.set_grid(tgt)
-    k.set_search(1)
+    k.set_search(1, nmax=_NMAX)
 
     if grad_c1 is not None:
         c1   = np.asarray(grad_c1, dtype=float).reshape(-1, 1)
@@ -732,10 +732,10 @@ class TestGradWeightStore:
         grad_v  = np.asarray(gv, dtype=float)
 
         k = Kriging(ndim=1, nvar=1, store_weight=True)
-        k.set_obs(1, coord=coords, value=np.array(obs_z, dtype=float), nmax=_NMAX)
+        k.set_obs(1, coord=coords, value=np.array(obs_z, dtype=float))
         k.set_vgm(1, 1, **_SPH)
         k.set_grid(tgt_arr)
-        k.set_search(1)
+        k.set_search(1, nmax=_NMAX)
         k.set_grad(
             coord1=np.array(gc1, dtype=float).reshape(-1, 1),
             coord2=np.array(gc2, dtype=float).reshape(-1, 1),
@@ -792,11 +792,10 @@ class TestGradUseOldWeight:
         coords  = np.array(self._OBS_X, dtype=float).reshape(-1, 1)
         tgt     = np.array(self._TARGETS, dtype=float).reshape(-1, 1)
         k = Kriging(ndim=1, nvar=1, store_weight=True, weight_file=weight_file)
-        k.set_obs(1, coord=coords, value=np.array(self._OBS_Z, dtype=float),
-                  nmax=_NMAX)
+        k.set_obs(1, coord=coords, value=np.array(self._OBS_Z, dtype=float))
         k.set_vgm(1, 1, **_SPH)
         k.set_grid(tgt)
-        k.set_search(1)
+        k.set_search(1, nmax=_NMAX)
         k.set_grad(
             coord1=np.array(self._GC1, dtype=float).reshape(-1, 1),
             coord2=np.array(self._GC2, dtype=float).reshape(-1, 1),
@@ -814,11 +813,10 @@ class TestGradUseOldWeight:
         coords  = np.array(self._OBS_X, dtype=float).reshape(-1, 1)
         tgt     = np.array(self._TARGETS, dtype=float).reshape(-1, 1)
         k = Kriging(ndim=1, nvar=1, use_old_weight=True, weight_file=weight_file)
-        k.set_obs(1, coord=coords, value=np.array(self._OBS_Z, dtype=float),
-                  nmax=_NMAX)
+        k.set_obs(1, coord=coords, value=np.array(self._OBS_Z, dtype=float))
         k.set_vgm(1, 1, **_SPH)
         k.set_grid(tgt)
-        k.set_search(1)
+        k.set_search(1, nmax=_NMAX)
         # set_grad required: estimate_block uses grad%value from the Fortran struct
         k.set_grad(
             coord1=np.array(self._GC1, dtype=float).reshape(-1, 1),
@@ -869,11 +867,10 @@ class TestGradUseOldWeight:
         tgt     = np.array(self._TARGETS, dtype=float).reshape(-1, 1)
         k2 = Kriging(ndim=1, nvar=1, use_old_weight=True, weight_file=wf)
         k2.set_obs(1, coord=coords,
-                   value=np.array(self._OBS_Z, dtype=float) + C,  # shifted
-                   nmax=_NMAX)
+                   value=np.array(self._OBS_Z, dtype=float) + C)  # shifted
         k2.set_vgm(1, 1, **_SPH)
         k2.set_grid(tgt)
-        k2.set_search(1)
+        k2.set_search(1, nmax=_NMAX)
         k2.set_grad(
             coord1=np.array(self._GC1, dtype=float).reshape(-1, 1),
             coord2=np.array(self._GC2, dtype=float).reshape(-1, 1),

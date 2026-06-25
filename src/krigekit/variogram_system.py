@@ -135,7 +135,7 @@ class VariogramSystem:
                 self.avg_variograms_.pop(key, None)
 
     def set_obs(self, ivar, coord, value, times=None, variance=None,
-                nmax=None, maxdist=None, sk_mean=None, drift=None):
+                sk_mean=None, drift=None):
         """Store observations for variable ``ivar`` (ergonomic wrapper).
 
         Delegates to ``self.obs[ivar].set(...)`` and invalidates cached
@@ -143,8 +143,7 @@ class VariogramSystem:
         """
         ivar = self._check_ivar(ivar)
         self.obs[ivar].set(coord, value, times=times, variance=variance,
-                           nmax=nmax, maxdist=maxdist, sk_mean=sk_mean,
-                           drift=drift)
+                           sk_mean=sk_mean, drift=drift)
         self._invalidate_pair_caches(ivar)
         return self
 

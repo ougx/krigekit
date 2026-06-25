@@ -39,10 +39,10 @@ grid_coord = np.column_stack([x.ravel(), y.ravel()])
 rangescale = np.where(grid_coord[:, 0] > 50.0, 2.0, 0.75)
 
 k = Kriging(ndim=2, nvar=1)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95, a_major=35.0)
 k.set_grid(coord=grid_coord, rangescale=rangescale)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=24)
 k.solve()
 
 est, var = k.get_results()
@@ -63,10 +63,10 @@ localnugget = np.zeros(len(grid_coord))
 localnugget[grid_coord[:, 1] > 75.0] = 0.10
 
 k = Kriging(ndim=2, nvar=1)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.05, sill=0.95, a_major=35.0)
 k.set_grid(coord=grid_coord, localnugget=localnugget)
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=24)
 k.solve()
 
 est, var = k.get_results()
@@ -92,7 +92,7 @@ then call `set_vgm_block` for each block.  Block indices are 1-based.
 
 ```python
 k = Kriging(ndim=2, nvar=1, varying_vgm=True)
-k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=24)
+k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
 k.set_grid(coord=grid_coord)
 
 for ib, (gx, gy) in enumerate(grid_coord, start=1):
@@ -119,7 +119,7 @@ for ib, (gx, gy) in enumerate(grid_coord, start=1):
         azimuth=azimuth,
     )
 
-k.set_search(ivar=1)
+k.set_search(ivar=1, nmax=24)
 k.solve()
 est, var = k.get_results()
 ```

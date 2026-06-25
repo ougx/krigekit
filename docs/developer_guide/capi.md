@@ -118,12 +118,12 @@ int krige_set_obs(int64_t handle,
     const double *coord,    // [ndim_c × nobs], Fortran column-major
     const double *value,    // [nobs]
     const double *variance, // [nobs]  measurement error variance; 0 if unknown
-    int nmax, double maxdist, double sk_mean)
+    double sk_mean)
 ```
 
 Sets coordinates, values, and per-observation measurement variance for one
-variable.  Pass `INT_MAX` for `nmax` and `DBL_MAX` for `maxdist` to use all
-observations within unlimited range.  `sk_mean` is only used when `unbias=0`.
+variable. `sk_mean` is only used when `unbias=0`. Configure `nmax` and
+`maxdist` with `krige_set_search`.
 Duplicate coordinate tuples within the same variable are rejected.  For spatial
 kriging, all `ndim_c` coordinate rows must match to count as a duplicate.
 
@@ -318,11 +318,14 @@ int krige_set_search(int64_t handle,
     int ivar,
     double anis1, double anis2,
     double azimuth, double dip, double plunge,
+    int nmax, double maxdist,
     int sector_search)
 ```
 
 Builds the KD-tree and configures the search ellipse for variable `ivar`.
-Call once per variable after all observations are loaded.
+Call once per variable after all observations are loaded.  Pass negative
+`nmax` or `maxdist` to keep the existing search value, which defaults to
+unlimited.
 
 | Parameter | Description |
 |---|---|
@@ -331,6 +334,8 @@ Call once per variable after all observations are loaded.
 | `azimuth` | Major axis azimuth (degrees, clockwise from North) |
 | `dip` | Dip angle (degrees, positive downward) |
 | `plunge` | Plunge angle (degrees) |
+| `nmax` | Maximum neighbours; negative keeps the existing value |
+| `maxdist` | Maximum search distance; negative keeps the existing value |
 | `sector_search` | 0/1: enable sector (quadrant/octant) search limiting candidates per sector |
 
 ---
@@ -696,11 +701,11 @@ int krige_st_set_obs(int64_t handle,
     const double *coord,    // [4 × nobs], Fortran column-major; rows 1:3 = spatial, row 4 = time
     const double *value,    // [nobs]
     const double *variance, // [nobs]
-    int nmax, double maxdist, double sk_mean)
+    double sk_mean)
 ```
 
 Identical to `krige_set_obs` except that `coord` has 4 rows (3 spatial + 1 time).
-`maxdist` is in **km-equivalent units** — the same space as `h_ST`.
+Configure `nmax` and `maxdist` with `krige_st_set_search`.
 
 ### `krige_st_set_grid`
 
@@ -778,6 +783,8 @@ int krige_st_set_search(int64_t handle,
     double azimuth,    // major-axis azimuth (degrees, clockwise from North)
     double dip,        // dip angle (degrees)
     double plunge,     // plunge angle (degrees)
+    int nmax,
+    double maxdist,
     int sector_search) // 0/1: enable sector (octant) search
 ```
 
@@ -790,12 +797,13 @@ h_ST = sqrt(h_S^2 + (time_at * dt)^2)
 ```
 
 Pass `time_at` equal to `at` from `krige_st_set_st_model` to keep search and
-variogram scales consistent.  `maxdist` set in `krige_st_set_obs` is then a
-radius in km-equivalent (h_ST) units.
+variogram scales consistent.  `maxdist` is a radius in km-equivalent (h_ST)
+units.  Pass negative `nmax` or `maxdist` to keep the existing search value,
+which defaults to unlimited.
 
 When `sector_search` is `1`, candidate neighbours are partitioned into 8 spatial
-octants centered on the target location. At most `nmax` (from `krige_st_set_obs`)
-are selected per octant, leading to a maximum total of `8 * nmax` neighbours.
+octants centered on the target location. At most `nmax` are selected per octant,
+leading to a maximum total of `8 * nmax` neighbours.
 
 ---
 

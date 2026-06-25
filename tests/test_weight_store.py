@@ -40,11 +40,11 @@ _NMAX = 5
 def _build_kriging(obs_coord, obs_value, grid_coord, **kwargs):
     """Build, set up, and solve a standard 2-D ordinary kriging object."""
     k = Kriging(ndim=2, nvar=1, **kwargs)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=_NMAX)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_grid(coord=grid_coord)
     if not k.use_old_weight:
         k.set_vgm(ivar=1, jvar=1, **_VGM)
-        k.set_search(ivar=1)
+    k.set_search(ivar=1, nmax=_NMAX)
     k.solve()
     return k
 
@@ -52,15 +52,15 @@ def _build_kriging(obs_coord, obs_value, grid_coord, **kwargs):
 def _build_cokriging(obs_coord, value1, value2, grid_coord, **kwargs):
     """Build, set up, and solve a standard 2-D co-kriging object."""
     k = Kriging(ndim=2, nvar=2, **kwargs)
-    k.set_obs(ivar=1, coord=obs_coord, value=value1, nmax=_NMAX)
-    k.set_obs(ivar=2, coord=obs_coord, value=value2, nmax=_NMAX)
+    k.set_obs(ivar=1, coord=obs_coord, value=value1)
+    k.set_obs(ivar=2, coord=obs_coord, value=value2)
     k.set_grid(coord=grid_coord)
     if not k.use_old_weight:
         k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.01, sill=0.09, a_major=100.0)
         k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.00, sill=0.03, a_major=100.0)
         k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.02, sill=0.16, a_major=100.0)
-        k.set_search(ivar=1)
-        k.set_search(ivar=2)
+    k.set_search(ivar=1, nmax=_NMAX)
+    k.set_search(ivar=2, nmax=_NMAX)
     k.solve()
     return k
 
@@ -113,11 +113,11 @@ class TestWeightStoreShapes:
         coord, value = simple_obs
         nb = simple_grid.shape[0]
         k = Kriging(ndim=2, nvar=1, nsim=1, store_weight=True, seed=42)
-        k.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k.set_obs(ivar=1, coord=coord, value=value)
         k.set_grid(coord=simple_grid)
         k.set_vgm(ivar=1, jvar=1, **_VGM)
         k.set_sim()
-        k.set_search(ivar=1)
+        k.set_search(ivar=1, nmax=_NMAX)
         k.solve()
         w = k.get_weights()
         # ngroups = 2: group 0=obs, group 1=sim (no grad set)
@@ -236,8 +236,9 @@ class TestWeightStoreFile:
 
         # Second run: read weights, skip solve
         k2 = Kriging(ndim=2, nvar=1, use_old_weight=True, weight_file=fac)
-        k2.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value)
         k2.set_grid(coord=simple_grid)
+        k2.set_search(ivar=1, nmax=_NMAX)
         k2.solve()
         est2, var2 = k2.get_results()
 
@@ -358,8 +359,8 @@ class TestWeightStoreCosim:
     def _build(self, **kwargs):
         """Create and solve a joint co-simulation object with fixed path and samples."""
         k = Kriging(ndim=2, nvar=2, nsim=self._NSIM, seed=42, **kwargs)
-        k.set_obs(ivar=1, coord=self._COORD, value=self._VAL1, nmax=self._NMAX)
-        k.set_obs(ivar=2, coord=self._COORD, value=self._VAL2, nmax=self._NMAX)
+        k.set_obs(ivar=1, coord=self._COORD, value=self._VAL1)
+        k.set_obs(ivar=2, coord=self._COORD, value=self._VAL2)
         k.set_grid(coord=self._GRID)
         if k.use_old_weight:
             k.set_sim(randpath=self._RANDPATH, sample=self._SAMPLE)
@@ -368,8 +369,8 @@ class TestWeightStoreCosim:
             k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.0, sill=0.25, a_major=1.0)
             k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.0, sill=1.0,  a_major=1.0)
             k.set_sim(randpath=self._RANDPATH, sample=self._SAMPLE)
-            k.set_search(ivar=1)
-            k.set_search(ivar=2)
+        k.set_search(ivar=1, nmax=self._NMAX)
+        k.set_search(ivar=2, nmax=self._NMAX)
 
         k.solve()
         return k
@@ -377,8 +378,8 @@ class TestWeightStoreCosim:
     def _build_auto_seed(self, seed, **kwargs):
         """Create and solve a joint co-simulation object with auto-generated path/samples."""
         k = Kriging(ndim=2, nvar=2, nsim=self._NSIM, seed=seed, **kwargs)
-        k.set_obs(ivar=1, coord=self._COORD, value=self._VAL1, nmax=self._NMAX)
-        k.set_obs(ivar=2, coord=self._COORD, value=self._VAL2, nmax=self._NMAX)
+        k.set_obs(ivar=1, coord=self._COORD, value=self._VAL1)
+        k.set_obs(ivar=2, coord=self._COORD, value=self._VAL2)
         k.set_grid(coord=self._GRID)
         if k.use_old_weight:
             k.set_sim()   # auto-generated from seed
@@ -387,8 +388,8 @@ class TestWeightStoreCosim:
             k.set_vgm(ivar=1, jvar=2, vtype="sph", nugget=0.0, sill=0.25, a_major=1.0)
             k.set_vgm(ivar=2, jvar=2, vtype="sph", nugget=0.0, sill=1.0,  a_major=1.0)
             k.set_sim()   # auto-generated from seed
-            k.set_search(ivar=1)
-            k.set_search(ivar=2)
+        k.set_search(ivar=1, nmax=self._NMAX)
+        k.set_search(ivar=2, nmax=self._NMAX)
         k.solve()
         return k
 
@@ -510,10 +511,10 @@ class TestSetWeights:
         est1, var1 = k1.get_results()
 
         k2 = Kriging(ndim=2, nvar=1, use_old_weight=True)   # no weight_file → in-memory
-        k2.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value)
         k2.set_grid(coord=simple_grid)
         k2.set_vgm(ivar=1, jvar=1, **_VGM)
-        k2.set_search(ivar=1)
+        k2.set_search(ivar=1, nmax=_NMAX)
         k2.set_weights(w)
         k2.solve()
         est2, var2 = k2.get_results()
@@ -532,10 +533,10 @@ class TestSetWeights:
         # Double the obs values — estimate should double (ordinary kriging is linear)
         value2 = value * 2.0
         k2 = Kriging(ndim=2, nvar=1, use_old_weight=True)
-        k2.set_obs(ivar=1, coord=coord, value=value2, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value2)
         k2.set_grid(coord=simple_grid)
         k2.set_vgm(ivar=1, jvar=1, **_VGM)
-        k2.set_search(ivar=1)
+        k2.set_search(ivar=1, nmax=_NMAX)
         k2.set_weights(w)
         k2.solve()
         est2, _ = k2.get_results()
@@ -571,10 +572,10 @@ class TestSetWeights:
         w_no_var = {k: v for k, v in w.items() if k != "variance"}
 
         k2 = Kriging(ndim=2, nvar=1, use_old_weight=True)
-        k2.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value)
         k2.set_grid(coord=simple_grid)
         k2.set_vgm(ivar=1, jvar=1, **_VGM)
-        k2.set_search(ivar=1)
+        k2.set_search(ivar=1, nmax=_NMAX)
         k2.set_weights(w_no_var)
         k2.solve()
         _, var2 = k2.get_results()
@@ -595,10 +596,10 @@ class TestWeightStoreErrors:
         w = k1.get_weights()
 
         k2 = Kriging(ndim=2, nvar=1, store_weight=True)
-        k2.set_obs(ivar=1, coord=coord, value=value, nmax=_NMAX)
+        k2.set_obs(ivar=1, coord=coord, value=value)
         k2.set_grid(coord=simple_grid)
         k2.set_vgm(ivar=1, jvar=1, **_VGM)
-        k2.set_search(ivar=1)
+        k2.set_search(ivar=1, nmax=_NMAX)
         with pytest.raises(ValueError, match="store_weight=True"):
             k2.set_weights(w)
 

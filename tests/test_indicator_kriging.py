@@ -10,7 +10,7 @@ from krigekit import IndicatorKriging, IndicatorVariogramSystem
 from krigekit.variogram_system_indicator import encode_indicator_matrix
 
 
-def _set_indicator_obs(ik, coord, categories, labels, nmax):
+def _set_indicator_obs(ik, coord, categories, labels):
     """Encode raw categories and load them as indicator observations.
 
     Replaces the removed ``IndicatorKriging.set_categorical_obs`` convenience for
@@ -19,7 +19,7 @@ def _set_indicator_obs(ik, coord, categories, labels, nmax):
     """
     matrix = encode_indicator_matrix(categories, labels)
     for k in range(1, len(labels) + 1):
-        ik.set_obs(ivar=k, coord=coord, value=matrix[:, k - 1], nmax=nmax)
+        ik.set_obs(ivar=k, coord=coord, value=matrix[:, k - 1])
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def _build_ik(nsim=0, seed=1):
     # off-diagonal pairs get the same (uniform) model — the post_solve
     # normalisation corrects probabilities regardless of cross-variogram choice.
     system = IndicatorVariogramSystem(categories=CAT_LABELS)
-    system.set_categorical_obs(OBS_COORD, OBS_CAT, nmax=NMAX)
+    system.set_categorical_obs(OBS_COORD, OBS_CAT)
     system.set_indicator_vgm(sill_strategy="uniform", cross_strategy="uniform",
                              **VGM)
     system.apply(ik)
@@ -62,7 +62,7 @@ def _build_ik(nsim=0, seed=1):
     if nsim > 0:
         ik.set_sim()   # must come before set_search when nsim>0
     for k in range(1, NCAT + 1):
-        ik.set_search(ivar=k)
+        ik.set_search(ivar=k, nmax=NMAX)
     return ik
 
 
@@ -158,12 +158,11 @@ def test_secondary_covariate_is_excluded_from_indicator_results():
         neglect_error=True, std_ck=True,
     )
     categories = np.where(np.arange(NOBS) % 2 == 0, 1, 2)
-    _set_indicator_obs(ik, OBS_COORD, categories, [1, 2], NMAX)
+    _set_indicator_obs(ik, OBS_COORD, categories, [1, 2])
     ik.set_obs(
         ivar=3,
         coord=OBS_COORD,
         value=np.linspace(-1.0, 1.0, NOBS),
-        nmax=NMAX,
     )
     for ivar in range(1, 4):
         for jvar in range(ivar, 4):
@@ -171,7 +170,7 @@ def test_secondary_covariate_is_excluded_from_indicator_results():
     ik.set_grid(GRID_COORD)
     ik.set_sim()
     for ivar in range(1, 4):
-        ik.set_search(ivar)
+        ik.set_search(ivar, nmax=NMAX)
     ik.solve()
 
     sims, variance = ik.get_results()
@@ -193,8 +192,8 @@ def _build_secondary_coik_1d(cross_sill, nsim=0, weight_file=""):
         std_ck=True, store_weight=bool(weight_file),
         weight_file=str(weight_file),
     )
-    _set_indicator_obs(ik, obs_coord, categories, [1, 2], 5)
-    ik.set_obs(3, secondary_coord, secondary_value, nmax=5)
+    _set_indicator_obs(ik, obs_coord, categories, [1, 2])
+    ik.set_obs(3, secondary_coord, secondary_value)
 
     # Positive-semidefinite coregionalization matrix.  The two indicators are
     # complementary; the secondary variable is negatively correlated with
@@ -220,7 +219,7 @@ def _build_secondary_coik_1d(cross_sill, nsim=0, weight_file=""):
             sample=sample,
         )
     for ivar in range(1, 4):
-        ik.set_search(ivar)
+        ik.set_search(ivar, nmax=5)
     return ik
 
 
@@ -266,16 +265,15 @@ def test_multivariate_sis_uses_variable_specific_simulation_constraints():
     )
     for ivar in (1, 2):
         ik.set_obs(
-            ivar, empty_coord, empty_value,
-            nmax=8, sk_mean=0.5,
+            ivar, empty_coord, empty_value, sk_mean=0.5,
         )
     ik.set_vgm(1, 1, "sph", nugget=0.0, sill=0.25, a_major=10.0)
     ik.set_vgm(1, 2, "sph", nugget=0.0, sill=0.0, a_major=10.0)
     ik.set_vgm(2, 2, "sph", nugget=0.0, sill=0.25, a_major=10.0)
     ik.set_grid(grid)
     ik.set_sim(randpath=np.arange(1, ngrid + 1, dtype=np.int32))
-    ik.set_search(1)
-    ik.set_search(2)
+    ik.set_search(1, nmax=8)
+    ik.set_search(2, nmax=8)
 
     # Before the regression fix, block 2 was singular because both simulated
     # groups used block%drift(:, 1, :) and therefore duplicated category 1's

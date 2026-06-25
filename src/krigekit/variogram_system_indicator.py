@@ -118,7 +118,7 @@ class IndicatorVariogramSystem(VariogramSystem):
         return encode_indicator_matrix(categories, self.categories)
 
     def set_categorical_obs(self, coord, categories, *, category_labels=None,
-                            nmax=32, maxdist=None, variance=None):
+                            variance=None):
         """Encode raw categories into ``K`` indicator datasets and store them.
 
         ``category_labels`` (or the constructor ``categories``) fixes the label
@@ -141,8 +141,7 @@ class IndicatorVariogramSystem(VariogramSystem):
         matrix = encode_indicator_matrix(cats, labels)
         var_arr = None if variance is None else np.asarray(variance, dtype=float)
         for k in range(1, self.ncat + 1):
-            self.set_obs(k, coord, matrix[:, k - 1], variance=var_arr,
-                        nmax=nmax, maxdist=maxdist)
+            self.set_obs(k, coord, matrix[:, k - 1], variance=var_arr)
         self.calc_proportions()
         return self
 

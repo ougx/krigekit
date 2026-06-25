@@ -83,9 +83,10 @@ def _build_search_transform_probe(obs_coord, obs_value, maxdist=None, nmax=1):
     """Build a tiny ST problem where small nmax exposes chosen neighbours."""
     k = SpaceTimeKriging(nvar=1, neglect_error=True)
     k.set_st_model("sum_metric", "linear", at=100.0, time_sill=10.0)
-    k.set_obs(1, obs_coord, obs_value, nmax=nmax, maxdist=maxdist)
+    k.set_obs(1, obs_coord, obs_value)
     _basic_st_vgm(k)
     k.set_grid(np.array([[0.0, 0.0, 0.0]]), np.array([0.0]))
+    k.set_search(1, nmax=nmax, maxdist=maxdist)
     return k
 
 
@@ -110,7 +111,29 @@ def _estimate_with_time_at(time_at):
     ])
     obs_value = np.array([10.0, 10.0, 20.0, 20.0, -1.0, -2.0, -3.0])
     k = _build_search_transform_probe(obs_coord, obs_value, nmax=2)
-    k.set_search(1, time_at=time_at)
+    k.set_search(1, time_at=time_at, nmax=2)
+    k.solve()
+    est, _ = k.get_results()
+    return est[0]
+
+
+def _estimate_with_search_nmax(time_at):
+    obs_coord = np.array([
+        [0.0, 0.0, 0.0, 10.0],
+        [0.0, 0.0, 0.0, 11.0],
+        [3.0, 0.0, 0.0,  0.0],
+        [3.1, 0.0, 0.0,  0.0],
+        [100.0, 0.0, 0.0, 0.0],
+        [0.0, 100.0, 0.0, 0.0],
+        [0.0, 0.0, 100.0, 0.0],
+    ])
+    obs_value = np.array([10.0, 10.0, 20.0, 20.0, -1.0, -2.0, -3.0])
+    k = SpaceTimeKriging(nvar=1, neglect_error=True)
+    k.set_st_model("sum_metric", "linear", at=100.0, time_sill=10.0)
+    k.set_obs(1, obs_coord, obs_value)
+    _basic_st_vgm(k)
+    k.set_grid(np.array([[0.0, 0.0, 0.0]]), np.array([0.0]))
+    k.set_search(1, time_at=time_at, nmax=2)
     k.solve()
     est, _ = k.get_results()
     return est[0]
@@ -121,16 +144,44 @@ def _estimate_with_time_at(time_at):
 # ===========================================================================
 class TestSumMetricLinear:
 
+    def test_nmax_can_be_set_on_set_search(self):
+        assert _estimate_with_search_nmax(0.1) == pytest.approx(10.0, abs=1.0)
+        assert _estimate_with_search_nmax(100.0) == pytest.approx(20.0, abs=1.0)
+
+    def test_solve_without_set_search_uses_all_observations(self, obs_data_1var, grid_data):
+        coord, value = obs_data_1var
+        gcoord, gtime = grid_data
+
+        k_default = SpaceTimeKriging(nvar=1)
+        k_default.set_st_model("sum_metric", "linear", at=10.0)
+        k_default.set_obs(1, coord, value)
+        _basic_st_vgm(k_default)
+        k_default.set_grid(gcoord[:3], gtime[:3])
+        k_default.solve()
+        est_default, var_default = k_default.get_results()
+
+        k_explicit = SpaceTimeKriging(nvar=1)
+        k_explicit.set_st_model("sum_metric", "linear", at=10.0)
+        k_explicit.set_obs(1, coord, value)
+        _basic_st_vgm(k_explicit)
+        k_explicit.set_grid(gcoord[:3], gtime[:3])
+        k_explicit.set_search(1, nmax=len(coord))
+        k_explicit.solve()
+        est_explicit, var_explicit = k_explicit.get_results()
+
+        np.testing.assert_allclose(est_default, est_explicit)
+        np.testing.assert_allclose(var_default, var_explicit)
+
     def test_basic_shape(self, obs_data_1var, grid_data):
         coord, value = obs_data_1var
         gcoord, gtime = grid_data
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model(model="sum_metric", transform="linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20, maxdist=800)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20, maxdist=800)
         k.solve()
         est, var = k.get_results()
 
@@ -143,10 +194,10 @@ class TestSumMetricLinear:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         _, var = k.get_results()
         assert np.all(var >= 0), f"negative variance encountered: min={var.min():.6f}"
@@ -157,10 +208,10 @@ class TestSumMetricLinear:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, _ = k.get_results()
         assert np.all(np.isfinite(est)), "non-finite estimates found"
@@ -172,10 +223,10 @@ class TestSumMetricLinear:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(coord[[idx], :3], coord[[idx], 3])
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -194,10 +245,10 @@ class TestSumMetricBounded:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "bounded", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -212,20 +263,20 @@ class TestSumMetricBounded:
         # Unlimited: all obs within reach → no NaN blocks
         k_wide = SpaceTimeKriging(nvar=1, neglect_error=True)
         k_wide.set_st_model("sum_metric", "bounded", at=10.0)
-        k_wide.set_obs(1, coord, value, nmax=20)
+        k_wide.set_obs(1, coord, value)
         _basic_st_vgm(k_wide)
         k_wide.set_grid(gcoord, gtime)
-        k_wide.set_search(1)
+        k_wide.set_search(1, nmax=20)
         k_wide.solve()
         est_wide, _ = k_wide.get_results()
 
         # Very tight 4D radius: most blocks will have no neighbours
         k_tight = SpaceTimeKriging(nvar=1, neglect_error=True)
         k_tight.set_st_model("sum_metric", "bounded", at=10.0)
-        k_tight.set_obs(1, coord, value, nmax=20, maxdist=1.0)
+        k_tight.set_obs(1, coord, value)
         _basic_st_vgm(k_tight)
         k_tight.set_grid(gcoord, gtime)
-        k_tight.set_search(1)
+        k_tight.set_search(1, nmax=20, maxdist=1.0)
         k_tight.solve()
         est_tight, _ = k_tight.get_results()
 
@@ -314,11 +365,11 @@ class TestProductSum:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("product_sum", "linear", at=10.0, k_ps=0.5)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
         k.set_vgm_temporal(1, 1, vtype="exp", nugget=0, sill=0.5, at_k=10.0)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -390,10 +441,10 @@ class TestCrossValidation:
 
         k = SpaceTimeKriging(nvar=1, cross_validation=True)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid_cv()
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -413,8 +464,8 @@ class TestCokriging:
 
         k = SpaceTimeKriging(nvar=2)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, c1, v1, nmax=20)
-        k.set_obs(2, c2, v2, nmax=20)
+        k.set_obs(1, c1, v1)
+        k.set_obs(2, c2, v2)
 
         # Auto-variograms
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
@@ -431,8 +482,8 @@ class TestCokriging:
         k.set_vgm_joint_sills(1, 2, 0.1)
 
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
-        k.set_search(2)
+        k.set_search(1, nmax=20)
+        k.set_search(2, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -484,14 +535,14 @@ class TestNestedStructures:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         # Two spatial structures
         k.set_vgm(1, 1, vtype="nug", nugget=0.1, sill=0.0, a_major=1.0)
         k.set_vgm(1, 1, vtype="sph", nugget=0.0, sill=0.7, a_major=500, a_minor1=300, a_minor2=100)
         k.set_vgm_temporal(1, 1, vtype="exp", nugget=0, sill=0.5, at_k=10.0)
         k.set_vgm_joint_sills(1, 1, 0.0, 0.3)  # joint sill for nug=0, sph=0.3
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
         assert np.all(var >= 0)
@@ -504,13 +555,13 @@ class TestNestedStructures:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
         k.set_vgm_temporal(1, 1, vtype="nug", nugget=0.05, sill=0.0, at_k=1.0)
         k.set_vgm_temporal(1, 1, vtype="exp", nugget=0.0, sill=0.45, at_k=10.0)
         k.set_vgm_joint_sills(1, 1, 0.3)
         k.set_grid(gcoord, gtime)
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         est, var = k.get_results()
         assert np.all(var >= 0)
@@ -523,7 +574,7 @@ class TestNestedStructures:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("product_sum", k_ps=0.01)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         k.set_vgm(
             1, 1, vtype="sph", nugget=0.05, sill=0.8,
             a_major=500, a_minor1=300, a_minor2=100,
@@ -536,7 +587,7 @@ class TestNestedStructures:
             product=True,
         )
         k.set_grid(gcoord, gtime)
-        k.set_search(1, time_at=10.0)
+        k.set_search(1, time_at=10.0, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -551,7 +602,7 @@ class TestNestedStructures:
 
         k = SpaceTimeKriging(nvar=1)
         k.set_st_model("product_sum", k_ps=0.01)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         k.set_vgm(
             1, 1, vtype="gau", nugget=0.05, sill=0.8,
             a_major=500, a_minor1=300, a_minor2=100,
@@ -565,7 +616,7 @@ class TestNestedStructures:
             1, 1, vtype="gau", nugget=0.05, sill=0.4, at_k=30.0,
         )
         k.set_grid(gcoord, gtime)
-        k.set_search(1, time_at=10.0)
+        k.set_search(1, time_at=10.0, nmax=20)
         k.solve()
         est, var = k.get_results()
 
@@ -586,11 +637,11 @@ class TestSGSIM:
 
         k = SpaceTimeKriging(nvar=1, nsim=nsim, seed=123)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=20)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(gcoord, gtime)
         k.set_sim()
-        k.set_search(1)
+        k.set_search(1, nmax=20)
         k.solve()
         sims, var = k.get_results()
 
@@ -612,11 +663,11 @@ class TestSGSIM:
         value = np.exp(rng.normal(0, 1, size=15))
         k = SpaceTimeKriging(nvar=1, nsim=1, seed=5)
         k.set_st_model("sum_metric", "linear", at=10.0)
-        k.set_obs(1, coord, value, nmax=15)
+        k.set_obs(1, coord, value)
         _basic_st_vgm(k)
         k.set_grid(space.copy(), time.copy())            # grid on observations
         k.set_sim()
-        k.set_search(1)
+        k.set_search(1, nmax=15)
         k.solve()
         sims, _ = k.get_results()
         del k

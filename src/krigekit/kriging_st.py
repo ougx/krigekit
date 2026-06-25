@@ -128,7 +128,7 @@ _st_set_obs = _status_cfun("krige_st_set_obs", [
     ctypes.c_int64,
     _c_int, _c_int, _c_int,        # ivar, nobs, ndim
     _ptr_dbl, _ptr_dbl, _ptr_dbl,  # coord[ndim+1,nobs], value[nobs], variance[nobs]
-    _c_int, _c_double, _c_double,  # nmax, maxdist, sk_mean
+    _c_double,                     # sk_mean
 ])
 # --- Shared with spatial kriging (implemented in kriging_capi_common) ---
 _st_update_obs_value = _status_cfun("krige_update_obs_value", [
@@ -176,6 +176,7 @@ _st_set_sim = _status_cfun("krige_st_set_sim", [
 _st_set_search = _status_cfun("krige_st_set_search", [
     ctypes.c_int64, _c_int,
     _c_double, _c_double, _c_double, _c_double, _c_double, _c_double,
+    _c_int, _c_double,
     _c_int,
 ])
 _st_prepare       = _status_cfun("krige_prepare",        [ctypes.c_int64])
@@ -300,13 +301,12 @@ class SpaceTimeKriging:
     -----------------------------------------------
     >>> k = SpaceTimeKriging(nvar=1)
     >>> k.set_st_model(model='sum_metric', transform='bounded', at=5.0)
-    >>> k.set_obs(ivar=1, coord=obs_coord_st, value=obs_value,
-    ...           nmax=30, maxdist=5000)
+    >>> k.set_obs(ivar=1, coord=obs_coord_st, value=obs_value)
     >>> k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0, sill=0.8, a_major=1000, a_minor1=500, a_minor2=200)
     >>> k.set_vgm_temporal(ivar=1, jvar=1, spec="exp 0 0.6 10.0")
     >>> k.set_vgm_joint_sills(ivar=1, jvar=1, sills=[0.4])
     >>> k.set_grid(coord=grid_coord, time=grid_time)
-    >>> k.set_search(ivar=1)
+    >>> k.set_search(ivar=1, nmax=30, maxdist=5000)
     >>> k.solve()
     >>> estimate, variance = k.get_results()
     >>> del k
@@ -405,8 +405,6 @@ class SpaceTimeKriging:
         value: np.ndarray,
         time: Optional[np.ndarray] = None,
         variance: Optional[np.ndarray] = None,
-        nmax: Optional[int] = None,
-        maxdist: Optional[float] = None,
         sk_mean: float = 0.0,
     ):
         """
@@ -434,11 +432,8 @@ class SpaceTimeKriging:
         ----------------
         value    : (nobs,)   observed values
         variance : (nobs,)   measurement error variance (default: zeros)
-        nmax     : max neighbours
-        maxdist  : max search radius in km-equivalent space (same units as h_ST)
         sk_mean  : global mean for simple kriging (unbias=0); default 0
         """
-        import sys as _sys
         a = np.asarray(coord, dtype=np.float64)
         if a.ndim != 2:
             raise ValueError(f"coord must be 2-D, got shape {a.shape}")
@@ -485,13 +480,10 @@ class SpaceTimeKriging:
         value_f = _farray(np.asarray(value).ravel())
         var_f   = _farray(variance) if variance is not None else _farray(np.zeros(nobs))
 
-        c_nmax    = _c_int(nmax if nmax is not None else np.iinfo(np.int32).max)
-        c_maxdist = _c_double(maxdist if maxdist is not None else _sys.float_info.max)
-
         _st_set_obs(_h(self._handle),
             _c_int(ivar), _c_int(nobs), _c_int(ndim),
             _dptr(coord_f), _dptr(value_f), _dptr(var_f),
-            c_nmax, c_maxdist, _c_double(sk_mean))
+            _c_double(sk_mean))
         self._nobs[ivar - 1] = nobs
 
     # ------------------------------------------------------------------
@@ -812,6 +804,8 @@ class SpaceTimeKriging:
         azimuth: float = 0.0,
         dip: float = 0.0,
         plunge: float = 0.0,
+        nmax: Optional[int] = None,
+        maxdist: Optional[float] = None,
         sector_search: bool = False,
     ):
         """
@@ -840,11 +834,15 @@ class SpaceTimeKriging:
             Dip angle of the spatial major axis below horizontal, degrees positive downward (default 0.0).
         plunge : float
             Plunge angle of the spatial major axis in degrees (default 0.0).
+        nmax : int, optional
+            Maximum number of neighbours. Default: use all observations.
+        maxdist : float, optional
+            Maximum search radius in km-equivalent space (same units as h_ST).
         sector_search : bool
             Enable sector (octant) search limiting candidates per sector.
             If ``True``, candidate neighbours are partitioned into 8 spatial
             octants centered on the prediction location. At most ``nmax``
-            (from :meth:`set_obs`) candidates are selected per octant.
+            candidates are selected per octant.
             This ensures a balanced spatial distribution of neighbours and prevents
             clustering artifacts. The maximum total neighbours selected is ``8 * nmax``.
             If search anisotropy is enabled, spatial coordinates are rotated/scaled
@@ -854,6 +852,8 @@ class SpaceTimeKriging:
                        _c_double(time_at),
                        _c_double(anis1), _c_double(anis2),
                        _c_double(azimuth), _c_double(dip), _c_double(plunge),
+                       _c_int(nmax if nmax is not None else -1),
+                       _c_double(maxdist if maxdist is not None else -1.0),
                        _c_int(int(sector_search)))
 
     # ------------------------------------------------------------------
@@ -1088,8 +1088,7 @@ def spacetime_kriging(
     k = SpaceTimeKriging(nvar=1)
     k.set_st_model(model=model, transform=transform, at=at,
                    time_nugget=time_nugget, time_sill=time_sill, k_ps=k_ps)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value,
-              nmax=nmax, maxdist=maxdist)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     for spec in ([spatial_spec] if isinstance(spatial_spec, dict) else list(spatial_spec)):
         k.set_vgm(1, 1, **spec)
     for spec in ([temporal_spec] if isinstance(temporal_spec, dict) else list(temporal_spec)):
@@ -1098,7 +1097,8 @@ def spacetime_kriging(
         k.set_vgm_joint_sills(1, 1, *joint_sills)
     k.set_grid(coord=grid_coord, time=grid_time)
     k.set_search(ivar=1, time_at=at,
-                 anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth)
+                 anis1=search_anis1, anis2=search_anis2, azimuth=search_azimuth,
+                 nmax=nmax, maxdist=maxdist)
     k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()
 
@@ -1147,8 +1147,7 @@ def spacetime_cokriging(
                    time_nugget=time_nugget, time_sill=time_sill)
 
     for i, (coord, value) in enumerate(zip(obs_coords, obs_values), start=1):
-        k.set_obs(ivar=i, coord=coord, value=value,
-                  nmax=nmax, maxdist=maxdist)
+        k.set_obs(ivar=i, coord=coord, value=value)
 
     for (iv, jv), spec in spatial_specs.items():
         for s in ([spec] if isinstance(spec, dict) else list(spec)):
@@ -1165,7 +1164,7 @@ def spacetime_cokriging(
     k.set_grid(coord=grid_coord, time=grid_time)
 
     for i in range(1, nvar + 1):
-        k.set_search(ivar=i, time_at=at)
+        k.set_search(ivar=i, time_at=at, nmax=nmax, maxdist=maxdist)
 
     k.solve(nthread=nthread, ncache=ncache)
     return k.get_results()

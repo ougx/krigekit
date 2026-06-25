@@ -43,10 +43,10 @@ def test_2d_spatial_sector_search():
     grid_coord = np.array([[0.0, 0.0]])
 
     k = Kriging(ndim=2, nvar=1, store_weight=True)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=100.0)
     k.set_grid(coord=grid_coord)
-    k.set_search(ivar=1, sector_search=True)
+    k.set_search(ivar=1, sector_search=True, nmax=1)
     k.solve()
 
     w = k.get_weights()
@@ -95,10 +95,10 @@ def test_3d_spatial_sector_search():
     grid_coord = np.array([[0.0, 0.0, 0.0]])
 
     k = Kriging(ndim=3, nvar=1, store_weight=True)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=100.0)
     k.set_grid(coord=grid_coord)
-    k.set_search(ivar=1, sector_search=True)
+    k.set_search(ivar=1, sector_search=True, nmax=1)
     k.solve()
 
     w = k.get_weights()
@@ -144,12 +144,12 @@ def test_spacetime_sector_search():
 
     k = SpaceTimeKriging(nvar=1, neglect_error=True)
     k.set_st_model("sum_metric", "linear", at=10.0)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
     k.set_vgm_temporal(1, 1, vtype="exp", nugget=0, sill=0.5, at_k=10.0)
     k.set_vgm_joint_sills(1, 1, 0.3)
     k.set_grid(grid_coord, grid_time)
-    k.set_search(ivar=1, sector_search=True)
+    k.set_search(ivar=1, sector_search=True, nmax=1)
     k.solve()
 
     f = k.get_factor()
@@ -159,12 +159,12 @@ def test_spacetime_sector_search():
     # Now run the same configuration with sector_search=False and nmax=2
     k_std = SpaceTimeKriging(nvar=1, neglect_error=True)
     k_std.set_st_model("sum_metric", "linear", at=10.0)
-    k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=2)
+    k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k_std.set_vgm(1, 1, vtype="sph", nugget=0, sill=0.8, a_major=500, a_minor1=300, a_minor2=100)
     k_std.set_vgm_temporal(1, 1, vtype="exp", nugget=0, sill=0.5, at_k=10.0)
     k_std.set_vgm_joint_sills(1, 1, 0.3)
     k_std.set_grid(grid_coord, grid_time)
-    k_std.set_search(ivar=1, sector_search=False)
+    k_std.set_search(ivar=1, sector_search=False, nmax=2)
     k_std.solve()
 
     f_std = k_std.get_factor()
@@ -192,19 +192,19 @@ def test_sector_search_vs_standard_search():
 
     # Standard
     k_std = Kriging(ndim=2, nvar=1, store_weight=True)
-    k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=4)
+    k_std.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k_std.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
     k_std.set_grid(coord=grid_coord)
-    k_std.set_search(ivar=1, sector_search=False)
+    k_std.set_search(ivar=1, sector_search=False, nmax=4)
     k_std.solve()
     w_std = k_std.get_weights()
 
     # Sector
     k_sec = Kriging(ndim=2, nvar=1, store_weight=True)
-    k_sec.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)  # 1 per quadrant
+    k_sec.set_obs(ivar=1, coord=obs_coord, value=obs_value)  # 1 per quadrant
     k_sec.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
     k_sec.set_grid(coord=grid_coord)
-    k_sec.set_search(ivar=1, sector_search=True)
+    k_sec.set_search(ivar=1, sector_search=True, nmax=1)
     k_sec.solve()
     w_sec = k_sec.get_weights()
 
@@ -259,11 +259,11 @@ def test_sgsim_sector_search():
 
     nsim = 3
     k = Kriging(ndim=2, nvar=1, nsim=nsim, neglect_error=True, seed=1)
-    k.set_obs(ivar=1, coord=obs_coord, value=obs_value, nmax=1)
+    k.set_obs(ivar=1, coord=obs_coord, value=obs_value)
     k.set_vgm(ivar=1, jvar=1, vtype="sph", nugget=0.0, sill=1.0, a_major=10.0)
     k.set_grid(coord=grid_coord)
     k.set_sim()
-    k.set_search(ivar=1, sector_search=True)
+    k.set_search(ivar=1, sector_search=True, nmax=1)
     k.solve()
 
     est, var = k.get_results()

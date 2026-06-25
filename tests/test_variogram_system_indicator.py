@@ -112,13 +112,28 @@ def test_set_categorical_obs_encodes_and_computes_proportions():
     cats = rng.choice([10, 20, 30], size=60, p=[0.5, 0.3, 0.2])
 
     system = IndicatorVariogramSystem(ncat=3)
-    system.set_categorical_obs(coord, cats, category_labels=[10, 20, 30], nmax=16)
+    system.set_categorical_obs(coord, cats, category_labels=[10, 20, 30])
 
     assert system.categories == (10, 20, 30)
     assert system.proportions.shape == (3,)
     np.testing.assert_allclose(system.proportions.sum(), 1.0)
     # each indicator mean equals its empirical proportion
     np.testing.assert_allclose(system.proportions[0], np.mean(cats == 10))
+    for k in range(1, 4):
+        assert system.obs[k].nmax is None
+        assert system.obs[k].maxdist is None
+
+
+def test_set_categorical_obs_rejects_search_limits():
+    rng = np.random.default_rng(2)
+    coord = rng.uniform(0, 100, size=(12, 2))
+    cats = rng.choice([1, 2, 3], size=12)
+    system = IndicatorVariogramSystem(categories=[1, 2, 3])
+
+    with pytest.raises(TypeError):
+        system.set_categorical_obs(coord, cats, nmax=8)
+    with pytest.raises(TypeError):
+        system.set_categorical_obs(coord, cats, maxdist=100.0)
 
 
 def test_apply_transfers_indicators_and_structures_to_kriging():
@@ -127,7 +142,7 @@ def test_apply_transfers_indicators_and_structures_to_kriging():
     cats = rng.choice([1, 2, 3], size=40, p=[0.4, 0.35, 0.25])
 
     system = IndicatorVariogramSystem(categories=[1, 2, 3])
-    system.set_categorical_obs(coord, cats, nmax=12)
+    system.set_categorical_obs(coord, cats)
     system.set_indicator_vgm(vtype="sph", a_major=30.0,
                              sill_strategy="theoretical", cross_strategy="closure")
 

@@ -455,8 +455,6 @@ k.set_obs(
     value=obs_value,
     time=obs_time,
     variance=np.full(len(data), OBS_VARIANCE),
-    nmax=NMAX,
-    maxdist=MAXDIST,
 )
 k.set_vgm(
     ivar=1,
@@ -474,6 +472,7 @@ k.set_grid(coord=grid_coord, time=grid_time)
 k.set_search(
     ivar=1,
     time_at=spatial_spec["a_major"] / decay_range,
+    nmax=NMAX, maxdist=MAXDIST
 )
 k.solve()
 depth_estimate, estimate_variance = k.get_results(copy=True)
@@ -589,8 +588,6 @@ def krige_without_target(well):
         value=train["depth_to_water"].to_numpy(),
         time=train["timeindex"].to_numpy(),
         variance=np.full(len(train), OBS_VARIANCE),
-        nmax=NMAX,
-        maxdist=MAXDIST,
     )
     model.set_vgm(
         ivar=1,
@@ -608,6 +605,8 @@ def krige_without_target(well):
     model.set_search(
         ivar=1,
         time_at=spatial_spec["a_major"] / decay_range,
+        nmax=NMAX,
+        maxdist=MAXDIST,
     )
     model.solve()
     depth, variance = model.get_results(copy=True)
@@ -742,8 +741,6 @@ def krige_spatial_depth(train, grid_coord):
         coord=train[["x", "y"]].to_numpy(),
         value=train["depth_to_water"].to_numpy(),
         variance=np.full(len(train), OBS_VARIANCE),
-        nmax=NMAX,
-        maxdist=MAXDIST,
     )
     model.set_vgm(
         ivar=1,
@@ -756,7 +753,7 @@ def krige_spatial_depth(train, grid_coord):
         a_minor2=spatial_spec["a_major"],
     )
     model.set_grid(coord=grid_coord)
-    model.set_search(ivar=1)
+    model.set_search(ivar=1, nmax=NMAX, maxdist=MAXDIST)
     model.solve()
     result = model.get_results()
     del model
@@ -782,8 +779,6 @@ def krige_spacetime_depth(train, grid_coord, grid_time, temporal_model=temporal)
         value=train["depth_to_water"].to_numpy(),
         time=train["timeindex"].to_numpy(),
         variance=np.full(len(train), OBS_VARIANCE),
-        nmax=NMAX,
-        maxdist=MAXDIST,
     )
     model.set_vgm(
         ivar=1,
@@ -804,6 +799,7 @@ def krige_spacetime_depth(train, grid_coord, grid_time, temporal_model=temporal)
     model.set_search(
         ivar=1,
         time_at=spatial_spec["a_major"] / decay_range,
+        nmax=NMAX, maxdist=MAXDIST
     )
     model.solve()
     result = model.get_results(copy=True)
