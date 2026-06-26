@@ -1,48 +1,53 @@
-# C API reference (`kriging_capi.F90`, `kriging_st_capi.f90`)
+# C API reference (`kriging_capi.F90`, `kriging_capi_common.F90`, `kriging_st_capi.f90`)
 
-The C API is an ISO C Binding wrapper around the spatial `t_kriging` and
-space-time `t_kriging_st` Fortran types.  Both inherit from
-`t_kriging_base`; see [Fortran architecture](architecture.md) for the shared
-solve framework.
+This page documents the exported C ABI listed in
+`src/krigekit/kriging.def`.  The ABI wraps the spatial `t_kriging`,
+indicator `t_kriging_indicator`, and space-time `t_kriging_st` Fortran types.
 
-Every public method is exposed as a C-callable function that takes an opaque
-64-bit integer **handle** instead of the Fortran derived type.  Handles are
-registry slot indices, not raw pointers.
+Every status-returning function returns `int ierr`: `0` means success and any
+non-zero value means failure.  On failure, call `krige_get_last_error` for the
+message.  Object handles are opaque 64-bit registry slot indices, not raw
+pointers.
 
-All functions return `integer(c_int) ierr`: **0 = success**, non-zero = error.
-Retrieve the error message with `krige_get_last_error`.
-
-## Design conventions
+## Conventions
 
 | Convention | Detail |
 |---|---|
-| Handle type | `int64` (shared polymorphic registry slot index, not a raw pointer) |
-| Boolean flags | `int32`: `0` = false, `1` = true |
-| Strings | Null-terminated C char arrays; converted internally with `c2fstr` |
-| Array layout | Fortran column-major `(ndim, nobs)` — Python transposes before calling |
-| Array sizes | Passed explicitly alongside every pointer; no assumed-size except `pointweight` in `krige_set_grid_block` |
-| Optional args | Python always supplies concrete values; no sentinel / `has_*` logic needed here |
+| Handle type | `int64_t`; pass by value except create/destroy, which take `int64_t *`. |
+| Boolean flags | `int`: `0=false`, `1=true`. |
+| Strings | Null-terminated C strings. |
+| Point arrays | C/PInvoke callers pass row-major `(npoint, ndim)` memory, e.g. `[x0,y0,x1,y1,...]`. The Fortran dummy arguments are declared as column-major `(ndim, npoint)`, which is the same raw memory layout. |
+| Other arrays | Shapes below are caller-facing flat buffer shapes unless marked otherwise. |
+| Indexing | Public variable, block, and category indices are 1-based unless a result buffer description explicitly says 0-based. |
+| Optional arrays | Some simulation pointers may be `NULL`; most other array arguments must point to valid storage with the documented extent. |
 
----
+## Error And Diagnostics
 
-## Fortran object model
+### `krige_get_last_error`
 
-The spatial and ST CAPIs share the same handle infrastructure in
-`kriging_capi_common.F90`.  That registry stores `class(t_kriging_base)`
-pointers, so a slot can hold either concrete type:
-
-```text
-class(t_kriging_base)
-  +-- type(t_kriging)       spatial API, kriging_capi.F90
-  +-- type(t_kriging_st)    ST API, kriging_st_capi.f90
+```c
+int krige_get_last_error(char *buffer, int nbuf)
 ```
 
-Each API module retrieves the base pointer and then downcasts it with
-`select type` before calling concrete-only methods.  Shared methods, including
-persistent-factor accessors, live on `t_kriging_base` and are available to both
-spatial and ST objects.
+Copies the last error message into `buffer` as a null-terminated string.
 
-## Lifecycle
+### `krige_solver_stats`
+
+```c
+void krige_solver_stats(int64_t handle, int out[5])
+```
+
+Writes counters from the last solve:
+
+```text
+out[0] = failed blocks
+out[1] = fresh Cholesky factorizations
+out[2] = cached Cholesky reuses
+out[3] = fresh SSYTRF factorizations
+out[4] = cached SSYTRF reuses
+```
+
+## Spatial Lifecycle
 
 ### `krige_create`
 
@@ -50,8 +55,16 @@ spatial and ST objects.
 int krige_create(int64_t *handle)
 ```
 
-Allocates a new `t_kriging` object and returns its registry slot as an opaque
-handle.  Python stores this handle and passes it to every subsequent call.
+Allocates a spatial kriging object.
+
+### `krige_ind_create`
+
+```c
+int krige_ind_create(int64_t *handle)
+```
+
+Allocates an indicator kriging/SIS object.  Use the returned handle with the
+shared `krige_*` setup, solve, and result functions.
 
 ### `krige_destroy`
 
@@ -59,12 +72,7 @@ handle.  Python stores this handle and passes it to every subsequent call.
 int krige_destroy(int64_t *handle)
 ```
 
-Finalises and deallocates the object; zeros the handle so stale use is caught
-early.
-
----
-
-## Initialization
+Finalizes and deallocates a spatial or indicator object and sets `*handle = 0`.
 
 ### `krige_initialize`
 
@@ -82,95 +90,111 @@ int krige_initialize(int64_t handle,
     int seed)
 ```
 
-Must be called once after `krige_create` and before any other function.
+Initializes a spatial or indicator object.  Use `unbias=1` for ordinary
+kriging and `unbias=0` for simple kriging.  Plain kriging uses `nsim=0`;
+SGSIM/SIS uses `nsim > 0`.
 
-| Parameter | Type | Description |
-|---|---|---|
-| `ndim` | `int` | Spatial dimensions: 2 or 3 |
-| `nvar` | `int` | Number of variables (1 = kriging, >1 = co-kriging) |
-| `ndrift` | `int` | Number of external drift functions (0 = none) |
-| `unbias` | `int` | 1 = ordinary kriging; 0 = simple kriging |
-| `nsim` | `int` | 0 = kriging only; >0 = number of SGSIM realisations |
-| `anisotropic_search` | `int` | 0/1 use anisotropic search ellipse |
-| `weight_correction` | `int` | 0/1 clip negative weights and re-normalise |
-| `use_old_weight` | `int` | 0/1 read weights from `weight_file` |
-| `store_weight` | `int` | 0/1 write weights to `weight_file` |
-| `cross_validation` | `int` | 0/1 leave-one-out cross-validation mode |
-| `write_mat` | `int` | 0/1 write kriging matrix to CSV (debug) |
-| `neglect_error` | `int` | 0/1 write NaN instead of stopping on singular matrix |
-| `varying_vgm` | `int` | 0/1 use a different variogram per block (SVA mode) |
-| `std_ck` | `int` | 0/1 co-kriging unbiasedness formulation (only used when `nvar > 1` and `unbias = 1`). **1** = standard co-kriging: separate per-variable constraints (Σw₁=1, Σw₂=0); matches gstat/ISATIS. **0** = Isaaks & Srivastava: single combined constraint (Σw₁+Σw₂=1) plus local-mean correction. Default: 1. |
-| `verbose` | `int` | 0/1 print progress messages |
-| `pf_cache` | `int` | 0/1 enable the persistent between-solve factorisation cache.  When 1, the Cholesky factorisation of K is stored after the first `krige_solve` and reused on subsequent calls when observations and variogram are unchanged.  Default: 0 (disabled). |
-| `weight_file` | `char*` | Path for weight file; empty string when unused |
-| `bounds` | `double[2]` | `[lower, upper]` clipping bounds on the estimate |
-| `seed` | `int` | Random seed for SGSIM (0 = use clock) |
+### `krige_ind_set_ncat`
 
----
+```c
+int krige_ind_set_ncat(int64_t handle, int ncat)
+```
 
-## Observations
+Sets the number of indicator categories after `krige_ind_create` and
+`krige_initialize`.  `ncat` must satisfy `1 <= ncat <= nvar`.  If
+`ncat < nvar`, the remaining variables are secondary continuous covariates.
+
+## Observations And Transforms
 
 ### `krige_set_obs`
 
 ```c
 int krige_set_obs(int64_t handle,
     int ivar, int nobs, int ndim_c,
-    const double *coord,    // [ndim_c × nobs], Fortran column-major
-    const double *value,    // [nobs]
-    const double *variance, // [nobs]  measurement error variance; 0 if unknown
+    const double *coord,     // [nobs x ndim_c]
+    const double *value,     // [nobs]
+    const double *variance,  // [nobs]
     double sk_mean)
 ```
 
-Sets coordinates, values, and per-observation measurement variance for one
-variable. `sk_mean` is only used when `unbias=0`. Configure `nmax` and
-`maxdist` with `krige_set_search`.
-Duplicate coordinate tuples within the same variable are rejected.  For spatial
-kriging, all `ndim_c` coordinate rows must match to count as a duplicate.
-
-### `krige_set_obs_drift`
-
-```c
-int krige_set_obs_drift(int64_t handle,
-    int ivar, int ndrift_c, int nobs,
-    const double *drift)    // [ndrift_c × nobs], Fortran column-major
-```
-
-Sets external drift values at observation locations.  Must be called after
-`krige_set_obs` for the same `ivar`, and only when `ndrift > 0`.
+Sets coordinates, values, and measurement-error variance for one variable.
+`sk_mean` is only used for simple kriging (`unbias=0`).
 
 ### `krige_update_obs_value`
 
 ```c
 int krige_update_obs_value(int64_t handle,
     int ivar, int nobs,
-    const double *value)    // [nobs]
+    const double *value)     // [nobs]
 ```
 
-Replaces observation values in-place without touching coordinates or the
-KD-tree.  Use with `use_old_weight` to re-estimate with new data without
-recomputing search neighbourhoods or the LHS factorisation.
+Replaces values without rebuilding coordinates or the KD-tree.
 
-### Score transforms
+### `krige_set_obs_drift`
+
+```c
+int krige_set_obs_drift(int64_t handle,
+    int ivar, int ndrift_c, int nobs,
+    const double *drift)     // [nobs x ndrift_c]
+```
+
+Sets external drift values at observation locations.  Call after
+`krige_set_obs` for the same source variable.
+
+### `krige_set_nscore`
+
+```c
+int krige_set_nscore(int64_t handle,
+    int ivar,
+    double zmin, double zmax,
+    int ltail, int utail,
+    double ltpar, double utpar,
+    int nwt,
+    const double *wt)        // [nwt], ignored when nwt=0
+```
+
+Builds a normal-score transform for `ivar` from the current observations and
+configures automatic back-transform after solving.
+
+### `krige_set_uscore`
+
+```c
+int krige_set_uscore(int64_t handle,
+    int ivar,
+    double zmin, double zmax,
+    int ltail, int utail,
+    double ltpar, double utpar,
+    int nwt,
+    const double *wt)        // [nwt], ignored when nwt=0
+```
+
+Builds a uniform-CDF score transform for `ivar`.
+
+Tail codes are `1=linear`, `2=power`, and `4=hyperbolic`.
+
+### `krige_transform_value_to_score`
 
 ```c
 int krige_transform_value_to_score(int64_t handle,
     int ivar, int n,
-    const double *value,  // [n] data units
-    double *score)        // [n] normal or uniform scores
-
-int krige_transform_score_to_value(int64_t handle,
-    int ivar, int n,
-    const double *score,  // [n] normal or uniform scores
-    double *value)        // [n] data units
+    const double *value,     // [n]
+    double *score)           // [n]
 ```
 
-Apply the active marginal transform created by `krige_set_nscore` or
-`krige_set_uscore`.  The score type follows the active transform for `ivar`:
-normal scores for `set_nscore`, uniform CDF scores for `set_uscore`.
+Transforms data values through the active score transform.
 
----
+### `krige_transform_score_to_value`
 
-## Variogram
+```c
+int krige_transform_score_to_value(int64_t handle,
+    int ivar, int n,
+    const double *score,     // [n]
+    double *value)           // [n]
+```
+
+Back-transforms scores to data values.
+
+## Spatial Variograms
 
 ### `krige_reset_vgm`
 
@@ -178,24 +202,22 @@ normal scores for `set_nscore`, uniform CDF scores for `set_uscore`.
 int krige_reset_vgm(int64_t handle, int ivar, int jvar)
 ```
 
-Clears all nested structures for the `(ivar, jvar)` pair (and its mirror
-`(jvar, ivar)` for cross-variograms) across every block.  Call before
-`krige_set_vgm` when reusing an object with a different variogram model.
+Clears nested structures for a variable pair.
 
 ### `krige_set_vgm`
 
 ```c
 int krige_set_vgm(int64_t handle,
     int ivar, int jvar,
-    const char *vtype,      // null-terminated: "sph" "exp" "gau" "pow" "lin" "hol" "bsq" "cir" "nug"
+    const char *vtype,
     double nugget, double sill,
     double a_major, double a_minor1, double a_minor2,
-    double azimuth, double dip, double plunge)
+    double azimuth, double dip, double plunge,
+    int is_product)
 ```
 
-Appends one nested structure for the `(ivar, jvar)` variable pair.  Call
-multiple times to build a composite model.  For co-kriging the LMC constraint
-`b12² ≤ b11 × b22` must hold per structure.
+Adds a nested variogram structure.  `is_product=0` adds a structure;
+`is_product=1` multiplies it with the preceding structure in covariance space.
 
 ### `krige_set_vgm_block`
 
@@ -205,29 +227,26 @@ int krige_set_vgm_block(int64_t handle,
     const char *vtype,
     double nugget, double sill,
     double a_major, double a_minor1, double a_minor2,
-    double azimuth, double dip, double plunge)
+    double azimuth, double dip, double plunge,
+    int is_product)
 ```
 
-Same as `krige_set_vgm` but targets a single block `ib` (1-based).  Requires
-`varying_vgm=1` in `krige_initialize` and `krige_set_grid` to have been called
-first (block count must be known).
+Adds a variogram structure for block `ib`.  Requires `varying_vgm=1` and a
+previous grid setup.
 
----
-
-## Grid
+## Spatial Grid, Simulation, Search, And Gradients
 
 ### `krige_set_grid`
 
 ```c
 int krige_set_grid(int64_t handle,
     int ngrid, int ndim_c,
-    const double *coord,        // [ndim_c × ngrid], Fortran column-major
-    const double *rangescale,   // [ngrid]  variogram range scaling; pass 1.0 when unused
-    const double *localnugget)  // [ngrid]  additional per-block nugget; pass 0.0 when unused
+    const double *coord,        // [ngrid x ndim_c]
+    const double *rangescale,   // [ngrid]
+    const double *localnugget)  // [ngrid]
 ```
 
-Sets estimation targets for point kriging.  Use `krige_set_grid_block` for
-block kriging or `krige_set_grid_cv` for cross-validation.
+Sets point-kriging target locations.
 
 ### `krige_set_grid_block`
 
@@ -235,24 +254,17 @@ block kriging or `krige_set_grid_cv` for cross-validation.
 int krige_set_grid_block(int64_t handle,
     int block_type,
     int ngrid, int ndim_c,
-    const double *coord,        // [ndim_c × ngrid]
+    const double *coord,        // [ngrid x ndim_c]
     int nblock,
-    const int *nblockpnt,       // [nblock]  sub-nodes per block
+    const int *nblockpnt,       // [nblock]
     const double *pointweight,  // [sum(nblockpnt)]
-    const double *blocksize,    // [ndim_c × nblock]
+    const double *blocksize,    // [nblock x ndim_c]
     const double *rangescale,   // [nblock]
     const double *localnugget)  // [nblock]
 ```
 
-Sets estimation targets for block kriging.
-
-| `block_type` | Meaning |
-|---|---|
-| `-4` | Gaussian quadrature sub-nodes (auto-generated) |
-| `> 0` | User-supplied sub-nodes |
-
-`pointweight` length equals `sum(nblockpnt)`; Fortran derives it via
-`sum(nblockpnt)` so no separate `npw` argument is needed.
+Sets block-kriging targets.  `block_type=-4` uses Gaussian quadrature
+sub-nodes; positive values use caller-supplied sub-nodes.
 
 ### `krige_set_grid_cv`
 
@@ -260,9 +272,7 @@ Sets estimation targets for block kriging.
 int krige_set_grid_cv(int64_t handle)
 ```
 
-Configures leave-one-out cross-validation mode.  Fortran derives the grid
-from the observation coordinates automatically.  Call instead of
-`krige_set_grid` when `cross_validation=1`.
+Configures leave-one-out cross-validation targets from observations.
 
 ### `krige_set_grid_drift`
 
@@ -270,46 +280,40 @@ from the observation coordinates automatically.  Call instead of
 int krige_set_grid_drift(int64_t handle,
     int ivar,
     int ndrift_c, int nblocks,
-    const double *drift)    // [ndrift_c × nblocks], Fortran column-major
+    const double *drift)        // [nblocks x ndrift_c]
 ```
 
-Sets external drift values at block locations.  Must be called after any
-`krige_set_grid*` variant, and only when `ndrift > 0`.
-
-| Parameter | Description |
-|---|---|
-| `ivar` | Target-variable index (1-based) whose RHS receives this drift. Pass `ivar < 0` to broadcast the same drift to **all** target variables — the common case when external drift is the same regardless of which variable is being estimated. |
-| `ndrift_c` | Number of drift functions (= `ndrift` from `krige_initialize`) |
-| `nblocks` | Number of blocks (`block%n`, **not** `grid%n` for block kriging) |
-| `drift` | Drift values `[ndrift_c × nblocks]`, Fortran column-major |
-
-> **Note on `ivar` semantics.** In `krige_set_obs_drift`, `ivar` identifies the
-> **source** variable (whose observations form the F-matrix column).  Here it
-> identifies the **target** variable (which estimation's RHS uses this drift).
-> These are opposite ends of the kriging system — both use 1-based indexing and
-> `< 0` is not valid for `krige_set_obs_drift`.
-
----
-
-## Simulation (SGSIM)
+Sets drift values at target blocks.  `ivar < 0` broadcasts to all target
+variables.
 
 ### `krige_set_sim`
 
 ```c
 int krige_set_sim(int64_t handle,
     int nblocks,
-    const int    *randpath,  // [nblocks]  random visiting order
+    const int *randpath,        // [nblocks], or NULL
     int nsim_c, int nvar_c,
-    const double *sample)    // [nsim_c × nvar_c × nblocks]
+    const double *sample)       // [nblocks x nvar_c x nsim_c], or NULL
 ```
 
-Supplies the random visiting path and pre-drawn standard-normal samples for
-SGSIM.  Python generates both arrays before calling.  Call after
-`krige_set_grid` and before `krige_set_search`.  Only needed when `nsim > 0`.
+Configures spatial SGSIM/SIS random path and samples.  `NULL` pointers let
+Fortran generate the data.  Call after grid setup and before search setup.
 
----
+### `krige_set_grad`
 
-## Search
+```c
+int krige_set_grad(int64_t handle,
+    int ivar, int ngrad, int ndim_c,
+    const double *coord1,       // [max(ngrad,1) x ndim_c]
+    const double *coord2,       // [max(ngrad,1) x ndim_c]
+    const double *grad_val,     // [max(ngrad,1)]
+    const double *variance,     // [max(ngrad,1)]
+    int ndrift_c,
+    const double *drift_ext)    // [max(ngrad,1) x max(ndrift_c,1)]
+```
+
+Sets gradient observation pairs for variable `ivar`.  Each pair constrains
+`Z(coord1) - Z(coord2)`.  Use `ngrad=0` to reset gradient constraints.
 
 ### `krige_set_search`
 
@@ -322,25 +326,14 @@ int krige_set_search(int64_t handle,
     int sector_search)
 ```
 
-Builds the KD-tree and configures the search ellipse for variable `ivar`.
-Call once per variable after all observations are loaded.  Pass negative
-`nmax` or `maxdist` to keep the existing search value, which defaults to
-unlimited.
+Builds the KD-tree and configures the search neighborhood.  Negative `nmax` or
+`maxdist` keeps the existing value.
 
-| Parameter | Description |
-|---|---|
-| `anis1` | Horizontal anisotropy ratio (minor/major); 1.0 = isotropic |
-| `anis2` | Vertical anisotropy ratio (vertical/major); 1.0 = isotropic |
-| `azimuth` | Major axis azimuth (degrees, clockwise from North) |
-| `dip` | Dip angle (degrees, positive downward) |
-| `plunge` | Plunge angle (degrees) |
-| `nmax` | Maximum neighbours; negative keeps the existing value |
-| `maxdist` | Maximum search distance; negative keeps the existing value |
-| `sector_search` | 0/1: enable sector (quadrant/octant) search limiting candidates per sector |
+## Solve And Results
 
----
-
-## Solve
+The solve and result functions are shared by spatial, indicator, and space-time
+objects.  For plain kriging, `krige_get_nsim` returns `0`; pass
+`max(1, nsim)` to result getters that require an `nsim_c` extent.
 
 ### `krige_prepare`
 
@@ -348,8 +341,8 @@ unlimited.
 int krige_prepare(int64_t handle)
 ```
 
-Pre-allocates result arrays and sets up the block loop.  Called automatically
-by `krige_solve`; exposed separately for benchmarking.
+Pre-allocates result arrays and sets up the block loop.  `krige_solve` calls it
+automatically.
 
 ### `krige_solve`
 
@@ -357,17 +350,10 @@ by `krige_solve`; exposed separately for benchmarking.
 int krige_solve(int64_t handle, int nthread, int ncache)
 ```
 
-Runs the kriging or SGSIM block loop.  `nthread = 0` uses the OpenMP runtime
-default; `nthread > 0` caps the thread count for this call only.  `ncache = -1`
-keeps the object's current hcache slot default, `ncache = 0` disables the
-factor caches for this solve, and positive `ncache` sets the total shared
-hcache pool size for this solve only.  Values from 1 through 3 are promoted to
-4 because one set-associative bucket requires four slots.  Results are
-available via the getters immediately after this returns.
-
----
-
-## Result getters
+Runs the kriging or simulation loop.  `nthread=0` uses the OpenMP default.
+`ncache=-1` keeps the object/default cache setting, `0` disables the shared
+factor cache for this solve, and positive values set the shared cache slot
+count for this solve.
 
 ### `krige_get_nblocks`
 
@@ -375,7 +361,7 @@ available via the getters immediately after this returns.
 int krige_get_nblocks(int64_t handle, int *n)
 ```
 
-Returns the number of estimation blocks.
+Returns the number of target blocks.
 
 ### `krige_get_nsim`
 
@@ -383,202 +369,105 @@ Returns the number of estimation blocks.
 int krige_get_nsim(int64_t handle, int *n)
 ```
 
-Returns the number of simulations (1 for plain kriging).
+Returns configured simulations: `0` for plain kriging, `>0` for simulation.
 
 ### `krige_get_block_coord`
 
 ```c
 int krige_get_block_coord(int64_t handle,
     int ndim_c, int nblocks,
-    double *out)    // [ndim_c × nblocks], Fortran column-major
+    double *out)               // [nblocks x ndim_c]
 ```
 
-Copies the block centroid coordinates into a caller-allocated buffer.  The
-output is filled as `out(ndim_c, nblocks)` in Fortran column-major order.
-Python allocates a `(ndim_c, nblocks)` Fortran-order array and transposes to
-`(nblocks, ndim_c)` for standard row-major convention.
-
-For SGSIM, blocks are reordered back to the original (non-randomised) index
-order inside `krige_solve`, so the coordinates returned here always correspond
-to `krige_get_estimate_all` positions at the same block index.
+Copies block centroid coordinates.
 
 ### `krige_get_estimate`
 
 ```c
 int krige_get_estimate(int64_t handle,
     int nsim_c, int nblocks,
-    double *out)    // [nblocks × nsim_c], C row-major
+    double *out)               // [nblocks x nsim_c]
 ```
 
-Copies the primary-variable estimate for all simulations.  Output is
-`out[ib, isim]` for block `ib` (0-based) and simulation `isim` (0-based).
+Copies primary-variable estimates.  Use `nsim_c=max(1, krige_get_nsim(...))`.
 
 ### `krige_get_estimate_all`
 
 ```c
 int krige_get_estimate_all(int64_t handle,
     int nblocks, int nvar_c, int nsim_c,
-    double *out)    // [nblocks × nvar_c × nsim_c]
+    double *out)               // [nblocks x nvar_c x nsim_c]
 ```
 
-Copies estimates for all variables and simulations.  Output convention:
-`out[ib, kvar, isim]` — block index first, matching the `(nobs, ndim)` coord
-convention.
+Copies estimates for all variables and simulations.
 
 ### `krige_get_variance`
 
 ```c
 int krige_get_variance(int64_t handle,
     int nblocks,
-    double *out)    // [nblocks]
+    double *out)               // [nblocks]
 ```
 
-Copies the primary-variable kriging variance.
+Copies primary-variable kriging variance.
 
 ### `krige_get_variance_all`
 
 ```c
 int krige_get_variance_all(int64_t handle,
     int nblocks, int nvar_c,
-    double *out)    // [nblocks × nvar_c × nvar_c]
+    double *out)               // [nblocks x nvar_c x nvar_c]
 ```
 
-Copies the full conditional covariance matrix at every block.
-`out[ib, iv, jv]` is the covariance between variables `iv+1` and `jv+1` at
-block `ib+1`; the diagonal `out[ib, k, k]` is variable `k+1`'s kriging
-variance.
+Copies the full conditional covariance matrix for every block.
 
----
+### `krige_to_str`
 
-## Persistent factorisation cache
+```c
+int64_t krige_to_str(int64_t handle)
+```
 
-Between-solve factorisation caching allows the Cholesky factorisation of the
-kriging covariance matrix **K** to be reused across successive `krige_solve`
-calls when observation coordinates and the variogram have not changed.
+Returns a pointer to an object-owned null-terminated summary string.  Do not
+free the returned pointer.
 
-The cache is populated automatically after the first successful `krige_solve`
-and invalidated by `krige_set_obs` or `krige_set_vgm`.  These two functions
-let Python query the cached matrices for inspection or debugging.
-
-Internally there are three cache layers:
-
-- `ctx%cache`: one single-entry cache per worker thread.  It handles immediate
-  repeated systems and is pre-warmed from the persistent cache when available.
-- `self%hcache`: one bounded, shared, four-way set-associative cache for
-  repeated systems within a single solve.  Each bucket has its own lock and
-  local LRU order, so unrelated neighbourhoods remain concurrent.  Every hash
-  candidate is verified against the full neighbour key with `fcache_matches`,
-  so collisions are safe.
-- `self%pf`: the optional persistent cache shared by the kriging object across
-  solves when `pf_cache=1`.  This cache also stores the assembled `matA`/`rhsB`
-  snapshot exposed by `krige_get_factor_system`.
-
-For `self%hcache`, the effective pool is divided into `floor(ncache / 4)`
-buckets of four ways.  Positive values below four are promoted to four; other
-non-multiples are rounded down to a complete bucket.  A hash selects one
-bucket, and only its four entries are scanned.  Empty ways are filled first;
-otherwise the bucket-local least-recently-used entry is replaced.
-
-Lookup takes the selected bucket's lock and copies a verified hit into the
-worker's single-entry `ctx%cache`.  Insertion uses `omp_test_lock` and skips
-publication if that bucket is contended.  This avoids making completed
-factorizations wait merely to improve future cache hit rate.  Skipped inserts
-and duplicate concurrent factorizations do not affect numerical results.
-See the [architecture guide](architecture.md) for the data layout, key
-construction, and synchronization details.
-
-`self%pf` is saved after the parallel block loop from a thread whose current
-`ctx%matA`/`ctx%rhsB` still match its thread-local factors.  hcache hits do not
-update the assembled system, so they are not used to populate `matA`/`rhsB` for
-inspection.
-
-The multi-slot cache size is controlled in Fortran by `factor_cache_size`
-(default 256 total shared slots) and by a total shared-pool byte cap
-(`MAX_HCACHE_BYTES`).  The byte cap accounts for the Cholesky factors,
-neighbour keys, and worst-case lazy SSYTRF fallback storage.
-
-For cache-path testing, the Python `solve(ncache=...)` argument and C API
-`krige_solve(..., ncache)` argument override this slot count for one solve
-call.  Use `ncache=0` to disable all factorization reuse, `ncache=4` for the
-smallest shared pool, or `ncache=None` in Python / `ncache=-1` in C to keep the
-compiled default.  The Makefile `HCACHE` variable sets that compiled default:
-`make HCACHE=0` disables factorization reuse by default, `make HCACHE=4`
-builds the smallest shared pool, and bare `make` uses the normal 256-slot
-default.  Positive values from 1 through 3 are promoted to 4.  The optional
-persistent `self%pf` cache is configured separately.
+## Persistent Factorization Cache
 
 ### `krige_get_factor_info`
 
 ```c
 int krige_get_factor_info(int64_t handle,
-    int *npp_out,    // number of neighbours (rows/cols of K)
-    int *p_out,      // drift + unbiasedness columns (Schur size)
-    int *valid_out)  // 1 = valid; 0 = not yet computed or invalidated
+    int *npp_out,
+    int *p_out,
+    int *valid_out)
 ```
 
-Returns the dimensions and validity of the cached factorisation.
-Call this first to obtain `npp` and `p` before allocating buffers for
-`krige_get_factor_matrices`.
+Returns cached factor dimensions and whether the persistent factor is valid.
 
 ### `krige_get_factor_matrices`
 
 ```c
 int krige_get_factor_matrices(int64_t handle,
     int npp, int p,
-    double *L_out,       // [npp * npp]       upper-tri Cholesky of K
-    double *kinv_out,    // [npp * max(1,p)]   K^{-1} F
-    double *schur_out)   // [max(1,p) * max(1,p)]  Cholesky of F'K^{-1}F
+    double *L_out,             // [npp x npp], Fortran matrix storage
+    double *kinv_out,          // [npp x max(1,p)], Fortran matrix storage
+    double *schur_out)         // [max(1,p) x max(1,p)], Fortran matrix storage
 ```
 
-Copies the three persistent factor matrices into caller-allocated arrays.
-`npp` and `p` must match the values returned by `krige_get_factor_info`.
-
-All arrays are in Fortran column-major order.  The solver uses `uplo='U'`
-(LAPACK `spotrf`), so:
-
-- **`L_out`** — upper triangle is the Cholesky factor U; `K = U' U`.
-  The lower triangle retains the original K values and should be ignored.
-- **`kinv_out`** — `K^{-1} F` where F is the full drift matrix.
-- **`schur_out`** — upper triangle is the Cholesky factor of `F' K^{-1} F`.
+Copies persistent factor matrices.  The upper triangle of `L_out` is the
+Cholesky factor `U` such that `K = U' U`.
 
 ### `krige_get_factor_system`
 
 ```c
 int krige_get_factor_system(int64_t handle,
     int npp, int p, int nvar,
-    double *matA_out,    // [npp+p x npp+p] assembled LHS before factorization
-    double *rhsB_out)    // [nvar x npp+p] assembled RHS before solving
+    double *matA_out,          // [(npp+p) x (npp+p)], Fortran matrix storage
+    double *rhsB_out)          // [nvar x (npp+p)], Fortran matrix storage
 ```
 
-Copies the assembled linear system that produced the persistent factor.  This is
-for inspection and debugging; `npp`, `p`, and `nvar` must match the kriging
-object and the dimensions returned by `krige_get_factor_info`.
+Copies the assembled system that produced the persistent factor.
 
-#### Invalidation rules
-
-| Trigger | Effect on persistent cache |
-|---|---|
-| `krige_set_obs` | `pf_valid = false` (coordinates change K) |
-| `krige_set_vgm` | `pf_valid = false` (variogram changes K) |
-| `krige_update_obs_value` | **No effect** — values do not enter K |
-
-#### Python wrapper
-
-```python
-f = kriging_object.get_factor()
-# f['valid']       bool
-# f['npp']         int — size of K
-# f['p']           int — size of Schur complement
-# f['L']           ndarray (npp, npp)       — upper-triangular factor
-# f['kinv_drift']  ndarray (npp, max(1,p))  — K^{-1} F
-# f['schur']       ndarray (max(1,p), max(1,p))
-# f['matA']        ndarray (npp+p, npp+p)   — assembled LHS
-# f['rhsB']        ndarray (nvar, npp+p)    — assembled RHS
-```
-
----
-
-## Weight store
+## Weight Store
 
 ### `krige_free_weight_store`
 
@@ -588,236 +477,314 @@ int krige_free_weight_store(int64_t handle)
 
 Frees the in-memory weight store.
 
+### `krige_get_weight_dims`
+
+```c
+int krige_get_weight_dims(int64_t handle,
+    int *nmax_out,
+    int *ngroups_out,
+    int *nblock_out)
+```
+
+Returns the allocated weight-store dimensions.
+
 ### `krige_get_weight_nnear`
 
 ```c
 int krige_get_weight_nnear(int64_t handle,
     int ngroups_c, int nblock_c,
-    int *out)    // [ngroups_c × nblock_c]
+    int *out)                 // [ngroups_c x nblock_c]
 ```
 
-Copies the neighbour-count array.  `ngroups = nvar` for kriging,
-`ngroups = 2 * nvar` for SGSIM.
+Copies neighbor counts.
 
 ### `krige_get_weight_inear`
 
 ```c
 int krige_get_weight_inear(int64_t handle,
     int nmax_c, int ngroups_c, int nblock_c,
-    int *out)    // [nmax_c × ngroups_c × nblock_c]
+    int *out)                 // [nmax_c x ngroups_c x nblock_c]
 ```
 
-Copies the 1-based observation-index array for every neighbour slot.
-Padded slots are zero.
+Copies 1-based observation indices for every neighbor slot.
 
 ### `krige_get_weight_data`
 
 ```c
 int krige_get_weight_data(int64_t handle,
     int nmax_c, int ngroups_c, int nvar_c, int nblock_c,
-    double *out)    // [nmax_c × ngroups_c × nvar_c × nblock_c]
+    double *out)              // [nmax_c x ngroups_c x nvar_c x nblock_c]
 ```
 
-Copies kriging weights.  Padded slots are zero.
+Copies kriging weights.
 
 ### `krige_get_weight_var`
 
 ```c
 int krige_get_weight_var(int64_t handle,
     int nvar_c, int nblock_c,
-    double *out)    // [nvar_c × nvar_c × nblock_c]
+    double *out)              // [nvar_c x nvar_c x nblock_c]
 ```
 
-Copies the stored kriging variances (shape matches `krige_get_variance_all`
-transposed to Fortran order).
+Copies stored kriging variances.
 
 ### `krige_set_weights`
 
 ```c
 int krige_set_weights(int64_t handle,
     int nmax_c, int ngroups_c, int nvar_c, int nblock_c,
-    const int    *nnear_in,   // [ngroups_c × nblock_c]
-    const int    *inear_in,   // [nmax_c × ngroups_c × nblock_c]
-    const double *weight_in,  // [nmax_c × ngroups_c × nvar_c × nblock_c]
-    const int    *order_in,   // [nblock_c]
-    const double *var_in)     // [nvar_c × nvar_c × nblock_c]
+    const int *nnear_in,      // [ngroups_c x nblock_c]
+    const int *inear_in,      // [nmax_c x ngroups_c x nblock_c]
+    const double *weight_in,  // [nmax_c x ngroups_c x nvar_c x nblock_c]
+    const int *order_in,      // [nblock_c]
+    const double *var_in)     // [nvar_c x nvar_c x nblock_c]
 ```
 
-Loads pre-computed weights into the store and sets `use_old_weight = true`
-so that the next `krige_solve` applies them directly without solving the
-kriging system.
+Loads precomputed weights and enables weight reuse for the next solve.
 
----
+## Spatial Thread Queries
 
-## Utilities
-
-### `krige_get_last_error`
-
-```c
-int krige_get_last_error(char *buffer, int nbuf)
-```
-
-Copies the last error message (null-terminated) into `buffer`.  `nbuf` is the
-buffer capacity in bytes.  Returns 0 even when an error exists — the error
-string itself carries the information.
-
-### `krige_to_str`
-
-```c
-int64_t krige_to_str(int64_t handle)
-```
-
-Returns a pointer to a null-terminated Fortran character array containing a
-human-readable summary of the kriging object.  Returns 0 on error.  **Do not
-free the returned pointer** — it is owned by the Fortran object.
-
-### `krige_get_max_threads` / `krige_get_num_threads`
+### `krige_get_max_threads`
 
 ```c
 void krige_get_max_threads(int *n)
+```
+
+Returns the OpenMP maximum thread count, or `1` when built without OpenMP.
+
+### `krige_get_num_threads`
+
+```c
 void krige_get_num_threads(int *n)
 ```
 
-Query the OpenMP thread count.  Both return 1 when the library is compiled
-without OpenMP (`--no-openmp`).
+Returns the OpenMP team size observed inside a parallel region, or `1` when
+built without OpenMP.
 
----
+## Space-Time Lifecycle
 
-## Space-time API (`kriging_st_capi.f90`)
+Space-time objects use the `krige_st_*` creation and setup functions below.
+Shared solve, result, transform, factor, and weight-store operations still use
+the unprefixed `krige_*` names (`krige_solve`, `krige_get_estimate`, and so on).
 
-All ST entry points are prefixed `krige_st_` and share the same handle
-registry as the spatial API.  Differences from the spatial API are noted below;
-methods not listed here have the same signature as their `krige_` counterparts
-(e.g. `krige_st_solve`, `krige_st_prepare`, `krige_st_get_estimate`, …).
+### `krige_st_create`
+
+```c
+int krige_st_create(int64_t *handle)
+```
+
+Allocates a space-time kriging object.
+
+### `krige_st_destroy`
+
+```c
+int krige_st_destroy(int64_t *handle)
+```
+
+Finalizes and deallocates a space-time object and sets `*handle = 0`.
+
+### `krige_st_initialize`
+
+```c
+int krige_st_initialize(int64_t handle,
+    int nvar, int ndrift, int unbias, int nsim,
+    int anisotropic_search, int weight_correction,
+    int use_old_weight, int store_weight,
+    int cross_validation, int write_mat,
+    int neglect_error, int verbose,
+    const char *weight_file,
+    const double bounds[2],
+    int seed)
+```
+
+Initializes a space-time object.  Spatial dimension is fixed internally at 3;
+observation coordinates include a fourth time coordinate.
+
+## Space-Time Observations, Gradients, And Model
 
 ### `krige_st_set_obs`
 
-As with `krige_set_obs`, duplicate observation coordinate tuples are rejected.
-For ST data, the duplicate key includes spatial coordinates and time.
-
 ```c
 int krige_st_set_obs(int64_t handle,
-    int ivar, int nobs,
-    const double *coord,    // [4 × nobs], Fortran column-major; rows 1:3 = spatial, row 4 = time
-    const double *value,    // [nobs]
-    const double *variance, // [nobs]
+    int ivar, int nobs, int ndim,
+    const double *coord,     // [nobs x (ndim+1)], last column is time
+    const double *value,     // [nobs]
+    const double *variance,  // [nobs]
     double sk_mean)
 ```
 
-Identical to `krige_set_obs` except that `coord` has 4 rows (3 spatial + 1 time).
-Configure `nmax` and `maxdist` with `krige_st_set_search`.
+Sets space-time observations.  `ndim` is the spatial dimension; currently use
+`ndim=3`, so `coord` has four values per point: `x,y,z,t`.
+
+### `krige_st_set_grad`
+
+```c
+int krige_st_set_grad(int64_t handle,
+    int ivar, int ngrad, int ndim,
+    const double *coord1,       // [max(ngrad,1) x (ndim+1)]
+    const double *coord2,       // [max(ngrad,1) x (ndim+1)]
+    const double *grad_val,     // [max(ngrad,1)]
+    const double *variance,     // [max(ngrad,1)]
+    int ndrift_c,
+    const double *drift_ext)    // [max(ngrad,1) x max(ndrift_c,1)]
+```
+
+Sets space-time gradient pairs.  Use `ngrad=0` to reset gradients.
+
+### `krige_st_set_st_model`
+
+```c
+int krige_st_set_st_model(int64_t handle,
+    const char *model,
+    const char *transform,
+    double at,
+    double time_nugget,
+    double time_sill,
+    double k_ps)
+```
+
+Sets the global ST model.  `model` is `"sum_metric"` or `"product_sum"`;
+`transform` is a variogram type for the temporal transform.
+
+## Space-Time Variograms
+
+### `krige_st_reset_vgm`
+
+```c
+int krige_st_reset_vgm(int64_t handle, int ivar, int jvar)
+```
+
+Clears ST variogram structures for a variable pair.
+
+### `krige_st_set_vgm`
+
+```c
+int krige_st_set_vgm(int64_t handle,
+    int ivar, int jvar,
+    const char *vtype,
+    double nugget, double sill,
+    double a_major, double a_minor1, double a_minor2,
+    double azimuth, double dip, double plunge,
+    int is_product)
+```
+
+Adds a spatial marginal variogram structure to the ST model.
+
+### `krige_st_set_vgm_temporal`
+
+```c
+int krige_st_set_vgm_temporal(int64_t handle,
+    int ivar, int jvar,
+    const char *vtype,
+    double nugget,
+    double sill,
+    double at_k,
+    int is_product)
+```
+
+Adds a temporal marginal variogram structure.
+
+### `krige_st_set_vgm_joint_sills`
+
+```c
+int krige_st_set_vgm_joint_sills(int64_t handle,
+    int ivar, int jvar,
+    int n,
+    const double *sills)       // [n]
+```
+
+Sets joint sills for an ST variable pair.
+
+## Space-Time Grid, Simulation, And Search
 
 ### `krige_st_set_grid`
 
 ```c
 int krige_st_set_grid(int64_t handle,
     int ngrid,
-    const double *coord,  // [3 × ngrid], Fortran column-major (spatial only)
-    const double *time)   // [ngrid]
+    const double *coord,        // [ngrid x 3]
+    const double *time,         // [ngrid]
+    const double *rangescale,   // [ngrid]
+    const double *localnugget)  // [ngrid]
 ```
 
-Accepts spatial coordinates and times as separate arrays (unlike `krige_set_grid`
-which takes a single `ndim`-row coord array).
+Sets point-kriging ST targets with spatial coordinates and time supplied
+separately.
 
-### `krige_st_set_st_model`
+### `krige_st_set_grid_block`
 
 ```c
-int krige_st_set_st_model(int64_t handle,
-    const char *model,       // "sum_metric" or "product_sum"
-    const char *transform,   // variogram type for f_time: "lin", "exp", "sph", …
-    double at,               // joint temporal scale (same units as time coordinate)
-    double time_nugget,      // temporal variogram nugget
-    double time_sill,        // temporal variogram sill
-    double k_ps)             // product-sum k (ignored for sum_metric)
+int krige_st_set_grid_block(int64_t handle,
+    int nblocks,
+    const double *coord,        // [nblocks x 3], block centroids
+    const double *time,         // [nblocks]
+    const int *nblockpnt,       // [nblocks]
+    int npnts_total,
+    const double *blockcoord,   // [npnts_total x 3], subnodes
+    const double *blocktime,    // [npnts_total]
+    const double *pointweight,  // [npnts_total]
+    const double *rangescale,   // [nblocks]
+    const double *localnugget)  // [nblocks]
 ```
 
-Sets global ST model parameters shared by all variogram entries.
+Sets ST block-kriging targets.
 
-### `krige_st_set_vgm`
+### `krige_st_set_grid_drift`
 
 ```c
-int krige_st_set_vgm(int64_t handle,
-    int ivar,
-    int jvar,
-    const char *vtype,
-    double nugget,
-    double sill,
-    double a_major,
-    double a_minor1,
-    double a_minor2,
-    double azimuth,
-    double dip,
-    double plunge,
-    int is_product) // 0 = additive, 1 = multiply the preceding spatial structure
+int krige_st_set_grid_drift(int64_t handle,
+    int ndrift_c, int nblocks,
+    const double *drift)        // [nblocks x ndrift_c]
 ```
 
-Adds one spatial marginal structure. Consecutive structures with
-`is_product=1` are multiplied in covariance space, matching
-`krige_set_vgm`.
+Sets ST grid drift values and broadcasts them to all target variables.
 
-### `krige_st_set_vgm_temporal`
+### `krige_st_set_sim`
 
 ```c
-int krige_st_set_vgm_temporal(int64_t handle,
-    int ivar,
-    int jvar,
-    const char *vtype,
-    double nugget,
-    double sill,
-    double at_k,
-    int is_product) // 0 = additive, 1 = multiply the preceding temporal structure
+int krige_st_set_sim(int64_t handle,
+    int nblocks,
+    const int *randpath,        // [nblocks], or NULL
+    int nsim_c,
+    const double *sample)       // [nblocks x nsim_c], or NULL
 ```
 
-Adds one temporal marginal structure. `at_k` is in the same units as the
-observation time coordinate. Consecutive structures with `is_product=1` are
-multiplied in covariance space, matching `krige_set_vgm`.
+Configures ST simulation random path and samples.  `NULL` pointers let Fortran
+generate values.  Caller-supplied samples fill the primary variable; additional
+variables are zero-filled internally.
 
 ### `krige_st_set_search`
 
 ```c
 int krige_st_set_search(int64_t handle,
     int ivar,
-    double time_at,    // temporal scale: t_kd = t * time_at  (km-equivalent)
-    double anis1,      // spatial minor/major anisotropy ratio
-    double anis2,      // spatial vertical/major anisotropy ratio
-    double azimuth,    // major-axis azimuth (degrees, clockwise from North)
-    double dip,        // dip angle (degrees)
-    double plunge,     // plunge angle (degrees)
+    double time_at,
+    double anis1, double anis2,
+    double azimuth, double dip, double plunge,
     int nmax,
     double maxdist,
-    int sector_search) // 0/1: enable sector (octant) search
+    int sector_search)
 ```
 
-Builds the 4D KD-tree for variable `ivar`.  The time axis is stored as
-`t_kd = t * time_at` so that the L2 distance in the `(x, y, z, t·time_at)`
-space equals the sum-metric distance:
+Builds the ST KD-tree and configures the search neighborhood.  `time_at` scales
+time into distance units for the KD-tree.  Negative `nmax` or `maxdist` keeps
+the existing value.
 
+## Space-Time Thread Queries
+
+### `krige_st_get_max_threads`
+
+```c
+void krige_st_get_max_threads(int *n)
 ```
-h_ST = sqrt(h_S^2 + (time_at * dt)^2)
+
+Returns the OpenMP maximum thread count, or `1` when built without OpenMP.
+
+### `krige_st_get_num_threads`
+
+```c
+void krige_st_get_num_threads(int *n)
 ```
 
-Pass `time_at` equal to `at` from `krige_st_set_st_model` to keep search and
-variogram scales consistent.  `maxdist` is a radius in km-equivalent (h_ST)
-units.  Pass negative `nmax` or `maxdist` to keep the existing search value,
-which defaults to unlimited.
-
-When `sector_search` is `1`, candidate neighbours are partitioned into 8 spatial
-octants centered on the target location. At most `nmax` are selected per octant,
-leading to a maximum total of `8 * nmax` neighbours.
-
----
-
-## Handle registry (internals)
-
-Python receives a 1-based slot index (`int64`) rather than a raw Fortran
-pointer.  This avoids passing non-C-interoperable derived-type addresses
-through ctypes.
-
-| Function | Description |
-|---|---|
-| `store_obj` | Finds the first free slot; grows the registry (doubles) if full |
-| `get_obj` | Validates the slot index and recovers the typed Fortran pointer |
-| `release_obj` | Nullifies the slot on `krige_destroy`; does not compact the array |
-
-The registry starts at 16 slots and doubles on demand, keeping old slot
-numbers stable for existing Python handles.
+Returns the OpenMP team size observed inside a parallel region, or `1` when
+built without OpenMP.
